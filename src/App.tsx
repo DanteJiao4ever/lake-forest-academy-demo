@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 type ActionType = "enquire" | "tour" | "apply";
+type PageKind = "home" | "academics" | "admissions";
 
 const programs = [
   { code: "SCI", title: "Sciences", text: "Biology, chemistry and physics taught through inquiry, lab work and evidence-based thinking." },
@@ -16,6 +17,41 @@ const admissionsSteps = [
   ["02", "Share your records", "Provide recent transcripts and identification documents for an academic review."],
   ["03", "Meet our team", "Join a friendly interview and complete an academic or English assessment if needed."],
   ["04", "Plan your pathway", "Receive a decision and meet an advisor to build a personalized OSSD study plan."],
+];
+
+const academicJourney = [
+  ["Grade 9", "Build the foundation", "Strengthen core learning habits, understand diploma expectations and begin exploring interests."],
+  ["Grade 10", "Choose with intention", "Review progress, develop academic communication and identify areas for deeper study."],
+  ["Grade 11", "Connect choices to goals", "Select senior courses with future program prerequisites in mind and grow as an independent learner."],
+  ["Grade 12", "Complete and look ahead", "Confirm remaining requirements, refine applications and prepare for the transition beyond secondary school."],
+];
+
+const learningPrinciples = [
+  ["01", "Inquiry before answers", "Students investigate, test ideas and explain the evidence behind their thinking."],
+  ["02", "Feedback that moves learning", "Clear expectations and timely guidance turn revision into a normal part of progress."],
+  ["03", "Knowledge in context", "Labs, presentations and collaborative projects connect classroom learning with wider questions."],
+];
+
+const admissionPathways = [
+  {
+    label: "Domestic applicants",
+    title: "Continue your Ontario journey",
+    text: "A future review may consider the student's current grade, recent Canadian school records, intended entry term and course-planning needs.",
+  },
+  {
+    label: "International applicants",
+    title: "Plan a supported transition",
+    text: "A future review may also consider translated academic records, English-language readiness, identification documents and the family's independent immigration and housing plans.",
+  },
+];
+
+const applicationChecklist = [
+  "Recent report cards or transcripts",
+  "Identification documentation, where applicable",
+  "Certified translations of academic records, where necessary",
+  "A short summary of the student's interests and goals",
+  "Information about previous English-language study",
+  "Any additional items requested through an authorized admissions process",
 ];
 
 const historyMilestones = [
@@ -70,10 +106,10 @@ const menuGroups = [
 ];
 
 const carouselSlides = [
-  { src: "./images/student-community.jpg", alt: "Students gathering in the school courtyard", title: "A community built on belonging", text: "Advisory, clubs and shared traditions help every student feel known." },
-  { src: "./images/technology-class.jpg", alt: "Students collaborating on a technology project", title: "Ideas become real projects", text: "Students learn through teamwork, experimentation and purposeful technology." },
-  { src: "./images/campus-life-basketball.jpg", alt: "Students playing basketball in the school gym", title: "Energy beyond the classroom", text: "Athletics and recreation create space for confidence, balance and friendship." },
-  { src: "./images/science-lab.jpg", alt: "Students conducting a science experiment with their teacher", title: "Learning by doing", text: "Practical experiences connect Ontario curriculum expectations with curiosity." },
+  { src: "student-community.png", alt: "Students gathering in the school courtyard", title: "A community built on belonging", text: "Advisory, clubs and shared traditions help every student feel known." },
+  { src: "technology-class.png", alt: "Students collaborating on a technology project", title: "Ideas become real projects", text: "Students learn through teamwork, experimentation and purposeful technology." },
+  { src: "campus-life-basketball.png", alt: "Students playing basketball in the school gym", title: "Energy beyond the classroom", text: "Athletics and recreation create space for confidence, balance and friendship." },
+  { src: "science-lab.png", alt: "Students conducting a science experiment with their teacher", title: "Learning by doing", text: "Practical experiences connect Ontario curriculum expectations with curiosity." },
 ];
 
 const newsItems = [
@@ -109,7 +145,161 @@ const actionCopy: Record<ActionType, { eyebrow: string; title: string; text: str
   apply: { eyebrow: "Online application", title: "Begin your application", text: "Share the student's current grade and intended entry term to start a preliminary application record.", button: "Start application" },
 };
 
-export default function Home() {
+type PageViewProps = {
+  assetUrl: (filename: string) => string;
+  routeHref: (destination: "academics" | "admissions") => string;
+  homeHref: (hash?: string) => string;
+  openAction: (action: ActionType) => void;
+};
+
+function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewProps) {
+  return (
+    <>
+      <section className="inner-hero" id="top">
+        <div className="inner-hero-copy">
+          <p className="eyebrow light">Academics at Lake Forest</p>
+          <h1>Strong foundations. <strong>A pathway that stays open.</strong></h1>
+          <p>Our proposed Grade 9-12 experience brings OSSD planning, practical learning and close guidance into one connected academic journey.</p>
+          <div className="hero-actions">
+            <a className="button primary" href="#pathway">Explore the pathway <span aria-hidden="true">-&gt;</span></a>
+            <button className="button ghost" type="button" onClick={() => openAction("enquire")}>Talk with an advisor</button>
+          </div>
+        </div>
+        <div className="inner-hero-media"><img src={assetUrl("technology-class.png")} alt="Students collaborating on a technology project" /></div>
+      </section>
+
+      <nav className="page-subnav" aria-label="Academics page">
+        <a href="#pathway">OSSD pathway</a><a href="#grade-journey">Grades 9-12</a><a href="#programs">Course areas</a><a href="#guidance">Guidance</a>
+      </nav>
+
+      <section className="page-intro section" id="pathway">
+        <div><p className="eyebrow">The Ontario pathway</p><h2>Clear expectations. Personal direction.</h2></div>
+        <div className="page-intro-copy">
+          <p>Every student's plan begins with completed learning, current interests and a possible destination. Advisors bring required and elective credits, literacy learning, community involvement and future prerequisites into one regularly reviewed pathway.</p>
+          <p>Requirements can depend on when a student begins Grade 9. Final plans, placement and course availability must always be confirmed individually.</p>
+        </div>
+      </section>
+
+      <section className="framework section" aria-label="OSSD planning framework">
+        <div className="framework-grid">
+          <article><span>01</span><h3>Credit planning</h3><p>Map required learning, electives and any completed credits into a coherent graduation plan.</p></article>
+          <article><span>02</span><h3>Literacy development</h3><p>Build the reading, writing and communication students need across every subject area.</p></article>
+          <article><span>03</span><h3>Community involvement</h3><p>Connect responsibility and reflection with meaningful participation beyond the classroom.</p></article>
+          <article><span>04</span><h3>Future prerequisites</h3><p>Review possible college and university programs before choosing senior courses.</p></article>
+        </div>
+      </section>
+
+      <section className="grade-journey section" id="grade-journey">
+        <div className="section-heading"><p className="eyebrow">Grades 9-12</p><h2>Four years. One connected plan.</h2><p>Course choices become more useful when every year prepares for the next.</p></div>
+        <div className="journey-list">
+          {academicJourney.map(([grade, title, text]) => <article key={grade}><strong>{grade}</strong><div><h3>{title}.</h3><p>{text}</p></div></article>)}
+        </div>
+      </section>
+
+      <section className="academics section inner-programs" id="programs">
+        <div className="section-heading"><p className="eyebrow">Course exploration</p><h2>Find the subjects that move you forward.</h2><p>The proposed program balances core OSSD learning with room to explore scientific, technological, business, creative and human questions.</p></div>
+        <div className="program-grid">
+          {programs.map((program) => <article className="program-card" key={program.code}><span>{program.code}</span><h3>{program.title}</h3><p>{program.text}</p></article>)}
+        </div>
+      </section>
+
+      <section className="learning-practice section">
+        <div className="learning-image"><img src={assetUrl("science-lab.png")} alt="Students conducting a science experiment with their teacher" /></div>
+        <div className="learning-copy"><p className="eyebrow">Learning that connects</p><h2>Questions become projects. Feedback becomes progress.</h2><p>Strong academic work is more than completing content. Students investigate, collaborate, revise and explain their thinking.</p>
+          <div className="principle-list">{learningPrinciples.map(([number, title, text]) => <div key={number}><strong>{number}</strong><span><b>{title}</b>{text}</span></div>)}</div>
+        </div>
+      </section>
+
+      <section className="support section" id="guidance">
+        <div className="support-copy"><p className="eyebrow">A plan that belongs to the student</p><h2>Known by name. Guided with purpose.</h2><p>Academic planning begins with the student's current record, interests and intended destination, then evolves as goals become clearer.</p>
+          <div className="support-list">
+            <div><strong>01</strong><span><b>Course mapping</b>Review completed learning and map the courses still needed for the proposed pathway.</span></div>
+            <div><strong>02</strong><span><b>Post-secondary research</b>Compare prerequisites, timelines and questions to explore with colleges and universities.</span></div>
+            <div><strong>03</strong><span><b>Academic English support</b>Connect language development with the reading, writing and discussion used in class.</span></div>
+          </div>
+        </div>
+        <div className="support-image"><img src={assetUrl("student-guidance.png")} alt="A guidance counsellor helping a student plan an academic pathway" /></div>
+      </section>
+
+      <section className="page-next section">
+        <div><p className="eyebrow light">Your next academic step</p><h2>Bring us your goals. We will help you frame the questions.</h2><p>Whether entering Grade 9 or transferring later, begin with a conversation about current studies and the intended entry term.</p></div>
+        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire about academics</button><a className="button ghost" href={routeHref("admissions")}>Explore admissions</a><a className="text-link light-link" href={homeHref("#student-life")}>Discover student life <span aria-hidden="true">-&gt;</span></a></div>
+      </section>
+    </>
+  );
+}
+
+type AdmissionsPageProps = PageViewProps & {
+  openFaq: number | null;
+  setOpenFaq: (index: number | null) => void;
+};
+
+function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }: AdmissionsPageProps) {
+  return (
+    <>
+      <section className="inner-hero admissions-hero" id="top">
+        <div className="inner-hero-copy">
+          <p className="eyebrow light">Admissions</p>
+          <h1>A clear path to <strong>your next chapter.</strong></h1>
+          <p>Choosing a school is a meaningful decision. This concept presents a thoughtful Grade 9-12 admissions journey built around clear guidance and an individual OSSD study plan.</p>
+          <div className="hero-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Start an enquiry</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button></div>
+        </div>
+        <div className="inner-hero-media"><img src={assetUrl("student-community.png")} alt="Students connecting in a welcoming school community" /></div>
+      </section>
+
+      <nav className="page-subnav" aria-label="Admissions page">
+        <a href="#pathways">Applicant pathways</a><a href="#steps">How to apply</a><a href="#requirements">What to prepare</a><a href="#faq">FAQ</a>
+      </nav>
+
+      <section className="pathways section" id="pathways">
+        <div className="section-heading"><p className="eyebrow">Find your pathway</p><h2>Different starting points. One thoughtful process.</h2><p>These examples show how a future admissions review could respond to each student's context.</p></div>
+        <div className="pathway-grid">
+          {admissionPathways.map((pathway, index) => <article key={pathway.label}><span>0{index + 1}</span><small>{pathway.label}</small><h3>{pathway.title}.</h3><p>{pathway.text}</p></article>)}
+        </div>
+        <p className="section-note">Planning examples only. This concept does not provide immigration, legal or housing advice.</p>
+      </section>
+
+      <section className="admissions section inner-admissions" id="steps">
+        <div className="section-heading"><p className="eyebrow">The admissions journey</p><h2>Four clear steps forward.</h2><p>A production process would pair each stage with direct guidance from an authorized admissions team.</p></div>
+        <div className="steps">{admissionsSteps.map(([number, title, text]) => <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>)}</div>
+      </section>
+
+      <section className="requirements section" id="requirements">
+        <div className="requirements-copy"><p className="eyebrow">Preparing ahead</p><h2>A simple starting checklist.</h2><p>A future application may request the following items through a secure, authorized process.</p><button className="button primary" type="button" onClick={() => openAction("apply")}>Preview the application</button></div>
+        <div className="requirement-list">
+          {applicationChecklist.map((item, index) => <div key={item}><strong>{String(index + 1).padStart(2, "0")}</strong><span>{item}</span></div>)}
+          <aside><b>Important</b>Do not send or upload personal documents through this prototype. It does not store or transmit information.</aside>
+        </div>
+      </section>
+
+      <section className="faq section" id="faq">
+        <div className="faq-heading"><p className="eyebrow">Admissions questions</p><h2>Clear answers before you begin.</h2><p>No official deadlines, fees, guarantees or final entry policies are defined in this concept.</p></div>
+        <div className="faq-list">
+          {faqs.map(([question, answer], index) => <article className={openFaq === index ? "open" : ""} key={question}><h3><button type="button" aria-expanded={openFaq === index} aria-controls={`admissions-faq-${index}`} onClick={() => setOpenFaq(openFaq === index ? null : index)}><span>{question}</span><i aria-hidden="true">{openFaq === index ? "-" : "+"}</i></button></h3><div id={`admissions-faq-${index}`} hidden={openFaq !== index}><p>{answer}</p></div></article>)}
+        </div>
+      </section>
+
+      <section className="page-next section admissions-next">
+        <div><p className="eyebrow light">Your next step</p><h2>Explore Lake Forest Academy at your own pace.</h2><p>Ask a question, preview a campus visit or see how a future online application could begin.</p></div>
+        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a Tour</button><a className="text-link light-link" href={routeHref("academics")}>Review academics <span aria-hidden="true">-&gt;</span></a></div>
+      </section>
+    </>
+  );
+}
+
+function getRouteContext(initialPage?: PageKind) {
+  if (typeof window === "undefined") return { page: initialPage ?? "home" as PageKind, base: "/" };
+  const trimmedPath = window.location.pathname.replace(/\/+$/, "");
+  const finalSegment = trimmedPath.split("/").filter(Boolean).at(-1);
+  const detectedPage: PageKind = finalSegment === "academics" || finalSegment === "admissions" ? finalSegment : "home";
+  const page = initialPage ?? detectedPage;
+  const base = detectedPage === "home"
+    ? (window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`)
+    : window.location.pathname.replace(new RegExp(`${detectedPage}/?$`), "");
+  return { page, base: base || "/" };
+}
+
+export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -125,6 +315,7 @@ export default function Home() {
   const searchDialogRef = useRef<HTMLDivElement>(null);
   const actionDialogRef = useRef<HTMLElement>(null);
   const lastActionTriggerRef = useRef<HTMLElement | null>(null);
+  const [{ page, base }] = useState(() => getRouteContext(initialPage));
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) setCarouselPlaying(false);
@@ -191,6 +382,19 @@ export default function Home() {
 
   const activeSlide = carouselSlides[carouselIndex];
   const activeCopy = activeAction ? actionCopy[activeAction] : null;
+  const routeHref = (destination: Exclude<PageKind, "home">) => `${base}${destination}/`;
+  const homeHref = (hash = "") => `${base}${hash}`;
+  const assetUrl = (filename: string) => `${base}images/${filename}`;
+
+  function resolveHref(href: string) {
+    if (["#academics", "#programs", "#guidance"].includes(href)) {
+      return `${routeHref("academics")}${href === "#academics" ? "" : href}`;
+    }
+    if (["#admissions", "#requirements", "#faq", "#contact"].includes(href)) {
+      return `${routeHref("admissions")}${href === "#admissions" ? "" : href}`;
+    }
+    return homeHref(href);
+  }
 
   function closeLayers() {
     setMenuOpen(false);
@@ -244,15 +448,15 @@ export default function Home() {
       <div className="demo-banner">Fictional North York school concept - not affiliated with any existing institution</div>
 
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="Lake Forest Academy home">
-          <img className="brand-logo" src="./images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
+        <a className="brand" href={homeHref()} aria-label="Lake Forest Academy home">
+          <img className="brand-logo" src={assetUrl("lake-forest-academy-logo.png")} alt="Lake Forest Academy" />
         </a>
 
         <nav className="nav-links" aria-label="Primary navigation">
-          <a href="#about">Our School</a>
-          <a href="#academics">Academics</a>
-          <a href="#student-life">Student Life</a>
-          <a href="#admissions">Admissions</a>
+          <a href={homeHref("#about")}>Our School</a>
+          <a href={routeHref("academics")} aria-current={page === "academics" ? "page" : undefined}>Academics</a>
+          <a href={homeHref("#student-life")}>Student Life</a>
+          <a href={routeHref("admissions")} aria-current={page === "admissions" ? "page" : undefined}>Admissions</a>
           <button className="nav-cta" type="button" onClick={() => openAction("enquire")}>Enquire</button>
         </nav>
 
@@ -271,7 +475,7 @@ export default function Home() {
       {menuOpen && (
         <div ref={menuDialogRef} className="menu-overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
           <div className="overlay-top">
-            <img src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <img src={assetUrl("lake-forest-academy-logo-light.png")} alt="Lake Forest Academy" />
             <button className="close-button light" type="button" autoFocus onClick={closeMenu} aria-label="Close website menu">Close <span aria-hidden="true">x</span></button>
           </div>
           <div className="menu-heading">
@@ -284,7 +488,7 @@ export default function Home() {
                 <h3>{group.title}</h3>
                 <p>{group.description}</p>
                 <div>
-                  {group.links.map(([label, href]) => <a href={href} key={label} onClick={() => setMenuOpen(false)}>{label}<span aria-hidden="true">+</span></a>)}
+                  {group.links.map(([label, href]) => <a href={resolveHref(href)} key={label} onClick={() => setMenuOpen(false)}>{label}<span aria-hidden="true">+</span></a>)}
                 </div>
               </section>
             ))}
@@ -307,7 +511,7 @@ export default function Home() {
             <label className="search-field"><span>Search Lake Forest Academy</span><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Try OSSD, student life or admissions" /></label>
             <div className="search-results" aria-live="polite">
               {searchResults.length ? searchResults.map((item) => (
-                <a href={item.href} key={item.title} onClick={closeSearch}>
+                <a href={resolveHref(item.href)} key={item.title} onClick={closeSearch}>
                   <small>{item.area}</small><strong>{item.title}</strong><span>{item.text}</span>
                 </a>
               )) : <p className="empty-state">No matching pages yet. Try a broader search.</p>}
@@ -323,15 +527,17 @@ export default function Home() {
       </aside>
 
       <main>
+      {page === "home" ? (
+      <>
       <section className="hero" id="top">
-        <img src="./images/campus-hero.jpg" alt="Students walking toward a modern school campus beside a lake" />
+        <img src={assetUrl("campus-hero.png")} alt="Students walking toward a modern school campus beside a lake" />
         <div className="hero-overlay" />
         <div className="hero-content">
           <p className="eyebrow light">North York, Ontario &middot; Grades 9-12 &middot; OSSD</p>
           <h1><span>Clear direction.</span><span>Strong foundations.</span><strong>Your future.</strong></h1>
           <p className="hero-lead">A thoughtful learning community where strong foundations, clear guidance and global ambition help every student move forward with confidence.</p>
           <div className="hero-actions">
-            <a className="button primary" href="#academics">Explore the OSSD program <span aria-hidden="true">-&gt;</span></a>
+            <a className="button primary" href={routeHref("academics")}>Explore the OSSD program <span aria-hidden="true">-&gt;</span></a>
             <button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button>
           </div>
         </div>
@@ -339,8 +545,8 @@ export default function Home() {
 
       <section className="quick-links" aria-label="Family quick links">
         <a href="#history"><small>Discover our foundations</small>Our Story</a>
-        <a href="#admissions"><small>Plan your pathway</small>Entry Requirements</a>
-        <a href="#faq"><small>Common questions</small>Admissions FAQ</a>
+        <a href={`${routeHref("admissions")}#requirements`}><small>Plan your pathway</small>Entry Requirements</a>
+        <a href={`${routeHref("admissions")}#faq`}><small>Common questions</small>Admissions FAQ</a>
         <button type="button" onClick={() => openAction("tour")}><small>See the community</small>Visit LFA</button>
       </section>
 
@@ -370,19 +576,20 @@ export default function Home() {
           <p>Students earn the Ontario Secondary School Diploma through a balanced program of required credits, electives, literacy learning and community involvement.</p>
         </div>
         <div className="program-grid" id="programs">
-          {programs.map((program) => (
+          {programs.slice(0, 3).map((program) => (
             <article className="program-card" key={program.code}>
               <span>{program.code}</span><h3>{program.title}</h3><p>{program.text}</p>
             </article>
           ))}
         </div>
         <div className="feature-row">
-          <div className="feature-image"><img src="./images/science-lab.jpg" alt="Students conducting a science experiment with their teacher" /></div>
+          <div className="feature-image"><img src={assetUrl("science-lab.png")} alt="Students conducting a science experiment with their teacher" /></div>
           <div className="feature-copy">
             <p className="eyebrow light">Learning that connects</p>
             <h2>Curious minds. Practical experiences.</h2>
             <p>Our classrooms combine Ontario curriculum expectations with hands-on inquiry, collaboration and clear academic feedback.</p>
             <ul><li>Average class size of 15-18 students</li><li>After-school tutorials and academic support</li><li>Course planning aligned with university prerequisites</li></ul>
+            <a className="text-link light-link" href={routeHref("academics")}>Explore the full academic pathway <span aria-hidden="true">-&gt;</span></a>
           </div>
         </div>
       </section>
@@ -398,7 +605,7 @@ export default function Home() {
             <div><strong>03</strong><span><b>English language development</b>Strengthen academic communication with targeted ESL support.</span></div>
           </div>
         </div>
-        <div className="support-image"><img src="./images/student-guidance.jpg" alt="A guidance counsellor helping a student plan their academic pathway" /></div>
+        <div className="support-image"><img src={assetUrl("student-guidance.png")} alt="A guidance counsellor helping a student plan their academic pathway" /></div>
       </section>
 
       <section className="history section" id="history">
@@ -434,7 +641,7 @@ export default function Home() {
 
         <div className="life-carousel" id="life-gallery" role="region" aria-roledescription="carousel" aria-label="Student life photo stories">
           <figure>
-            <img src={activeSlide.src} alt={activeSlide.alt} />
+            <img src={assetUrl(activeSlide.src)} alt={activeSlide.alt} />
             <figcaption><small>Photo story {carouselIndex + 1} of {carouselSlides.length}</small><strong>{activeSlide.title}</strong><span>{activeSlide.text}</span></figcaption>
           </figure>
           <div className="carousel-controls">
@@ -460,12 +667,13 @@ export default function Home() {
         <div className="steps">
           {admissionsSteps.map(([number, title, text]) => <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>)}
         </div>
+        <a className="text-link admissions-link" href={routeHref("admissions")}>View the complete admissions journey <span aria-hidden="true">-&gt;</span></a>
       </section>
 
       <section className="faq section" id="faq">
         <div className="faq-heading"><p className="eyebrow">Frequently asked questions</p><h2>Clear answers for families.</h2><p>These answers describe the current test-site concept. Final admissions policies should be verified before commercial use.</p></div>
         <div className="faq-list">
-          {faqs.map(([question, answer], index) => (
+          {faqs.slice(0, 3).map(([question, answer], index) => (
             <article className={openFaq === index ? "open" : ""} key={question}>
               <h3><button type="button" aria-expanded={openFaq === index} aria-controls={`faq-answer-${index}`} onClick={() => setOpenFaq(openFaq === index ? null : index)}><span>{question}</span><i aria-hidden="true">{openFaq === index ? "-" : "+"}</i></button></h3>
               <div id={`faq-answer-${index}`} hidden={openFaq !== index}><p>{answer}</p></div>
@@ -497,12 +705,18 @@ export default function Home() {
           <small className="form-disclaimer">This prototype does not store or transmit personal information.</small>
         </form>
       </section>
+      </>
+      ) : page === "academics" ? (
+        <AcademicsPage assetUrl={assetUrl} routeHref={routeHref} homeHref={homeHref} openAction={openAction} />
+      ) : (
+        <AdmissionsPage assetUrl={assetUrl} routeHref={routeHref} homeHref={homeHref} openAction={openAction} openFaq={openFaq} setOpenFaq={setOpenFaq} />
+      )}
       </main>
 
       <footer>
-        <div className="footer-brand"><img className="footer-logo" src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /><p>Rooted in purpose. Open to possibility.</p></div>
+        <div className="footer-brand"><img className="footer-logo" src={assetUrl("lake-forest-academy-logo-light.png")} alt="Lake Forest Academy" /><p>Rooted in purpose. Open to possibility.</p></div>
         <div className="footer-columns">
-          {menuGroups.map((group) => <div key={group.title}><strong>{group.title}</strong>{group.links.slice(0, 3).map(([label, href]) => <a href={href} key={label}>{label}</a>)}</div>)}
+          {menuGroups.map((group) => <div key={group.title}><strong>{group.title}</strong>{group.links.slice(0, 3).map(([label, href]) => <a href={resolveHref(href)} key={label}>{label}</a>)}</div>)}
         </div>
         <div className="footer-bottom"><span>&copy; 2026 Lake Forest Academy - Demo website</span><span>Fictional North York concept; not affiliated with any existing school of the same name.</span></div>
       </footer>
@@ -530,4 +744,8 @@ export default function Home() {
       )}
     </>
   );
+}
+
+export default function Home() {
+  return <SchoolSite />;
 }
