@@ -1,4 +1,6 @@
-import { FormEvent, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+
+type ActionType = "enquire" | "tour" | "apply";
 
 const programs = [
   { code: "SCI", title: "Sciences", text: "Biology, chemistry and physics taught through inquiry, lab work and evidence-based thinking." },
@@ -10,42 +12,230 @@ const programs = [
 ];
 
 const admissionsSteps = [
-  ["01", "Start your application", "Complete the short online inquiry and tell us about the student’s goals."],
+  ["01", "Start your application", "Complete a short inquiry and tell us about the student's goals."],
   ["02", "Share your records", "Provide recent transcripts and identification documents for an academic review."],
   ["03", "Meet our team", "Join a friendly interview and complete an academic or English assessment if needed."],
   ["04", "Plan your pathway", "Receive a decision and meet an advisor to build a personalized OSSD study plan."],
 ];
 
+const menuGroups = [
+  {
+    title: "Our School",
+    description: "A close-knit Grade 9-12 community in North York.",
+    links: [["Welcome", "#about"], ["Guidance", "#guidance"], ["School facts", "#facts"]],
+  },
+  {
+    title: "Academics",
+    description: "OSSD courses, English support and university planning.",
+    links: [["OSSD pathway", "#academics"], ["Course areas", "#programs"], ["Learning support", "#guidance"]],
+  },
+  {
+    title: "Student Life",
+    description: "Clubs, athletics, belonging and international transition support.",
+    links: [["Life at LFA", "#student-life"], ["Photo stories", "#life-gallery"], ["News and events", "#news"]],
+  },
+  {
+    title: "Admissions",
+    description: "Clear next steps for domestic and international families.",
+    links: [["How to apply", "#admissions"], ["Frequently asked questions", "#faq"], ["Contact admissions", "#contact"]],
+  },
+];
+
+const carouselSlides = [
+  { src: "./images/student-community.jpg", alt: "Students gathering in the school courtyard", title: "A community built on belonging", text: "Advisory, clubs and shared traditions help every student feel known." },
+  { src: "./images/technology-class.jpg", alt: "Students collaborating on a technology project", title: "Ideas become real projects", text: "Students learn through teamwork, experimentation and purposeful technology." },
+  { src: "./images/campus-life-basketball.jpg", alt: "Students playing basketball in the school gym", title: "Energy beyond the classroom", text: "Athletics and recreation create space for confidence, balance and friendship." },
+  { src: "./images/science-lab.jpg", alt: "Students conducting a science experiment with their teacher", title: "Learning by doing", text: "Practical experiences connect Ontario curriculum expectations with curiosity." },
+];
+
+const newsItems = [
+  { date: "03 SEP 2026", category: "Community", title: "Welcome and Orientation Day", text: "New students meet their advisors, explore campus routines and connect with peer ambassadors." },
+  { date: "14 OCT 2026", category: "University Planning", title: "OSSD Pathways Evening", text: "Families explore prerequisites, graduation planning and Canadian university application timelines." },
+  { date: "07 NOV 2026", category: "Student Life", title: "Community Service Saturday", text: "Student teams take part in local service projects and reflect on responsible citizenship." },
+];
+
+const faqs = [
+  ["Does Lake Forest Academy offer the OSSD?", "Yes. This prototype presents Lake Forest Academy as an Ontario Grade 9-12 school offering courses toward the Ontario Secondary School Diploma."],
+  ["Which students can apply?", "Domestic and international students entering Grades 9-12 may submit an inquiry. Course placement is reviewed individually using recent academic records."],
+  ["Is English-language support available?", "Yes. ESL course planning, academic-language development and after-school learning support are included in the proposed student experience."],
+  ["Does the school operate boarding houses?", "No boarding operation is claimed in this prototype. International families would arrange housing independently, while the school concept focuses on orientation and academic transition support."],
+  ["How do I book a campus visit?", "Choose Book a Tour anywhere on the site, share your preferred date and the admissions team will follow up. The current form is a non-transmitting demo."],
+  ["Are the forms connected to admissions?", "Not yet. Every form on this test website demonstrates the experience only and does not store or transmit personal information."],
+];
+
+const searchItems = [
+  { title: "About Lake Forest Academy", area: "Our School", text: "School profile, learning community and facts.", href: "#about" },
+  { title: "OSSD Academic Pathway", area: "Academics", text: "Course areas, diploma expectations and university preparation.", href: "#academics" },
+  { title: "Guidance and English Support", area: "Student Support", text: "Course planning, wellbeing and ESL development.", href: "#guidance" },
+  { title: "Student Life", area: "Community", text: "Clubs, athletics, leadership and international transition support.", href: "#student-life" },
+  { title: "News and Events", area: "Community", text: "Sample orientation, planning and service events.", href: "#news" },
+  { title: "How to Apply", area: "Admissions", text: "Four steps from inquiry to an OSSD study plan.", href: "#admissions" },
+  { title: "Admissions FAQ", area: "Admissions", text: "Answers about grades, language support and campus visits.", href: "#faq" },
+  { title: "Contact Admissions", area: "Admissions", text: "Ask a question or start a test inquiry.", href: "#contact" },
+];
+
+const actionCopy: Record<ActionType, { eyebrow: string; title: string; text: string; button: string }> = {
+  enquire: { eyebrow: "Admissions enquiry", title: "Start a conversation", text: "Tell us what you would like to understand about OSSD programs, entry requirements or student support.", button: "Submit enquiry" },
+  tour: { eyebrow: "Campus visit", title: "Book a school tour", text: "Choose a preferred visit date and share who will be joining you. Our demo admissions team will confirm the next step.", button: "Request a tour" },
+  apply: { eyebrow: "Online application", title: "Begin your application", text: "Share the student's current grade and intended entry term to start a preliminary application record.", button: "Start application" },
+};
+
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [carouselPlaying, setCarouselPlaying] = useState(true);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [activeAction, setActiveAction] = useState<ActionType | null>(null);
+  const [actionSent, setActionSent] = useState(false);
+  const [contactSent, setContactSent] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (!carouselPlaying || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = window.setInterval(() => {
+      setCarouselIndex((current) => (current + 1) % carouselSlides.length);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [carouselPlaying]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        setSearchOpen(false);
+        setActiveAction(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = menuOpen || searchOpen || activeAction ? "hidden" : previous;
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [menuOpen, searchOpen, activeAction]);
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return searchItems.slice(0, 5);
+    return searchItems.filter((item) => `${item.title} ${item.area} ${item.text}`.toLowerCase().includes(query));
+  }, [searchQuery]);
+
+  const activeSlide = carouselSlides[carouselIndex];
+  const activeCopy = activeAction ? actionCopy[activeAction] : null;
+
+  function closeLayers() {
+    setMenuOpen(false);
+    setSearchOpen(false);
+  }
+
+  function openAction(action: ActionType) {
+    closeLayers();
+    setActionSent(false);
+    setActiveAction(action);
+  }
+
+  function handleActionSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSent(true);
+    setActionSent(true);
+  }
+
+  function handleContactSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setContactSent(true);
+  }
+
+  function changeSlide(direction: number) {
+    setCarouselIndex((current) => (current + direction + carouselSlides.length) % carouselSlides.length);
   }
 
   return (
     <main>
-      <div className="demo-banner">Prototype website — fictional school and contact information</div>
+      <a className="skip-link" href="#top">Skip to main content</a>
+      <div className="demo-banner">Prototype website - fictional school, events and contact information</div>
 
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Lake Forest Academy home">
           <img className="brand-logo" src="./images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
         </a>
 
-        <button className="menu-button" aria-label="Toggle navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
-          <span /> <span /> <span />
-        </button>
-
-        <nav className={menuOpen ? "nav-links open" : "nav-links"} aria-label="Main navigation">
-          <a href="#about" onClick={() => setMenuOpen(false)}>Our School</a>
-          <a href="#academics" onClick={() => setMenuOpen(false)}>Academics</a>
-          <a href="#admissions" onClick={() => setMenuOpen(false)}>Admissions</a>
-          <a href="#community" onClick={() => setMenuOpen(false)}>Student Life</a>
-          <a className="nav-cta" href="#contact" onClick={() => setMenuOpen(false)}>Apply now</a>
+        <nav className="nav-links" aria-label="Primary navigation">
+          <a href="#about">Our School</a>
+          <a href="#academics">Academics</a>
+          <a href="#student-life">Student Life</a>
+          <a href="#admissions">Admissions</a>
+          <button className="nav-cta" type="button" onClick={() => openAction("enquire")}>Enquire</button>
         </nav>
+
+        <div className="header-tools">
+          <button className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
+            <span className="search-symbol" aria-hidden="true" />
+            <span className="tool-label">Search</span>
+          </button>
+          <button className="header-tool menu-button" type="button" aria-label="Open full website menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+            <span className="menu-lines" aria-hidden="true"><i /><i /><i /></span>
+            <span className="tool-label">Menu</span>
+          </button>
+        </div>
       </header>
+
+      {menuOpen && (
+        <div className="menu-overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+          <div className="overlay-top">
+            <img src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <button className="close-button light" type="button" autoFocus onClick={() => setMenuOpen(false)} aria-label="Close website menu">Close <span aria-hidden="true">x</span></button>
+          </div>
+          <div className="menu-heading">
+            <p className="eyebrow light">Explore Lake Forest Academy</p>
+            <h2 id="menu-title">Find your next step.</h2>
+          </div>
+          <div className="menu-grid">
+            {menuGroups.map((group) => (
+              <section className="menu-group" key={group.title}>
+                <h3>{group.title}</h3>
+                <p>{group.description}</p>
+                <div>
+                  {group.links.map(([label, href]) => <a href={href} key={label} onClick={() => setMenuOpen(false)}>{label}<span aria-hidden="true">+</span></a>)}
+                </div>
+              </section>
+            ))}
+          </div>
+          <div className="menu-actions" aria-label="Admissions actions">
+            <button type="button" onClick={() => openAction("enquire")}><small>Have a question?</small>Enquire</button>
+            <button type="button" onClick={() => openAction("tour")}><small>Visit North York</small>Book a Tour</button>
+            <button type="button" onClick={() => openAction("apply")}><small>Ready for the next step?</small>Apply Online</button>
+          </div>
+        </div>
+      )}
+
+      {searchOpen && (
+        <div className="search-overlay" role="dialog" aria-modal="true" aria-labelledby="search-title">
+          <div className="search-panel">
+            <div className="search-head">
+              <div><p className="eyebrow">Site search</p><h2 id="search-title">What can we help you find?</h2></div>
+              <button className="close-button" type="button" onClick={() => setSearchOpen(false)} aria-label="Close search">Close <span aria-hidden="true">x</span></button>
+            </div>
+            <label className="search-field"><span>Search Lake Forest Academy</span><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Try OSSD, student life or admissions" /></label>
+            <div className="search-results" aria-live="polite">
+              {searchResults.length ? searchResults.map((item) => (
+                <a href={item.href} key={item.title} onClick={() => setSearchOpen(false)}>
+                  <small>{item.area}</small><strong>{item.title}</strong><span>{item.text}</span>
+                </a>
+              )) : <p className="empty-state">No matching pages yet. Try a broader search.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <aside className="sticky-actions" aria-label="Quick admissions actions">
+        <button type="button" onClick={() => openAction("enquire")}>Enquire</button>
+        <button type="button" onClick={() => openAction("tour")}>Book a Tour</button>
+        <button type="button" onClick={() => openAction("apply")}>Apply</button>
+      </aside>
 
       <section className="hero" id="top">
         <img src="./images/campus-hero.jpg" alt="Students walking toward a modern school campus beside a lake" />
@@ -55,11 +245,18 @@ export default function Home() {
           <h1>Your path forward<br />starts here.</h1>
           <p className="hero-lead">A supportive learning community where academic purpose, personal confidence and university ambition grow together.</p>
           <div className="hero-actions">
-            <a className="button primary" href="#admissions">Explore admissions <span>→</span></a>
-            <a className="button ghost" href="#academics">Discover our programs</a>
+            <a className="button primary" href="#admissions">Explore admissions <span aria-hidden="true">-&gt;</span></a>
+            <button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button>
           </div>
         </div>
         <div className="hero-note"><span>Learn with purpose.</span><span>Grow with confidence.</span></div>
+      </section>
+
+      <section className="quick-links" aria-label="Family quick links">
+        <a href="#news"><small>Dates and activities</small>School Calendar</a>
+        <a href="#admissions"><small>Plan your pathway</small>Entry Requirements</a>
+        <a href="#faq"><small>Common questions</small>Admissions FAQ</a>
+        <button type="button" onClick={() => openAction("tour")}><small>See the community</small>Visit LFA</button>
       </section>
 
       <section className="intro section" id="about">
@@ -68,15 +265,15 @@ export default function Home() {
           <h2>A close-knit school with a global outlook.</h2>
         </div>
         <div className="intro-copy">
-          <p>Lake Forest Academy is a Grade 9–12 learning community in North York, offering the Ontario Secondary School Diploma in an inclusive, student-centred environment.</p>
+          <p>Lake Forest Academy is a Grade 9-12 learning community in North York, offering the Ontario Secondary School Diploma in an inclusive, student-centred environment.</p>
           <p>Small classes, dedicated advisors and thoughtful university planning help every student build a pathway that reflects who they are and where they want to go.</p>
-          <a className="text-link" href="#community">Experience our community <span>↗</span></a>
+          <a className="text-link" href="#student-life">Experience our community <span aria-hidden="true">-&gt;</span></a>
         </div>
       </section>
 
-      <section className="stats" aria-label="School facts">
+      <section className="stats" id="facts" aria-label="School facts">
         <div><strong>320</strong><span>students</span></div>
-        <div><strong>1:10</strong><span>teacher–student ratio</span></div>
+        <div><strong>1:10</strong><span>teacher-student ratio</span></div>
         <div><strong>30+</strong><span>OSSD courses</span></div>
         <div><strong>18</strong><span>countries represented</span></div>
       </section>
@@ -87,36 +284,28 @@ export default function Home() {
           <h2>An OSSD pathway built around your goals.</h2>
           <p>Students earn the Ontario Secondary School Diploma through a balanced program of required credits, electives, literacy learning and community involvement.</p>
         </div>
-
-        <div className="program-grid">
+        <div className="program-grid" id="programs">
           {programs.map((program) => (
             <article className="program-card" key={program.code}>
-              <span>{program.code}</span>
-              <h3>{program.title}</h3>
-              <p>{program.text}</p>
+              <span>{program.code}</span><h3>{program.title}</h3><p>{program.text}</p>
             </article>
           ))}
         </div>
-
         <div className="feature-row">
           <div className="feature-image"><img src="./images/science-lab.jpg" alt="Students conducting a science experiment with their teacher" /></div>
           <div className="feature-copy">
             <p className="eyebrow light">Learning that connects</p>
             <h2>Curious minds. Practical experiences.</h2>
             <p>Our classrooms combine Ontario curriculum expectations with hands-on inquiry, collaboration and clear academic feedback.</p>
-            <ul>
-              <li>Average class size of 15–18 students</li>
-              <li>After-school tutorials and academic support</li>
-              <li>Course planning aligned with university prerequisites</li>
-            </ul>
+            <ul><li>Average class size of 15-18 students</li><li>After-school tutorials and academic support</li><li>Course planning aligned with university prerequisites</li></ul>
           </div>
         </div>
       </section>
 
-      <section className="support section">
+      <section className="support section" id="guidance">
         <div className="support-copy">
           <p className="eyebrow">Guidance at every turning point</p>
-          <h2>A plan for today—and what comes next.</h2>
+          <h2>A plan for today - and what comes next.</h2>
           <p>Every student is known by name and supported by an advisor who brings academics, wellbeing and future planning into one clear conversation.</p>
           <div className="support-list">
             <div><strong>01</strong><span><b>Personal course planning</b>Build the right sequence of credits for graduation and university entry.</span></div>
@@ -127,65 +316,112 @@ export default function Home() {
         <div className="support-image"><img src="./images/student-guidance.jpg" alt="A guidance counsellor helping a student plan their academic pathway" /></div>
       </section>
 
-      <section className="community" id="community">
-        <div className="community-grid">
-          <img className="community-main" src="./images/student-community.jpg" alt="A diverse group of students talking in the school courtyard" />
-          <img src="./images/technology-class.jpg" alt="Students collaborating on a technology project" />
-          <img src="./images/campus-life-basketball.jpg" alt="Students playing basketball in the school gym" />
+      <section className="student-life section" id="student-life">
+        <div className="student-life-intro">
+          <div><p className="eyebrow light">Life at Lake Forest</p><h2>A community where everyone has a place.</h2></div>
+          <div><p>Clubs, athletics, leadership and service give students room to try new things, form lasting friendships and contribute with confidence.</p><div className="club-tags"><span>Robotics</span><span>Basketball</span><span>Model UN</span><span>Visual Arts</span><span>Student Council</span><span>Volunteering</span></div></div>
         </div>
-        <div className="community-copy">
-          <p className="eyebrow light">Beyond the classroom</p>
-          <h2>A community where everyone has a place.</h2>
-          <p>Clubs, athletics, leadership and service give students room to try new things, form lasting friendships and contribute with confidence.</p>
-          <div className="club-tags"><span>Robotics</span><span>Basketball</span><span>Model UN</span><span>Visual Arts</span><span>Student Council</span><span>Volunteering</span></div>
+        <div className="life-options">
+          <article><span>01</span><h3>Campus belonging</h3><p>Advisor check-ins, peer ambassadors and student-led activities create a welcoming daily rhythm.</p></article>
+          <article><span>02</span><h3>International transition</h3><p>Orientation, ESL planning and practical guidance help students settle into learning in Ontario.</p></article>
+          <article><span>03</span><h3>Family support</h3><p>International families receive practical orientation and settling resources; no school-operated boarding is claimed.</p></article>
+        </div>
+
+        <div className="life-carousel" id="life-gallery" aria-roledescription="carousel" aria-label="Student life photo stories">
+          <figure>
+            <img src={activeSlide.src} alt={activeSlide.alt} />
+            <figcaption aria-live="polite"><small>Photo story {carouselIndex + 1} of {carouselSlides.length}</small><strong>{activeSlide.title}</strong><span>{activeSlide.text}</span></figcaption>
+          </figure>
+          <div className="carousel-controls">
+            <button type="button" onClick={() => changeSlide(-1)} aria-label="Previous photo">Previous</button>
+            <div className="carousel-dots" aria-label="Choose a photo">
+              {carouselSlides.map((slide, index) => <button type="button" key={slide.title} className={index === carouselIndex ? "active" : ""} aria-label={`Show photo ${index + 1}: ${slide.title}`} aria-current={index === carouselIndex ? "true" : undefined} onClick={() => setCarouselIndex(index)} />)}
+            </div>
+            <button type="button" onClick={() => setCarouselPlaying((playing) => !playing)}>{carouselPlaying ? "Pause" : "Play"}</button>
+            <button type="button" onClick={() => changeSlide(1)} aria-label="Next photo">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="news section" id="news">
+        <div className="section-heading news-heading"><div><p className="eyebrow">News and events</p><h2>What is happening at LFA.</h2></div><p>Sample calendar content for this fictional school prototype.</p></div>
+        <div className="news-grid">
+          {newsItems.map((item) => <article key={item.title}><div><time>{item.date}</time><span>{item.category}</span></div><h3>{item.title}</h3><p>{item.text}</p><a href="#contact">Learn more <span aria-hidden="true">-&gt;</span></a></article>)}
         </div>
       </section>
 
       <section className="admissions section" id="admissions">
-        <div className="section-heading">
-          <p className="eyebrow">Admissions</p>
-          <h2>Four steps to your Lake Forest journey.</h2>
-          <p>We welcome domestic and international applicants entering Grades 9–12. Our team will guide your family through every stage.</p>
-        </div>
+        <div className="section-heading"><p className="eyebrow">Admissions</p><h2>Four steps to your Lake Forest journey.</h2><p>We welcome domestic and international applicants entering Grades 9-12. Our team will guide your family through every stage.</p></div>
         <div className="steps">
-          {admissionsSteps.map(([number, title, text]) => (
-            <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>
+          {admissionsSteps.map(([number, title, text]) => <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>)}
+        </div>
+      </section>
+
+      <section className="faq section" id="faq">
+        <div className="faq-heading"><p className="eyebrow">Frequently asked questions</p><h2>Clear answers for families.</h2><p>These answers describe the current test-site concept. Final admissions policies should be verified before commercial use.</p></div>
+        <div className="faq-list">
+          {faqs.map(([question, answer], index) => (
+            <article className={openFaq === index ? "open" : ""} key={question}>
+              <h3><button type="button" aria-expanded={openFaq === index} aria-controls={`faq-answer-${index}`} onClick={() => setOpenFaq(openFaq === index ? null : index)}><span>{question}</span><i aria-hidden="true">{openFaq === index ? "-" : "+"}</i></button></h3>
+              <div id={`faq-answer-${index}`} hidden={openFaq !== index}><p>{answer}</p></div>
+            </article>
           ))}
         </div>
       </section>
 
-      <section className="contact" id="contact">
-        <div className="contact-copy">
-          <p className="eyebrow light">Let’s start a conversation</p>
-          <h2>Ready to explore what’s possible?</h2>
-          <p>Tell us a little about your student. Our admissions team will help you understand programs, requirements and next steps.</p>
-          <div className="contact-details">
-            <span><small>Admissions</small>+1 416-555-0162</span>
-            <span><small>Email</small>admissions@lakeforestacademy.example</span>
-            <span><small>Location</small>North York, Ontario</span>
-          </div>
+      <section className="action-panel" aria-label="Admissions next steps">
+        <div><p className="eyebrow light">Your next step</p><h2>Explore Lake Forest Academy your way.</h2></div>
+        <div className="action-cards">
+          <button type="button" onClick={() => openAction("enquire")}><small>Ask a question</small><strong>Enquire</strong><span aria-hidden="true">01</span></button>
+          <button type="button" onClick={() => openAction("tour")}><small>Meet our community</small><strong>Book a Tour</strong><span aria-hidden="true">02</span></button>
+          <button type="button" onClick={() => openAction("apply")}><small>Begin your journey</small><strong>Apply Online</strong><span aria-hidden="true">03</span></button>
         </div>
-        <form className="contact-form" onSubmit={handleSubmit}>
-          <div className="field-row">
-            <label>Student name<input name="student" required placeholder="Full name" /></label>
-            <label>Current grade<select name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label>
-          </div>
-          <div className="field-row">
-            <label>Parent / guardian email<input name="email" type="email" required placeholder="name@example.com" /></label>
-            <label>Entry term<select name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label>
-          </div>
+      </section>
+
+      <section className="contact section" id="contact">
+        <div className="contact-copy">
+          <p className="eyebrow light">Let's start a conversation</p><h2>Ready to explore what is possible?</h2><p>Tell us a little about your student. Our admissions team will help you understand programs, requirements and next steps.</p>
+          <div className="contact-details"><span><small>Admissions</small>+1 416-555-0162</span><span><small>Email</small>admissions@lakeforestacademy.example</span><span><small>Location</small>North York, Ontario</span></div>
+        </div>
+        <form className="contact-form" onSubmit={handleContactSubmit}>
+          <div className="field-row"><label>Student name<input name="student" required placeholder="Full name" /></label><label>Current grade<select name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
+          <div className="field-row"><label>Parent / guardian email<input name="email" type="email" required placeholder="name@example.com" /></label><label>Entry term<select name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label></div>
           <label>How can we help?<textarea name="message" rows={4} placeholder="Tell us about your questions or goals." /></label>
-          <button className="button form-button" type="submit">Submit inquiry <span>→</span></button>
-          {sent && <p className="form-message" role="status">Test form only — no information has been sent.</p>}
+          <button className="button form-button" type="submit">Submit inquiry <span aria-hidden="true">-&gt;</span></button>
+          {contactSent && <p className="form-message" role="status">Test form only - no information has been sent.</p>}
           <small className="form-disclaimer">This prototype does not store or transmit personal information.</small>
         </form>
       </section>
 
       <footer>
         <div className="footer-brand"><img className="footer-logo" src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /><p>Learn with purpose. Grow with confidence.</p></div>
-        <div className="footer-links"><a href="#about">Our School</a><a href="#academics">Academics</a><a href="#admissions">Admissions</a><a href="#community">Student Life</a></div>
-        <div className="footer-bottom"><span>© 2026 Lake Forest Academy — Demo website</span><span>All school details are fictional placeholders.</span></div>
+        <div className="footer-columns">
+          {menuGroups.map((group) => <div key={group.title}><strong>{group.title}</strong>{group.links.slice(0, 3).map(([label, href]) => <a href={href} key={label}>{label}</a>)}</div>)}
+        </div>
+        <div className="footer-bottom"><span>© 2026 Lake Forest Academy - Demo website</span><span>All school details, events and contact information are fictional placeholders.</span></div>
       </footer>
+
+      {activeAction && activeCopy && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="action-modal" role="dialog" aria-modal="true" aria-labelledby="action-title">
+            <button className="close-button" type="button" onClick={() => setActiveAction(null)} aria-label="Close admissions form">Close <span aria-hidden="true">x</span></button>
+            <p className="eyebrow">{activeCopy.eyebrow}</p><h2 id="action-title">{activeCopy.title}</h2><p>{activeCopy.text}</p>
+            {actionSent ? (
+              <div className="modal-success" role="status"><strong>Thank you for testing this experience.</strong><p>No information was sent or stored. A production version can connect this step to an admissions system.</p><button className="button primary" type="button" onClick={() => setActiveAction(null)}>Close</button></div>
+            ) : (
+              <form onSubmit={handleActionSubmit}>
+                <div className="field-row"><label>Student name<input autoFocus required name="student" placeholder="Full name" /></label><label>Current grade<select name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
+                <label>Parent / guardian email<input type="email" required name="email" placeholder="name@example.com" /></label>
+                {activeAction === "tour" && <label>Preferred visit date<input type="date" name="visit-date" /></label>}
+                {activeAction === "apply" && <label>Intended entry term<select name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label>}
+                <label>Message<textarea name="message" rows={3} placeholder="Share any questions or useful context." /></label>
+                <button className="button primary" type="submit">{activeCopy.button}</button>
+                <small className="form-disclaimer">Demo only - no information will be transmitted.</small>
+              </form>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   );
 }
