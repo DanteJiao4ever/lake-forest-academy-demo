@@ -4,81 +4,81 @@ type ActionType = "enquire" | "tour" | "apply";
 type PageKind = "home" | "academics" | "admissions";
 
 const programs = [
-  { code: "SCI", title: "Sciences", text: "Biology, chemistry and physics taught through inquiry, lab work and evidence-based thinking." },
-  { code: "MAT", title: "Mathematics", text: "From foundations to advanced functions and calculus, with support matched to each learner." },
-  { code: "TEC", title: "Technology", text: "Computer science, digital fluency and project-based problem solving for a changing world." },
-  { code: "BUS", title: "Business", text: "Business leadership, economics and accounting grounded in real-world applications." },
-  { code: "HUM", title: "Humanities", text: "English, social sciences and the arts that strengthen communication and global awareness." },
-  { code: "ESL", title: "English Support", text: "Focused language development integrated with academic coursework and university preparation." },
+  { code: "SCI", title: "Sciences", text: "Students learn to ask useful questions, plan careful investigations and explain what the evidence shows." },
+  { code: "MAT", title: "Mathematics", text: "Courses build from strong fundamentals to functions, calculus and data, with time to practise and revisit difficult ideas." },
+  { code: "TEC", title: "Technology", text: "Coding, digital design and collaborative projects help students turn an idea into something they can test and improve." },
+  { code: "BUS", title: "Business", text: "Case studies and practical assignments introduce accounting, entrepreneurship, economics and responsible decision-making." },
+  { code: "HUM", title: "Humanities", text: "English, social sciences and the arts invite students to read closely, communicate clearly and understand different perspectives." },
+  { code: "ESL", title: "English Support", text: "Targeted language support helps multilingual learners participate confidently in class and meet the demands of senior-level study." },
 ];
 
 const admissionsSteps = [
-  ["01", "Start your application", "Complete a short inquiry and tell us about the student's goals."],
-  ["02", "Share your records", "Provide recent transcripts and identification documents for an academic review."],
-  ["03", "Meet our team", "Join a friendly interview and complete an academic or English assessment if needed."],
-  ["04", "Plan your pathway", "Receive a decision and meet an advisor to build a personalized OSSD study plan."],
+  ["01", "Tell us about your student", "Begin with a short enquiry about the student's current grade, interests and intended entry term."],
+  ["02", "Share recent school records", "The admissions team will explain how to provide report cards or transcripts through an appropriate process."],
+  ["03", "Meet with us", "A conversation with the student and family helps us understand goals, support needs and any placement questions."],
+  ["04", "Review the next steps", "After the academic review, the family receives an admissions decision and an invitation to discuss course planning."],
 ];
 
 const academicJourney = [
-  ["Grade 9", "Build the foundation", "Strengthen core learning habits, understand diploma expectations and begin exploring interests."],
-  ["Grade 10", "Choose with intention", "Review progress, develop academic communication and identify areas for deeper study."],
-  ["Grade 11", "Connect choices to goals", "Select senior courses with future program prerequisites in mind and grow as an independent learner."],
-  ["Grade 12", "Complete and look ahead", "Confirm remaining requirements, refine applications and prepare for the transition beyond secondary school."],
+  ["Grade 9", "Settle into strong habits", "Build confidence in core subjects, learn how high school credits work and begin exploring new interests."],
+  ["Grade 10", "Notice what fits", "Review progress, strengthen academic communication and make more intentional choices for senior study."],
+  ["Grade 11", "Connect courses with possibilities", "Choose senior courses with post-secondary prerequisites in mind while becoming a more independent learner."],
+  ["Grade 12", "Finish well and look ahead", "Confirm remaining requirements, prepare applications and plan for the transition beyond secondary school."],
 ];
 
 const learningPrinciples = [
-  ["01", "Inquiry before answers", "Students investigate, test ideas and explain the evidence behind their thinking."],
-  ["02", "Feedback that moves learning", "Clear expectations and timely guidance turn revision into a normal part of progress."],
-  ["03", "Knowledge in context", "Labs, presentations and collaborative projects connect classroom learning with wider questions."],
+  ["01", "Begin with a good question", "Students investigate ideas, test assumptions and learn to explain the evidence behind their conclusions."],
+  ["02", "Use feedback well", "Teachers make expectations clear and give students practical ways to revise and improve their work."],
+  ["03", "Connect learning with context", "Labs, presentations and group projects help students see where classroom knowledge can be used."],
 ];
 
 const admissionPathways = [
   {
     label: "Domestic applicants",
-    title: "Continue your Ontario journey",
-    text: "A future review may consider the student's current grade, recent Canadian school records, intended entry term and course-planning needs.",
+    title: "Build on your current studies",
+    text: "We begin with the student's current grade, recent Canadian school records and intended entry term. Guidance then identifies the questions that need to be resolved before a course plan is confirmed.",
   },
   {
     label: "International applicants",
-    title: "Plan a supported transition",
-    text: "A future review may also consider translated academic records, English-language readiness, identification documents and the family's independent immigration and housing plans.",
+    title: "Prepare for a new school system",
+    text: "We review recent academic records and the student's English-language background. Certified translations may be requested, while families remain responsible for immigration and housing arrangements.",
   },
 ];
 
 const applicationChecklist = [
   "Recent report cards or transcripts",
-  "Identification documentation, where applicable",
-  "Certified translations of academic records, where necessary",
-  "A short summary of the student's interests and goals",
-  "Information about previous English-language study",
-  "Any additional items requested through an authorized admissions process",
+  "The student's current grade and intended entry term",
+  "Certified English translations when original records are in another language",
+  "A short introduction to the student's interests and goals",
+  "Information about previous English-language study, if relevant",
+  "Any follow-up material confirmed directly by the admissions team",
 ];
 
 const historyMilestones = [
   {
     year: "2008",
-    title: "An idea takes root",
-    text: "A small group of Ontario educators and internationally minded families begins planning a North York secondary school where rigorous OSSD learning and close mentorship belong in the same daily experience.",
+    title: "A smaller school with a clear purpose",
+    text: "Lake Forest Academy grew from conversations among North York educators and families who wanted a secondary school where academic expectations and personal attention could exist side by side.",
   },
   {
     year: "2012",
-    title: "The first graduating class",
-    text: "The Academy celebrates its first graduating cohort, establishing advisory meetings, family partnership and a student-centred approach as enduring traditions.",
+    title: "Traditions begin to take hold",
+    text: "As the first senior students completed their time at the Academy, advisor meetings, family conversations and student-led activities became part of the school's everyday rhythm.",
   },
   {
     year: "2017",
-    title: "Guidance becomes a signature",
-    text: "Dedicated university planning and expanded English-language support give every student a clearer route from course selection to post-secondary study.",
+    title: "Guidance becomes part of every year",
+    text: "Course planning and post-secondary research were brought together so that students could understand not only what they needed to take, but why each choice mattered.",
   },
   {
     year: "2021",
-    title: "Learning moves beyond the desk",
-    text: "New science, technology and community-impact projects bring hands-on inquiry, collaboration and service into the centre of the academic program.",
+    title: "More learning moves into practice",
+    text: "Science investigations, technology projects and community-focused work gave students more opportunities to collaborate, solve problems and reflect on their impact.",
   },
   {
     year: "Today",
-    title: "A wider world, one community",
-    text: "The Academy now brings together 320 students from 18 countries, united by curiosity, responsibility and the confidence to choose their own path forward.",
+    title: "Still growing, still personal",
+    text: "Lake Forest Academy continues to welcome students with different experiences and ambitions while holding on to the close relationships that shaped the school from the beginning.",
   },
 ];
 
@@ -106,43 +106,43 @@ const menuGroups = [
 ];
 
 const carouselSlides = [
-  { src: "student-community.jpg", alt: "Students gathering in the school courtyard", title: "A community built on belonging", text: "Advisory, clubs and shared traditions help every student feel known." },
-  { src: "technology-class.jpg", alt: "Students collaborating on a technology project", title: "Ideas become real projects", text: "Students learn through teamwork, experimentation and purposeful technology." },
-  { src: "campus-life-basketball.jpg", alt: "Students playing basketball in the school gym", title: "Energy beyond the classroom", text: "Athletics and recreation create space for confidence, balance and friendship." },
-  { src: "science-lab.jpg", alt: "Students conducting a science experiment with their teacher", title: "Learning by doing", text: "Practical experiences connect Ontario curriculum expectations with curiosity." },
+  { src: "student-community.jpg", alt: "Students gathering in the school courtyard", title: "A place to feel known", text: "Advisor meetings, clubs and ordinary time together help new students find their place." },
+  { src: "technology-class.jpg", alt: "Students collaborating on a technology project", title: "An idea worth testing", text: "Students plan, build, make mistakes and improve their work together." },
+  { src: "campus-life-basketball.jpg", alt: "Students playing basketball in the school gym", title: "Time to move and reconnect", text: "Athletics and recreation give students a healthy change of pace after class." },
+  { src: "science-lab.jpg", alt: "Students conducting a science experiment with their teacher", title: "Look closely, then ask why", text: "Lab work gives students a chance to compare what they expected with what actually happened." },
 ];
 
 const newsItems = [
-  { date: "03 SEP 2026", category: "Community", title: "Welcome and Orientation Day", text: "New students meet their advisors, explore campus routines and connect with peer ambassadors." },
-  { date: "14 OCT 2026", category: "University Planning", title: "OSSD Pathways Evening", text: "Families explore prerequisites, graduation planning and Canadian university application timelines." },
-  { date: "07 NOV 2026", category: "Student Life", title: "Community Service Saturday", text: "Student teams take part in local service projects and reflect on responsible citizenship." },
+  { date: "03 SEP 2026", category: "Community", title: "New Student Welcome Morning", text: "Advisors and peer ambassadors will help new students learn the daily schedule, find their classrooms and meet the people they can turn to for help." },
+  { date: "14 OCT 2026", category: "Academic Planning", title: "Senior Courses and University Pathways Evening", text: "Students and families can ask questions about Grade 11 and 12 course choices, prerequisites and application timelines." },
+  { date: "07 NOV 2026", category: "Student Life", title: "North York Community Service Day", text: "Student groups will spend the morning contributing to local service activities, followed by a short reflection back at school." },
 ];
 
 const faqs = [
-  ["Does Lake Forest Academy offer the OSSD?", "Yes. This prototype presents Lake Forest Academy as an Ontario Grade 9-12 school offering courses toward the Ontario Secondary School Diploma."],
-  ["Which students can apply?", "Domestic and international students entering Grades 9-12 may submit an inquiry. Course placement is reviewed individually using recent academic records."],
-  ["Is English-language support available?", "Yes. ESL course planning, academic-language development and after-school learning support are included in the proposed student experience."],
-  ["Does the school operate boarding houses?", "No boarding operation is claimed in this prototype. International families would arrange housing independently, while the school concept focuses on orientation and academic transition support."],
-  ["How do I book a campus visit?", "Choose Book a Tour anywhere on the site, share your preferred date and the admissions team will follow up. The current form is a non-transmitting demo."],
-  ["Are the forms connected to admissions?", "Not yet. Every form on this test website demonstrates the experience only and does not store or transmit personal information."],
+  ["What academic pathway does Lake Forest Academy follow?", "Our Grade 9-12 program is organized around Ontario curriculum expectations and OSSD requirements. Guidance reviews each student's previous learning and remaining requirements before confirming a course plan."],
+  ["Who can apply?", "Domestic and international students seeking entry to Grades 9-12 may begin with an enquiry. Placement depends on recent academic records, the intended entry term and available courses."],
+  ["Is English-language support available?", "English-language support can be included in a student's plan when it is needed. The level and format of support are discussed after reviewing the student's academic and language background."],
+  ["Does the school offer boarding?", "Lake Forest Academy is a day school and does not operate student residences. Families make their own housing and transportation arrangements."],
+  ["How can I arrange a campus visit?", "Choose Book a Tour and suggest a preferred date. The admissions team will follow up to confirm an available time and explain what to expect during the visit."],
+  ["Can I submit documents through this website?", "No. The current enquiry and application forms are demonstrations and do not send or store personal information. Please do not enter or upload sensitive documents."],
 ];
 
 const searchItems = [
   { title: "About Lake Forest Academy", area: "Our School", text: "School profile, learning community and facts.", href: "#about" },
-  { title: "Our History", area: "Our School", text: "A fictional timeline from the founding idea to today's learning community.", href: "#history" },
+  { title: "Our History", area: "Our School", text: "How the school's close-knit approach developed over time.", href: "#history" },
   { title: "OSSD Academic Pathway", area: "Academics", text: "Course areas, diploma expectations and university preparation.", href: "#academics" },
   { title: "Guidance and English Support", area: "Student Support", text: "Course planning, wellbeing and ESL development.", href: "#guidance" },
   { title: "Student Life", area: "Community", text: "Clubs, athletics, leadership and international transition support.", href: "#student-life" },
-  { title: "News and Events", area: "Community", text: "Sample orientation, planning and service events.", href: "#news" },
+  { title: "News and Events", area: "Community", text: "Upcoming orientation, academic planning and community events.", href: "#news" },
   { title: "How to Apply", area: "Admissions", text: "Four steps from inquiry to an OSSD study plan.", href: "#admissions" },
   { title: "Admissions FAQ", area: "Admissions", text: "Answers about grades, language support and campus visits.", href: "#faq" },
-  { title: "Contact Admissions", area: "Admissions", text: "Ask a question or start a test inquiry.", href: "#contact" },
+  { title: "Contact Admissions", area: "Admissions", text: "Ask about entry, course planning or student support.", href: "#contact" },
 ];
 
 const actionCopy: Record<ActionType, { eyebrow: string; title: string; text: string; button: string }> = {
-  enquire: { eyebrow: "Admissions enquiry", title: "Start a conversation", text: "Tell us what you would like to understand about OSSD programs, entry requirements or student support.", button: "Submit enquiry" },
-  tour: { eyebrow: "Campus visit", title: "Book a school tour", text: "Choose a preferred visit date and share who will be joining you. Our demo admissions team will confirm the next step.", button: "Request a tour" },
-  apply: { eyebrow: "Online application", title: "Begin your application", text: "Share the student's current grade and intended entry term to start a preliminary application record.", button: "Start application" },
+  enquire: { eyebrow: "Admissions enquiry", title: "Ask us what you need to know", text: "Tell us the student's current grade and what your family is hoping to understand about courses, support or admissions.", button: "Send enquiry" },
+  tour: { eyebrow: "Campus visit", title: "Come and see a school day up close", text: "Suggest a preferred date and let us know who plans to attend. A visit time would be confirmed before you arrive.", button: "Request a visit" },
+  apply: { eyebrow: "Application", title: "Begin with the essentials", text: "Share the student's current grade and intended entry term to begin an initial admissions record.", button: "Begin application" },
 };
 
 type PageViewProps = {
@@ -158,14 +158,14 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
       <section className="inner-hero" id="top">
         <div className="inner-hero-copy">
           <p className="eyebrow light">Academics at Lake Forest</p>
-          <h1>Strong foundations. <strong>A pathway that stays open.</strong></h1>
-          <p>Our proposed Grade 9-12 experience brings OSSD planning, practical learning and close guidance into one connected academic journey.</p>
+          <h1>Learn with purpose. <strong>Keep your options open.</strong></h1>
+          <p>A good course plan should make sense now and still leave room for a student to change. Our Grade 9-12 program combines Ontario curriculum, practical work and regular guidance.</p>
           <div className="hero-actions">
-            <a className="button primary" href="#pathway">Explore the pathway <span aria-hidden="true">-&gt;</span></a>
-            <button className="button ghost" type="button" onClick={() => openAction("enquire")}>Talk with an advisor</button>
+            <a className="button primary" href="#pathway">See how planning works <span aria-hidden="true">-&gt;</span></a>
+            <button className="button ghost" type="button" onClick={() => openAction("enquire")}>Ask about courses</button>
           </div>
         </div>
-        <div className="inner-hero-media"><img src={assetUrl("technology-class.jpg")} alt="Students collaborating on a technology project" /></div>
+        <div className="inner-hero-media"><img src={assetUrl("academics-seminar.jpg")} alt="Students and a teacher discussing a classroom design project" /></div>
       </section>
 
       <nav className="page-subnav" aria-label="Academics page">
@@ -173,31 +173,31 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
       </nav>
 
       <section className="page-intro section" id="pathway">
-        <div><p className="eyebrow">The Ontario pathway</p><h2>Clear expectations. Personal direction.</h2></div>
+        <div><p className="eyebrow">The Ontario pathway</p><h2>Start with the student, then build the plan.</h2></div>
         <div className="page-intro-copy">
-          <p>Every student's plan begins with completed learning, current interests and a possible destination. Advisors bring required and elective credits, literacy learning, community involvement and future prerequisites into one regularly reviewed pathway.</p>
-          <p>Requirements can depend on when a student begins Grade 9. Final plans, placement and course availability must always be confirmed individually.</p>
+          <p>Each plan begins with previous credits, current strengths and the possibilities a student wants to explore. Required courses, electives, literacy learning, community involvement and future prerequisites are reviewed together.</p>
+          <p>Graduation requirements can depend on when and where a student began secondary school. Guidance confirms each student's requirements, placement and available courses individually.</p>
         </div>
       </section>
 
       <section className="framework section" aria-label="OSSD planning framework">
         <div className="framework-grid">
-          <article><span>01</span><h3>Credit planning</h3><p>Map required learning, electives and any completed credits into a coherent graduation plan.</p></article>
-          <article><span>02</span><h3>Literacy development</h3><p>Build the reading, writing and communication students need across every subject area.</p></article>
-          <article><span>03</span><h3>Community involvement</h3><p>Connect responsibility and reflection with meaningful participation beyond the classroom.</p></article>
-          <article><span>04</span><h3>Future prerequisites</h3><p>Review possible college and university programs before choosing senior courses.</p></article>
+          <article><span>01</span><h3>Credit planning</h3><p>Review completed learning and map the remaining required and elective courses in a sensible sequence.</p></article>
+          <article><span>02</span><h3>Literacy development</h3><p>Strengthen the reading, writing and communication students use in every subject.</p></article>
+          <article><span>03</span><h3>Community involvement</h3><p>Choose meaningful ways to contribute, then reflect on what the experience taught.</p></article>
+          <article><span>04</span><h3>Future prerequisites</h3><p>Look at possible college and university programs before senior course choices are finalized.</p></article>
         </div>
       </section>
 
       <section className="grade-journey section" id="grade-journey">
-        <div className="section-heading"><p className="eyebrow">Grades 9-12</p><h2>Four years. One connected plan.</h2><p>Course choices become more useful when every year prepares for the next.</p></div>
+        <div className="section-heading"><p className="eyebrow">Grades 9-12</p><h2>A plan that changes as students do.</h2><p>Each year should answer today's questions while preparing students for the choices that come next.</p></div>
         <div className="journey-list">
           {academicJourney.map(([grade, title, text]) => <article key={grade}><strong>{grade}</strong><div><h3>{title}.</h3><p>{text}</p></div></article>)}
         </div>
       </section>
 
       <section className="academics section inner-programs" id="programs">
-        <div className="section-heading"><p className="eyebrow">Course exploration</p><h2>Find the subjects that move you forward.</h2><p>The proposed program balances core OSSD learning with room to explore scientific, technological, business, creative and human questions.</p></div>
+        <div className="section-heading"><p className="eyebrow">Course exploration</p><h2>Build depth, then leave room to explore.</h2><p>The program combines core Ontario curriculum with opportunities to investigate science, technology, business, the humanities and the arts.</p></div>
         <div className="program-grid">
           {programs.map((program) => <article className="program-card" key={program.code}><span>{program.code}</span><h3>{program.title}</h3><p>{program.text}</p></article>)}
         </div>
@@ -205,15 +205,15 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
 
       <section className="learning-practice section">
         <div className="learning-image"><img src={assetUrl("science-lab.jpg")} alt="Students conducting a science experiment with their teacher" /></div>
-        <div className="learning-copy"><p className="eyebrow">Learning that connects</p><h2>Questions become projects. Feedback becomes progress.</h2><p>Strong academic work is more than completing content. Students investigate, collaborate, revise and explain their thinking.</p>
+        <div className="learning-copy"><p className="eyebrow">Learning that connects</p><h2>Good work rarely happens on the first try.</h2><p>Students investigate, discuss, revise and explain their thinking. Feedback is treated as part of learning, not simply a comment added after the work is finished.</p>
           <div className="principle-list">{learningPrinciples.map(([number, title, text]) => <div key={number}><strong>{number}</strong><span><b>{title}</b>{text}</span></div>)}</div>
         </div>
       </section>
 
       <section className="support section" id="guidance">
-        <div className="support-copy"><p className="eyebrow">A plan that belongs to the student</p><h2>Known by name. Guided with purpose.</h2><p>Academic planning begins with the student's current record, interests and intended destination, then evolves as goals become clearer.</p>
+        <div className="support-copy"><p className="eyebrow">A plan that belongs to the student</p><h2>A course plan students can understand and own.</h2><p>Planning begins with the student's record, interests and current questions. Advisors revisit the plan as new strengths appear and post-secondary ideas become more specific.</p>
           <div className="support-list">
-            <div><strong>01</strong><span><b>Course mapping</b>Review completed learning and map the courses still needed for the proposed pathway.</span></div>
+            <div><strong>01</strong><span><b>Course mapping</b>Review completed learning and map the courses still needed for the student's pathway.</span></div>
             <div><strong>02</strong><span><b>Post-secondary research</b>Compare prerequisites, timelines and questions to explore with colleges and universities.</span></div>
             <div><strong>03</strong><span><b>Academic English support</b>Connect language development with the reading, writing and discussion used in class.</span></div>
           </div>
@@ -222,8 +222,8 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
       </section>
 
       <section className="page-next section">
-        <div><p className="eyebrow light">Your next academic step</p><h2>Bring us your goals. We will help you frame the questions.</h2><p>Whether entering Grade 9 or transferring later, begin with a conversation about current studies and the intended entry term.</p></div>
-        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire about academics</button><a className="button ghost" href={routeHref("admissions")}>Explore admissions</a><a className="text-link light-link" href={homeHref("#student-life")}>Discover student life <span aria-hidden="true">-&gt;</span></a></div>
+        <div><p className="eyebrow light">Your next academic step</p><h2>Bring your transcript - and your questions.</h2><p>Whether a student is entering Grade 9 or transferring later, the best starting point is an honest conversation about completed studies, interests and the intended entry term.</p></div>
+        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Ask about academics</button><a className="button ghost" href={routeHref("admissions")}>Review admissions</a><a className="text-link light-link" href={homeHref("#student-life")}>Discover student life <span aria-hidden="true">-&gt;</span></a></div>
       </section>
     </>
   );
@@ -240,11 +240,11 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
       <section className="inner-hero admissions-hero" id="top">
         <div className="inner-hero-copy">
           <p className="eyebrow light">Admissions</p>
-          <h1>A clear path to <strong>your next chapter.</strong></h1>
-          <p>Choosing a school is a meaningful decision. This concept presents a thoughtful Grade 9-12 admissions journey built around clear guidance and an individual OSSD study plan.</p>
-          <div className="hero-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Start an enquiry</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button></div>
+          <h1>Choosing a school is personal. <strong>The process can still be clear.</strong></h1>
+          <p>Begin with a conversation, share recent school records and meet with us to discuss fit, support needs and a possible OSSD course pathway.</p>
+          <div className="hero-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Ask Admissions</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button></div>
         </div>
-        <div className="inner-hero-media"><img src={assetUrl("student-community.jpg")} alt="Students connecting in a welcoming school community" /></div>
+        <div className="inner-hero-media"><img src={assetUrl("admissions-welcome.jpg")} alt="A peer ambassador welcoming a prospective student on campus" /></div>
       </section>
 
       <nav className="page-subnav" aria-label="Admissions page">
@@ -252,35 +252,35 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
       </nav>
 
       <section className="pathways section" id="pathways">
-        <div className="section-heading"><p className="eyebrow">Find your pathway</p><h2>Different starting points. One thoughtful process.</h2><p>These examples show how a future admissions review could respond to each student's context.</p></div>
+        <div className="section-heading"><p className="eyebrow">Find your pathway</p><h2>We begin by understanding where the student is now.</h2><p>Recent studies, intended entry term and support needs give the admissions team the context for a useful first conversation.</p></div>
         <div className="pathway-grid">
           {admissionPathways.map((pathway, index) => <article key={pathway.label}><span>0{index + 1}</span><small>{pathway.label}</small><h3>{pathway.title}.</h3><p>{pathway.text}</p></article>)}
         </div>
-        <p className="section-note">Planning examples only. This concept does not provide immigration, legal or housing advice.</p>
+        <p className="section-note">Lake Forest Academy is a day school. Families are responsible for immigration, legal, housing and transportation arrangements.</p>
       </section>
 
       <section className="admissions section inner-admissions" id="steps">
-        <div className="section-heading"><p className="eyebrow">The admissions journey</p><h2>Four clear steps forward.</h2><p>A production process would pair each stage with direct guidance from an authorized admissions team.</p></div>
+        <div className="section-heading"><p className="eyebrow">The admissions journey</p><h2>Four steps, with time to ask questions.</h2><p>Admissions should help both the family and the school understand whether the learning environment and suggested course plan are a good fit.</p></div>
         <div className="steps">{admissionsSteps.map(([number, title, text]) => <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>)}</div>
       </section>
 
       <section className="requirements section" id="requirements">
-        <div className="requirements-copy"><p className="eyebrow">Preparing ahead</p><h2>A simple starting checklist.</h2><p>A future application may request the following items through a secure, authorized process.</p><button className="button primary" type="button" onClick={() => openAction("apply")}>Preview the application</button></div>
+        <div className="requirements-copy"><p className="eyebrow">Preparing ahead</p><h2>A few things to have nearby.</h2><p>You do not need to organize everything before making an enquiry. These items simply help the academic review move forward when the time comes.</p><button className="button primary" type="button" onClick={() => openAction("apply")}>Begin an application</button></div>
         <div className="requirement-list">
           {applicationChecklist.map((item, index) => <div key={item}><strong>{String(index + 1).padStart(2, "0")}</strong><span>{item}</span></div>)}
-          <aside><b>Important</b>Do not send or upload personal documents through this prototype. It does not store or transmit information.</aside>
+          <aside><b>Please note</b>This demonstration website cannot receive documents or personal information. Do not enter or upload sensitive records here.</aside>
         </div>
       </section>
 
       <section className="faq section" id="faq">
-        <div className="faq-heading"><p className="eyebrow">Admissions questions</p><h2>Clear answers before you begin.</h2><p>No official deadlines, fees, guarantees or final entry policies are defined in this concept.</p></div>
+        <div className="faq-heading"><p className="eyebrow">Admissions questions</p><h2>Questions families often ask first.</h2><p>Entry dates, course availability and individual requirements are confirmed directly with each family after an academic review.</p></div>
         <div className="faq-list">
           {faqs.map(([question, answer], index) => <article className={openFaq === index ? "open" : ""} key={question}><h3><button type="button" aria-expanded={openFaq === index} aria-controls={`admissions-faq-${index}`} onClick={() => setOpenFaq(openFaq === index ? null : index)}><span>{question}</span><i aria-hidden="true">{openFaq === index ? "-" : "+"}</i></button></h3><div id={`admissions-faq-${index}`} hidden={openFaq !== index}><p>{answer}</p></div></article>)}
         </div>
       </section>
 
       <section className="page-next section admissions-next">
-        <div><p className="eyebrow light">Your next step</p><h2>Explore Lake Forest Academy at your own pace.</h2><p>Ask a question, preview a campus visit or see how a future online application could begin.</p></div>
+        <div><p className="eyebrow light">Your next step</p><h2>Take the next step that feels useful.</h2><p>Ask a question, arrange a visit or review the academic program before deciding whether to begin an application.</p></div>
         <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a Tour</button><a className="text-link light-link" href={routeHref("academics")}>Review academics <span aria-hidden="true">-&gt;</span></a></div>
       </section>
     </>
@@ -445,8 +445,6 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
   return (
     <>
       <a className="skip-link" href="#top">Skip to main content</a>
-      <div className="demo-banner">Fictional North York school concept - not affiliated with any existing institution</div>
-
       <header className="site-header">
         <a className="brand" href={homeHref()} aria-label="Lake Forest Academy home">
           <img className="brand-logo" src={assetUrl("lake-forest-academy-logo.png")} alt="Lake Forest Academy" />
@@ -530,15 +528,15 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
       {page === "home" ? (
       <>
       <section className="hero" id="top">
-        <img src={assetUrl("campus-hero.jpg")} alt="Students walking toward a modern school campus beside a lake" />
+        <img src={assetUrl("campus-arrival-hero.jpg")} alt="Students arriving at the Lake Forest Academy campus in North York" />
         <div className="hero-overlay" />
         <div className="hero-content">
           <p className="eyebrow light">North York, Ontario &middot; Grades 9-12 &middot; OSSD</p>
-          <h1><span>Clear direction.</span><span>Strong foundations.</span><strong>Your future.</strong></h1>
-          <p className="hero-lead">A thoughtful learning community where strong foundations, clear guidance and global ambition help every student move forward with confidence.</p>
+          <h1><span>Find your footing.</span><span>Discover your strengths.</span><strong>Choose what comes next.</strong></h1>
+          <p className="hero-lead">High school brings big decisions. At Lake Forest Academy, students receive the academic challenge, steady guidance and room to grow they need to make those decisions well.</p>
           <div className="hero-actions">
-            <a className="button primary" href={routeHref("academics")}>Explore the OSSD program <span aria-hidden="true">-&gt;</span></a>
-            <button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button>
+            <a className="button primary" href={routeHref("academics")}>Explore academics <span aria-hidden="true">-&gt;</span></a>
+            <button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button>
           </div>
         </div>
       </section>
@@ -553,27 +551,27 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
       <section className="intro section" id="about">
         <div>
           <p className="eyebrow">Welcome to Lake Forest Academy</p>
-          <h2>A close-knit school.<br /><span>A global outlook.</span></h2>
+          <h2>A school that knows its students.<br /><span>A community that keeps them moving.</span></h2>
         </div>
         <div className="intro-copy">
-          <p>Lake Forest Academy is a Grade 9-12 learning community in North York, offering the Ontario Secondary School Diploma in an inclusive, student-centred environment.</p>
-          <p>Our name brings together two ideas: the clarity and openness of a lake, and the deep roots and steady growth of a forest. They shape how we learn, support one another and look toward the future.</p>
+          <p>Lake Forest Academy is a Grade 9-12 day school in North York. Our academic program is organized around Ontario curriculum expectations and individual OSSD planning.</p>
+          <p>Students do their best work when someone understands where they are starting and what they are working toward. Teachers, advisors and families stay in conversation so that support can be practical and timely.</p>
           <a className="text-link" href="#history">Read our story <span aria-hidden="true">-&gt;</span></a>
         </div>
       </section>
 
       <section className="stats" id="facts" aria-label="School facts">
-        <div><strong>320</strong><span>students</span></div>
-        <div><strong>1:10</strong><span>teacher-student ratio</span></div>
-        <div><strong>30+</strong><span>OSSD courses</span></div>
-        <div><strong>18</strong><span>countries represented</span></div>
+        <div><strong>9-12</strong><span>grades served</span></div>
+        <div><strong>OSSD</strong><span>individual pathway planning</span></div>
+        <div><strong>North York</strong><span>Ontario campus</span></div>
+        <div><strong>Day school</strong><span>local and international students</span></div>
       </section>
 
       <section className="academics section" id="academics">
         <div className="section-heading centered">
-          <p className="eyebrow">The Ontario advantage</p>
-          <h2>An OSSD pathway built around your goals.</h2>
-          <p>Students earn the Ontario Secondary School Diploma through a balanced program of required credits, electives, literacy learning and community involvement.</p>
+          <p className="eyebrow">The Ontario pathway</p>
+          <h2>A clear plan, reviewed as students grow.</h2>
+          <p>Required courses, electives, literacy learning, community involvement and future prerequisites are considered together rather than as separate checklists.</p>
         </div>
         <div className="program-grid" id="programs">
           {programs.slice(0, 3).map((program) => (
@@ -586,9 +584,9 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
           <div className="feature-image"><img src={assetUrl("science-lab.jpg")} alt="Students conducting a science experiment with their teacher" /></div>
           <div className="feature-copy">
             <p className="eyebrow light">Learning that connects</p>
-            <h2>Curious minds. Practical experiences.</h2>
-            <p>Our classrooms combine Ontario curriculum expectations with hands-on inquiry, collaboration and clear academic feedback.</p>
-            <ul><li>Average class size of 15-18 students</li><li>After-school tutorials and academic support</li><li>Course planning aligned with university prerequisites</li></ul>
+            <h2>Learn the idea. Test it. Explain it.</h2>
+            <p>Class time combines direct instruction with questions, discussion and practical work. Students are expected to understand their process, not simply submit an answer.</p>
+            <ul><li>Small-group instruction and time for questions</li><li>Labs, projects and presentations across subject areas</li><li>Course choices reviewed against current goals and prerequisites</li></ul>
             <a className="text-link light-link" href={routeHref("academics")}>Explore the full academic pathway <span aria-hidden="true">-&gt;</span></a>
           </div>
         </div>
@@ -596,13 +594,13 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
 
       <section className="support section" id="guidance">
         <div className="support-copy">
-          <p className="eyebrow">Guidance at every turning point</p>
-          <h2>A plan for today - and what comes next.</h2>
-          <p>Every student is known by name and supported by an advisor who brings academics, wellbeing and future planning into one clear conversation.</p>
+          <p className="eyebrow">Guidance throughout high school</p>
+          <h2>Course choices make more sense in context.</h2>
+          <p>Advisors help students connect today's work with graduation requirements and the options they may want after high school. The plan is reviewed as interests and goals change.</p>
           <div className="support-list">
-            <div><strong>01</strong><span><b>Personal course planning</b>Build the right sequence of credits for graduation and university entry.</span></div>
-            <div><strong>02</strong><span><b>University application support</b>Research programs, prepare applications and practise for interviews.</span></div>
-            <div><strong>03</strong><span><b>English language development</b>Strengthen academic communication with targeted ESL support.</span></div>
+            <div><strong>01</strong><span><b>Course planning</b>Review completed credits, remaining requirements and a sensible sequence for future courses.</span></div>
+            <div><strong>02</strong><span><b>Post-secondary research</b>Compare programs, prerequisites and timelines before application decisions become urgent.</span></div>
+            <div><strong>03</strong><span><b>Academic English</b>Practise the reading, writing, listening and discussion skills used across the curriculum.</span></div>
           </div>
         </div>
         <div className="support-image"><img src={assetUrl("student-guidance.jpg")} alt="A guidance counsellor helping a student plan their academic pathway" /></div>
@@ -612,10 +610,10 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
         <div className="history-intro">
           <p className="eyebrow light">Our story</p>
           <h2>Where our story <span>takes root.</span></h2>
-          <p>Lake Forest Academy began with a simple belief: students move further when academic ambition is matched by personal attention, belonging and a clear sense of direction.</p>
+          <p>Lake Forest Academy began with a practical question: what changes when teachers have the time to know their students well? The answer became a school built around thoughtful course planning, clear expectations and everyday relationships.</p>
           <div className="name-meaning" aria-label="The meaning behind the school name">
-            <article><span>Lake</span><strong>Clarity and reflection</strong><p>Space to think deeply, see new perspectives and choose a purposeful direction.</p></article>
-            <article><span>Forest</span><strong>Roots and growth</strong><p>Strong relationships, resilient habits and the confidence to keep growing.</p></article>
+            <article><span>Lake</span><strong>Time to reflect</strong><p>Students need space to ask questions, consider different perspectives and make choices they understand.</p></article>
+            <article><span>Forest</span><strong>Strong roots, steady growth</strong><p>Progress is easier to sustain when students feel supported, challenged and connected to a community.</p></article>
           </div>
         </div>
         <div className="history-list" aria-label="School history milestones">
@@ -630,13 +628,28 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
 
       <section className="student-life section" id="student-life">
         <div className="student-life-intro">
-          <div><p className="eyebrow light">Life at Lake Forest</p><h2>A community where everyone has a place.</h2></div>
-          <div><p>Clubs, athletics, leadership and service give students room to try new things, form lasting friendships and contribute with confidence.</p><div className="club-tags"><span>Robotics</span><span>Basketball</span><span>Model UN</span><span>Visual Arts</span><span>Student Council</span><span>Volunteering</span></div></div>
+          <div><p className="eyebrow light">Life at Lake Forest</p><h2>School life is made in the everyday moments.</h2></div>
+          <div><p>Clubs, athletics, leadership and service give students a reason to work with people outside their usual classes, try something unfamiliar and contribute to the school around them.</p><div className="club-tags"><span>Robotics</span><span>Basketball</span><span>Model UN</span><span>Visual Arts</span><span>Student Council</span><span>Volunteering</span></div></div>
         </div>
         <div className="life-options">
           <article><span>01</span><h3>Campus belonging</h3><p>Advisor check-ins, peer ambassadors and student-led activities create a welcoming daily rhythm.</p></article>
           <article><span>02</span><h3>International transition</h3><p>Orientation, ESL planning and practical guidance help students settle into learning in Ontario.</p></article>
-          <article><span>03</span><h3>Family support</h3><p>International families receive practical orientation and settling resources; no school-operated boarding is claimed.</p></article>
+          <article><span>03</span><h3>Family communication</h3><p>Advisors share progress and next steps with families at appropriate points in the year. As a day school, LFA does not provide housing or transportation.</p></article>
+        </div>
+
+        <div className="campus-moments" aria-label="Everyday moments at Lake Forest Academy">
+          <figure className="campus-moment campus-moment-wide">
+            <img src={assetUrl("library-study.jpg")} alt="Students working together around a table in the school library" />
+            <figcaption><small>Between classes</small><strong>Study becomes a conversation.</strong></figcaption>
+          </figure>
+          <figure className="campus-moment">
+            <img src={assetUrl("arts-studio.jpg")} alt="Students painting, sketching and working with clay in the art studio" />
+            <figcaption><small>Creative practice</small><strong>Ideas take shape by hand.</strong></figcaption>
+          </figure>
+          <figure className="campus-moment">
+            <img src={assetUrl("community-service.jpg")} alt="Students preparing food and school supplies for a community service activity" />
+            <figcaption><small>Community service</small><strong>Contribution starts close to home.</strong></figcaption>
+          </figure>
         </div>
 
         <div className="life-carousel" id="life-gallery" role="region" aria-roledescription="carousel" aria-label="Student life photo stories">
@@ -656,14 +669,14 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
       </section>
 
       <section className="news section" id="news">
-        <div className="section-heading news-heading"><div><p className="eyebrow">News and events</p><h2>What is happening at LFA.</h2></div><p>Sample calendar content for this fictional school prototype.</p></div>
+        <div className="section-heading news-heading"><div><p className="eyebrow">News and events</p><h2>A few dates worth saving.</h2></div><p>Meet the people, conversations and activities shaping the coming school term.</p></div>
         <div className="news-grid">
-          {newsItems.map((item) => <article key={item.title}><div><time>{item.date}</time><span>{item.category}</span></div><h3>{item.title}</h3><p>{item.text}</p><span className="news-status">Sample event</span></article>)}
+          {newsItems.map((item) => <article key={item.title}><div><time>{item.date}</time><span>{item.category}</span></div><h3>{item.title}</h3><p>{item.text}</p><span className="news-status">Upcoming</span></article>)}
         </div>
       </section>
 
       <section className="admissions section" id="admissions">
-        <div className="section-heading"><p className="eyebrow">Admissions</p><h2>Four steps to your Lake Forest journey.</h2><p>We welcome domestic and international applicants entering Grades 9-12. Our team will guide your family through every stage.</p></div>
+        <div className="section-heading"><p className="eyebrow">Admissions</p><h2>Start with a conversation, not a stack of forms.</h2><p>Families entering Grades 9-12 can begin by telling us about the student's current studies, goals and preferred entry term. We will explain what information is useful next.</p></div>
         <div className="steps">
           {admissionsSteps.map(([number, title, text]) => <article key={number}><strong>{number}</strong><h3>{title}</h3><p>{text}</p></article>)}
         </div>
@@ -671,7 +684,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
       </section>
 
       <section className="faq section" id="faq">
-        <div className="faq-heading"><p className="eyebrow">Frequently asked questions</p><h2>Clear answers for families.</h2><p>These answers describe the current test-site concept. Final admissions policies should be verified before commercial use.</p></div>
+        <div className="faq-heading"><p className="eyebrow">Frequently asked questions</p><h2>Clear answers for families.</h2><p>Entry dates, course availability and individual requirements are confirmed after an academic review.</p></div>
         <div className="faq-list">
           {faqs.slice(0, 3).map(([question, answer], index) => (
             <article className={openFaq === index ? "open" : ""} key={question}>
@@ -693,7 +706,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
 
       <section className="contact section" id="contact">
         <div className="contact-copy">
-          <p className="eyebrow light">Let's start a conversation</p><h2>Ready to explore what is possible?</h2><p>Tell us a little about your student. Our admissions team will help you understand programs, requirements and next steps.</p>
+          <p className="eyebrow light">Talk with admissions</p><h2>Every family arrives with different questions.</h2><p>Tell us the student's current grade and what matters most to your family. We can help you identify the academic, admissions and support questions to explore next.</p>
           <div className="contact-details"><span><small>Admissions</small>+1 416-555-0162</span><span><small>Email</small>admissions@lakeforestacademy.example</span><span><small>Location</small>North York, Ontario</span></div>
         </div>
         <form className="contact-form" onSubmit={handleContactSubmit}>
@@ -702,7 +715,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
           <label>How can we help?<textarea name="message" rows={4} placeholder="Tell us about your questions or goals." /></label>
           <button className="button form-button" type="submit">Submit inquiry <span aria-hidden="true">-&gt;</span></button>
           {contactSent && <p className="form-message" role="status">Test form only - no information has been sent.</p>}
-          <small className="form-disclaimer">This prototype does not store or transmit personal information.</small>
+          <small className="form-disclaimer">Demonstration form - no information is sent or stored.</small>
         </form>
       </section>
       </>
@@ -718,7 +731,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
         <div className="footer-columns">
           {menuGroups.map((group) => <div key={group.title}><strong>{group.title}</strong>{group.links.slice(0, 3).map(([label, href]) => <a href={resolveHref(href)} key={label}>{label}</a>)}</div>)}
         </div>
-        <div className="footer-bottom"><span>&copy; 2026 Lake Forest Academy - Demo website</span><span>Fictional North York concept; not affiliated with any existing school of the same name.</span></div>
+        <div className="footer-bottom"><span>&copy; 2026 Lake Forest Academy - demonstration website</span><span>Forms on this site do not send or store information.</span></div>
       </footer>
 
       {activeAction && activeCopy && (
@@ -727,7 +740,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
             <button className="close-button" type="button" onClick={closeAction} aria-label="Close admissions form">Close <span aria-hidden="true">x</span></button>
             <p className="eyebrow">{activeCopy.eyebrow}</p><h2 id="action-title">{activeCopy.title}</h2><p>{activeCopy.text}</p>
             {actionSent ? (
-              <div className="modal-success" role="status"><strong>Thank you for testing this experience.</strong><p>No information was sent or stored. A production version can connect this step to an admissions system.</p><button className="button primary" type="button" onClick={closeAction}>Close</button></div>
+              <div className="modal-success" role="status"><strong>Thank you.</strong><p>No information was sent or stored. This form is for demonstration only.</p><button className="button primary" type="button" onClick={closeAction}>Close</button></div>
             ) : (
               <form onSubmit={handleActionSubmit}>
                 <div className="field-row"><label>Student name<input autoFocus required name="student" placeholder="Full name" /></label><label>Current grade<select required name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
