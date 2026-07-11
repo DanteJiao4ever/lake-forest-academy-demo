@@ -18,11 +18,39 @@ const admissionsSteps = [
   ["04", "Plan your pathway", "Receive a decision and meet an advisor to build a personalized OSSD study plan."],
 ];
 
+const historyMilestones = [
+  {
+    year: "2008",
+    title: "An idea takes root",
+    text: "A small group of Ontario educators and internationally minded families begins planning a North York secondary school where rigorous OSSD learning and close mentorship belong in the same daily experience.",
+  },
+  {
+    year: "2012",
+    title: "The first graduating class",
+    text: "The Academy celebrates its first graduating cohort, establishing advisory meetings, family partnership and a student-centred approach as enduring traditions.",
+  },
+  {
+    year: "2017",
+    title: "Guidance becomes a signature",
+    text: "Dedicated university planning and expanded English-language support give every student a clearer route from course selection to post-secondary study.",
+  },
+  {
+    year: "2021",
+    title: "Learning moves beyond the desk",
+    text: "New science, technology and community-impact projects bring hands-on inquiry, collaboration and service into the centre of the academic program.",
+  },
+  {
+    year: "Today",
+    title: "A wider world, one community",
+    text: "The Academy now brings together 320 students from 18 countries, united by curiosity, responsibility and the confidence to choose their own path forward.",
+  },
+];
+
 const menuGroups = [
   {
     title: "Our School",
     description: "A close-knit Grade 9-12 community in North York.",
-    links: [["Welcome", "#about"], ["Guidance", "#guidance"], ["School facts", "#facts"]],
+    links: [["Welcome", "#about"], ["Our history", "#history"], ["School facts", "#facts"]],
   },
   {
     title: "Academics",
@@ -65,6 +93,7 @@ const faqs = [
 
 const searchItems = [
   { title: "About Lake Forest Academy", area: "Our School", text: "School profile, learning community and facts.", href: "#about" },
+  { title: "Our History", area: "Our School", text: "A fictional timeline from the founding idea to today's learning community.", href: "#history" },
   { title: "OSSD Academic Pathway", area: "Academics", text: "Course areas, diploma expectations and university preparation.", href: "#academics" },
   { title: "Guidance and English Support", area: "Student Support", text: "Course planning, wellbeing and ESL development.", href: "#guidance" },
   { title: "Student Life", area: "Community", text: "Clubs, athletics, leadership and international transition support.", href: "#student-life" },
@@ -86,6 +115,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [carouselPlaying, setCarouselPlaying] = useState(true);
+  const [activeHistory, setActiveHistory] = useState(0);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
   const [actionSent, setActionSent] = useState(false);
@@ -210,9 +240,9 @@ export default function Home() {
   }
 
   return (
-    <main>
+    <>
       <a className="skip-link" href="#top">Skip to main content</a>
-      <div className="demo-banner">Prototype website - fictional school, events and contact information</div>
+      <div className="demo-banner">Fictional North York school concept - not affiliated with any existing institution</div>
 
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Lake Forest Academy home">
@@ -293,23 +323,24 @@ export default function Home() {
         <button type="button" onClick={() => openAction("apply")}>Apply</button>
       </aside>
 
+      <main>
       <section className="hero" id="top">
         <img src="./images/campus-hero.jpg" alt="Students walking toward a modern school campus beside a lake" />
         <div className="hero-overlay" />
         <div className="hero-content">
-          <p className="eyebrow light">OSSD education in North York, Ontario</p>
-          <h1>Your path forward<br />starts here.</h1>
-          <p className="hero-lead">A supportive learning community where academic purpose, personal confidence and university ambition grow together.</p>
+          <p className="eyebrow light">North York, Ontario &middot; Grades 9-12 &middot; OSSD</p>
+          <h1>Rooted in purpose.<br /><em>Open to possibility.</em></h1>
+          <p className="hero-lead">A thoughtful learning community where strong foundations, clear guidance and global ambition help every student move forward with confidence.</p>
           <div className="hero-actions">
-            <a className="button primary" href="#admissions">Explore admissions <span aria-hidden="true">-&gt;</span></a>
+            <a className="button primary" href="#academics">Explore the OSSD program <span aria-hidden="true">-&gt;</span></a>
             <button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a campus tour</button>
           </div>
         </div>
-        <div className="hero-note"><span>Learn with purpose.</span><span>Grow with confidence.</span></div>
+        <div className="hero-note"><span><small>Lake</small>Clarity &amp; curiosity</span><span><small>Forest</small>Roots &amp; resilience</span></div>
       </section>
 
       <section className="quick-links" aria-label="Family quick links">
-        <a href="#news"><small>Dates and activities</small>News &amp; Events</a>
+        <a href="#history"><small>Discover our foundations</small>Our Story</a>
         <a href="#admissions"><small>Plan your pathway</small>Entry Requirements</a>
         <a href="#faq"><small>Common questions</small>Admissions FAQ</a>
         <button type="button" onClick={() => openAction("tour")}><small>See the community</small>Visit LFA</button>
@@ -318,12 +349,41 @@ export default function Home() {
       <section className="intro section" id="about">
         <div>
           <p className="eyebrow">Welcome to Lake Forest Academy</p>
-          <h2>A close-knit school with a global outlook.</h2>
+          <h2>A close-knit school with a <em>global outlook.</em></h2>
         </div>
         <div className="intro-copy">
           <p>Lake Forest Academy is a Grade 9-12 learning community in North York, offering the Ontario Secondary School Diploma in an inclusive, student-centred environment.</p>
-          <p>Small classes, dedicated advisors and thoughtful university planning help every student build a pathway that reflects who they are and where they want to go.</p>
-          <a className="text-link" href="#student-life">Experience our community <span aria-hidden="true">-&gt;</span></a>
+          <p>Our name brings together two ideas: the clarity and openness of a lake, and the deep roots and steady growth of a forest. They shape how we learn, support one another and look toward the future.</p>
+          <a className="text-link" href="#history">Read our story <span aria-hidden="true">-&gt;</span></a>
+        </div>
+      </section>
+
+      <section className="history section" id="history">
+        <div className="history-intro">
+          <p className="eyebrow light">Our story</p>
+          <h2>Where our story <em>takes root.</em></h2>
+          <p>Lake Forest Academy began with a simple belief: students move further when academic ambition is matched by personal attention, belonging and a clear sense of direction.</p>
+          <div className="name-meaning" aria-label="The meaning behind the school name">
+            <article><span>Lake</span><strong>Clarity and reflection</strong><p>Space to think deeply, see new perspectives and choose a purposeful direction.</p></article>
+            <article><span>Forest</span><strong>Roots and growth</strong><p>Strong relationships, resilient habits and the confidence to keep growing.</p></article>
+          </div>
+        </div>
+        <div className="history-experience">
+          <div className="history-tabs" aria-label="School history milestones">
+            {historyMilestones.map((milestone, index) => (
+              <button type="button" key={milestone.year} aria-pressed={activeHistory === index} onClick={() => setActiveHistory(index)}>
+                <span>{String(index + 1).padStart(2, "0")}</span>{milestone.year}
+              </button>
+            ))}
+          </div>
+          <article className="history-panel" aria-live="polite">
+            <div><small>Milestone {String(activeHistory + 1).padStart(2, "0")}</small><strong>{historyMilestones[activeHistory].year}</strong></div>
+            <h3>{historyMilestones[activeHistory].title}</h3>
+            <p>{historyMilestones[activeHistory].text}</p>
+            <div className="history-progress" aria-hidden="true">
+              {historyMilestones.map((milestone, index) => <i className={index <= activeHistory ? "complete" : ""} key={milestone.year} />)}
+            </div>
+          </article>
         </div>
       </section>
 
@@ -448,13 +508,14 @@ export default function Home() {
           <small className="form-disclaimer">This prototype does not store or transmit personal information.</small>
         </form>
       </section>
+      </main>
 
       <footer>
-        <div className="footer-brand"><img className="footer-logo" src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /><p>Learn with purpose. Grow with confidence.</p></div>
+        <div className="footer-brand"><img className="footer-logo" src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /><p>Rooted in purpose. Open to possibility.</p></div>
         <div className="footer-columns">
           {menuGroups.map((group) => <div key={group.title}><strong>{group.title}</strong>{group.links.slice(0, 3).map(([label, href]) => <a href={href} key={label}>{label}</a>)}</div>)}
         </div>
-        <div className="footer-bottom"><span>© 2026 Lake Forest Academy - Demo website</span><span>All school details, events and contact information are fictional placeholders.</span></div>
+        <div className="footer-bottom"><span>&copy; 2026 Lake Forest Academy - Demo website</span><span>Fictional North York concept; not affiliated with any existing school of the same name.</span></div>
       </footer>
 
       {activeAction && activeCopy && (
@@ -478,6 +539,6 @@ export default function Home() {
           </section>
         </div>
       )}
-    </main>
+    </>
   );
 }
