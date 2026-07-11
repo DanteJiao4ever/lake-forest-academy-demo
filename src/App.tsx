@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 type ActionType = "enquire" | "tour" | "apply";
 
@@ -90,9 +90,19 @@ export default function Home() {
   const [activeAction, setActiveAction] = useState<ActionType | null>(null);
   const [actionSent, setActionSent] = useState(false);
   const [contactSent, setContactSent] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const menuDialogRef = useRef<HTMLDivElement>(null);
+  const searchDialogRef = useRef<HTMLDivElement>(null);
+  const actionDialogRef = useRef<HTMLElement>(null);
+  const lastActionTriggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!carouselPlaying || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) setCarouselPlaying(false);
+  }, []);
+
+  useEffect(() => {
+    if (!carouselPlaying) return;
     const timer = window.setInterval(() => {
       setCarouselIndex((current) => (current + 1) % carouselSlides.length);
     }, 5000);
@@ -101,15 +111,40 @@ export default function Home() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMenuOpen(false);
-        setSearchOpen(false);
-        setActiveAction(null);
-      }
+      if (event.key !== "Escape") return;
+      if (activeAction) closeAction();
+      else if (searchOpen) closeSearch();
+      else if (menuOpen) closeMenu();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [menuOpen, searchOpen, activeAction]);
+
+  useEffect(() => {
+    const container = activeAction ? actionDialogRef.current : searchOpen ? searchDialogRef.current : menuOpen ? menuDialogRef.current : null;
+    if (!container) return;
+    const focusable = Array.from(container.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const initial = container.querySelector<HTMLElement>("[autofocus]") ?? first;
+    const timer = window.setTimeout(() => initial.focus(), 0);
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    container.addEventListener("keydown", trapFocus);
+    return () => {
+      window.clearTimeout(timer);
+      container.removeEventListener("keydown", trapFocus);
+    };
+  }, [menuOpen, searchOpen, activeAction, actionSent]);
 
   useEffect(() => {
     const previous = document.body.style.overflow;
@@ -134,9 +169,30 @@ export default function Home() {
   }
 
   function openAction(action: ActionType) {
+    lastActionTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeLayers();
     setActionSent(false);
     setActiveAction(action);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+    window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    window.setTimeout(() => searchButtonRef.current?.focus(), 0);
+  }
+
+  function closeAction() {
+    setActiveAction(null);
+    const fallback = menuButtonRef.current;
+    window.setTimeout(() => {
+      const target = lastActionTriggerRef.current;
+      if (target && document.contains(target)) target.focus();
+      else fallback?.focus();
+    }, 0);
   }
 
   function handleActionSubmit(event: FormEvent<HTMLFormElement>) {
@@ -172,11 +228,11 @@ export default function Home() {
         </nav>
 
         <div className="header-tools">
-          <button className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
+          <button ref={searchButtonRef} className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
             <span className="search-symbol" aria-hidden="true" />
             <span className="tool-label">Search</span>
           </button>
-          <button className="header-tool menu-button" type="button" aria-label="Open full website menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+          <button ref={menuButtonRef} className="header-tool menu-button" type="button" aria-label="Open full website menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
             <span className="menu-lines" aria-hidden="true"><i /><i /><i /></span>
             <span className="tool-label">Menu</span>
           </button>
@@ -184,10 +240,10 @@ export default function Home() {
       </header>
 
       {menuOpen && (
-        <div className="menu-overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+        <div ref={menuDialogRef} className="menu-overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
           <div className="overlay-top">
             <img src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
-            <button className="close-button light" type="button" autoFocus onClick={() => setMenuOpen(false)} aria-label="Close website menu">Close <span aria-hidden="true">x</span></button>
+            <button className="close-button light" type="button" autoFocus onClick={closeMenu} aria-label="Close website menu">Close <span aria-hidden="true">x</span></button>
           </div>
           <div className="menu-heading">
             <p className="eyebrow light">Explore Lake Forest Academy</p>
@@ -213,16 +269,16 @@ export default function Home() {
       )}
 
       {searchOpen && (
-        <div className="search-overlay" role="dialog" aria-modal="true" aria-labelledby="search-title">
-          <div className="search-panel">
+        <div className="search-overlay" role="presentation">
+          <div ref={searchDialogRef} className="search-panel" role="dialog" aria-modal="true" aria-labelledby="search-title">
             <div className="search-head">
               <div><p className="eyebrow">Site search</p><h2 id="search-title">What can we help you find?</h2></div>
-              <button className="close-button" type="button" onClick={() => setSearchOpen(false)} aria-label="Close search">Close <span aria-hidden="true">x</span></button>
+              <button className="close-button" type="button" onClick={closeSearch} aria-label="Close search">Close <span aria-hidden="true">x</span></button>
             </div>
             <label className="search-field"><span>Search Lake Forest Academy</span><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Try OSSD, student life or admissions" /></label>
             <div className="search-results" aria-live="polite">
               {searchResults.length ? searchResults.map((item) => (
-                <a href={item.href} key={item.title} onClick={() => setSearchOpen(false)}>
+                <a href={item.href} key={item.title} onClick={closeSearch}>
                   <small>{item.area}</small><strong>{item.title}</strong><span>{item.text}</span>
                 </a>
               )) : <p className="empty-state">No matching pages yet. Try a broader search.</p>}
@@ -253,7 +309,7 @@ export default function Home() {
       </section>
 
       <section className="quick-links" aria-label="Family quick links">
-        <a href="#news"><small>Dates and activities</small>School Calendar</a>
+        <a href="#news"><small>Dates and activities</small>News &amp; Events</a>
         <a href="#admissions"><small>Plan your pathway</small>Entry Requirements</a>
         <a href="#faq"><small>Common questions</small>Admissions FAQ</a>
         <button type="button" onClick={() => openAction("tour")}><small>See the community</small>Visit LFA</button>
@@ -327,10 +383,10 @@ export default function Home() {
           <article><span>03</span><h3>Family support</h3><p>International families receive practical orientation and settling resources; no school-operated boarding is claimed.</p></article>
         </div>
 
-        <div className="life-carousel" id="life-gallery" aria-roledescription="carousel" aria-label="Student life photo stories">
+        <div className="life-carousel" id="life-gallery" role="region" aria-roledescription="carousel" aria-label="Student life photo stories">
           <figure>
             <img src={activeSlide.src} alt={activeSlide.alt} />
-            <figcaption aria-live="polite"><small>Photo story {carouselIndex + 1} of {carouselSlides.length}</small><strong>{activeSlide.title}</strong><span>{activeSlide.text}</span></figcaption>
+            <figcaption><small>Photo story {carouselIndex + 1} of {carouselSlides.length}</small><strong>{activeSlide.title}</strong><span>{activeSlide.text}</span></figcaption>
           </figure>
           <div className="carousel-controls">
             <button type="button" onClick={() => changeSlide(-1)} aria-label="Previous photo">Previous</button>
@@ -346,7 +402,7 @@ export default function Home() {
       <section className="news section" id="news">
         <div className="section-heading news-heading"><div><p className="eyebrow">News and events</p><h2>What is happening at LFA.</h2></div><p>Sample calendar content for this fictional school prototype.</p></div>
         <div className="news-grid">
-          {newsItems.map((item) => <article key={item.title}><div><time>{item.date}</time><span>{item.category}</span></div><h3>{item.title}</h3><p>{item.text}</p><a href="#contact">Learn more <span aria-hidden="true">-&gt;</span></a></article>)}
+          {newsItems.map((item) => <article key={item.title}><div><time>{item.date}</time><span>{item.category}</span></div><h3>{item.title}</h3><p>{item.text}</p><span className="news-status">Sample event</span></article>)}
         </div>
       </section>
 
@@ -384,8 +440,8 @@ export default function Home() {
           <div className="contact-details"><span><small>Admissions</small>+1 416-555-0162</span><span><small>Email</small>admissions@lakeforestacademy.example</span><span><small>Location</small>North York, Ontario</span></div>
         </div>
         <form className="contact-form" onSubmit={handleContactSubmit}>
-          <div className="field-row"><label>Student name<input name="student" required placeholder="Full name" /></label><label>Current grade<select name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
-          <div className="field-row"><label>Parent / guardian email<input name="email" type="email" required placeholder="name@example.com" /></label><label>Entry term<select name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label></div>
+          <div className="field-row"><label>Student name<input name="student" required placeholder="Full name" /></label><label>Current grade<select required name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
+          <div className="field-row"><label>Parent / guardian email<input name="email" type="email" required placeholder="name@example.com" /></label><label>Entry term<select required name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label></div>
           <label>How can we help?<textarea name="message" rows={4} placeholder="Tell us about your questions or goals." /></label>
           <button className="button form-button" type="submit">Submit inquiry <span aria-hidden="true">-&gt;</span></button>
           {contactSent && <p className="form-message" role="status">Test form only - no information has been sent.</p>}
@@ -403,17 +459,17 @@ export default function Home() {
 
       {activeAction && activeCopy && (
         <div className="modal-backdrop" role="presentation">
-          <section className="action-modal" role="dialog" aria-modal="true" aria-labelledby="action-title">
-            <button className="close-button" type="button" onClick={() => setActiveAction(null)} aria-label="Close admissions form">Close <span aria-hidden="true">x</span></button>
+          <section ref={actionDialogRef} className="action-modal" role="dialog" aria-modal="true" aria-labelledby="action-title">
+            <button className="close-button" type="button" onClick={closeAction} aria-label="Close admissions form">Close <span aria-hidden="true">x</span></button>
             <p className="eyebrow">{activeCopy.eyebrow}</p><h2 id="action-title">{activeCopy.title}</h2><p>{activeCopy.text}</p>
             {actionSent ? (
-              <div className="modal-success" role="status"><strong>Thank you for testing this experience.</strong><p>No information was sent or stored. A production version can connect this step to an admissions system.</p><button className="button primary" type="button" onClick={() => setActiveAction(null)}>Close</button></div>
+              <div className="modal-success" role="status"><strong>Thank you for testing this experience.</strong><p>No information was sent or stored. A production version can connect this step to an admissions system.</p><button className="button primary" type="button" onClick={closeAction}>Close</button></div>
             ) : (
               <form onSubmit={handleActionSubmit}>
-                <div className="field-row"><label>Student name<input autoFocus required name="student" placeholder="Full name" /></label><label>Current grade<select name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
+                <div className="field-row"><label>Student name<input autoFocus required name="student" placeholder="Full name" /></label><label>Current grade<select required name="grade" defaultValue=""><option value="" disabled>Select grade</option><option>Grade 8</option><option>Grade 9</option><option>Grade 10</option><option>Grade 11</option><option>Grade 12</option></select></label></div>
                 <label>Parent / guardian email<input type="email" required name="email" placeholder="name@example.com" /></label>
-                {activeAction === "tour" && <label>Preferred visit date<input type="date" name="visit-date" /></label>}
-                {activeAction === "apply" && <label>Intended entry term<select name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label>}
+                {activeAction === "tour" && <label>Preferred visit date<input required type="date" name="visit-date" /></label>}
+                {activeAction === "apply" && <label>Intended entry term<select required name="term" defaultValue=""><option value="" disabled>Select term</option><option>September 2026</option><option>February 2027</option><option>September 2027</option></select></label>}
                 <label>Message<textarea name="message" rows={3} placeholder="Share any questions or useful context." /></label>
                 <button className="button primary" type="submit">{activeCopy.button}</button>
                 <small className="form-disclaimer">Demo only - no information will be transmitted.</small>
