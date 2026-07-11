@@ -31,8 +31,7 @@ export default function Home() {
 
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Lake Forest Academy home">
-          <span className="brand-mark" aria-hidden="true">LFA</span>
-          <span className="brand-copy"><strong>Lake Forest</strong><span>Academy</span></span>
+          <img className="brand-logo" src="./images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
         </a>
 
         <button className="menu-button" aria-label="Toggle navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
@@ -183,7 +182,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <div className="footer-brand"><span className="brand-mark">LFA</span><div><strong>Lake Forest Academy</strong><p>Learn with purpose. Grow with confidence.</p></div></div>
+        <div className="footer-brand"><img className="footer-logo" src="./images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /><p>Learn with purpose. Grow with confidence.</p></div>
         <div className="footer-links"><a href="#about">Our School</a><a href="#academics">Academics</a><a href="#admissions">Admissions</a><a href="#community">Student Life</a></div>
         <div className="footer-bottom"><span>© 2026 Lake Forest Academy — Demo website</span><span>All school details are fictional placeholders.</span></div>
       </footer>
