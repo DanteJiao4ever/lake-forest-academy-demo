@@ -49,7 +49,7 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <img src="./images/campus-hero.png" alt="Students walking toward a modern school campus beside a lake" />
+        <img src="./images/campus-hero.jpg" alt="Students walking toward a modern school campus beside a lake" />
         <div className="hero-overlay" />
         <div className="hero-content">
           <p className="eyebrow light">OSSD education in North York, Ontario</p>
@@ -100,7 +100,7 @@ export default function Home() {
         </div>
 
         <div className="feature-row">
-          <div className="feature-image"><img src="./images/science-lab.png" alt="Students conducting a science experiment with their teacher" /></div>
+          <div className="feature-image"><img src="./images/science-lab.jpg" alt="Students conducting a science experiment with their teacher" /></div>
           <div className="feature-copy">
             <p className="eyebrow light">Learning that connects</p>
             <h2>Curious minds. Practical experiences.</h2>
@@ -125,14 +125,14 @@ export default function Home() {
             <div><strong>03</strong><span><b>English language development</b>Strengthen academic communication with targeted ESL support.</span></div>
           </div>
         </div>
-        <div className="support-image"><img src="./images/student-guidance.png" alt="A guidance counsellor helping a student plan their academic pathway" /></div>
+        <div className="support-image"><img src="./images/student-guidance.jpg" alt="A guidance counsellor helping a student plan their academic pathway" /></div>
       </section>
 
       <section className="community" id="community">
         <div className="community-grid">
-          <img className="community-main" src="./images/student-community.png" alt="A diverse group of students talking in the school courtyard" />
-          <img src="./images/technology-class.png" alt="Students collaborating on a technology project" />
-          <img src="./images/campus-life-basketball.png" alt="Students playing basketball in the school gym" />
+          <img className="community-main" src="./images/student-community.jpg" alt="A diverse group of students talking in the school courtyard" />
+          <img src="./images/technology-class.jpg" alt="Students collaborating on a technology project" />
+          <img src="./images/campus-life-basketball.jpg" alt="Students playing basketball in the school gym" />
         </div>
         <div className="community-copy">
           <p className="eyebrow light">Beyond the classroom</p>
