@@ -267,7 +267,223 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
       <section className="requirements section" id="requirements">
         <div className="requirements-copy"><p className="eyebrow">Preparing ahead</p><h2>A simple starting checklist.</h2><p>A future application may request the following items through a secure, authorized process.</p><button className="button primary" type="button" onClick={() => openAction("apply")}>Preview the application</button></div>
         <div className="requirement-list">
-          {applicationChecklist.map((item, index) => <div key={item}><strong>{String(index + …2618 tokens truncated…(group) => (
+          {applicationChecklist.map((item, index) => <div key={item}><strong>{String(index + 1).padStart(2, "0")}</strong><span>{item}</span></div>)}
+          <aside><b>Important</b>Do not send or upload personal documents through this prototype. It does not store or transmit information.</aside>
+        </div>
+      </section>
+
+      <section className="faq section" id="faq">
+        <div className="faq-heading"><p className="eyebrow">Admissions questions</p><h2>Clear answers before you begin.</h2><p>No official deadlines, fees, guarantees or final entry policies are defined in this concept.</p></div>
+        <div className="faq-list">
+          {faqs.map(([question, answer], index) => <article className={openFaq === index ? "open" : ""} key={question}><h3><button type="button" aria-expanded={openFaq === index} aria-controls={`admissions-faq-${index}`} onClick={() => setOpenFaq(openFaq === index ? null : index)}><span>{question}</span><i aria-hidden="true">{openFaq === index ? "-" : "+"}</i></button></h3><div id={`admissions-faq-${index}`} hidden={openFaq !== index}><p>{answer}</p></div></article>)}
+        </div>
+      </section>
+
+      <section className="page-next section admissions-next">
+        <div><p className="eyebrow light">Your next step</p><h2>Explore Lake Forest Academy at your own pace.</h2><p>Ask a question, preview a campus visit or see how a future online application could begin.</p></div>
+        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a Tour</button><a className="text-link light-link" href={routeHref("academics")}>Review academics <span aria-hidden="true">-&gt;</span></a></div>
+      </section>
+    </>
+  );
+}
+
+function getRouteContext(initialPage?: PageKind) {
+  if (typeof window === "undefined") return { page: initialPage ?? "home" as PageKind, base: "/" };
+  const trimmedPath = window.location.pathname.replace(/\/+$/, "");
+  const finalSegment = trimmedPath.split("/").filter(Boolean).at(-1);
+  const detectedPage: PageKind = finalSegment === "academics" || finalSegment === "admissions" ? finalSegment : "home";
+  const page = initialPage ?? detectedPage;
+  const base = detectedPage === "home"
+    ? (window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`)
+    : window.location.pathname.replace(new RegExp(`${detectedPage}/?$`), "");
+  return { page, base: base || "/" };
+}
+
+export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [carouselPlaying, setCarouselPlaying] = useState(true);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [activeAction, setActiveAction] = useState<ActionType | null>(null);
+  const [actionSent, setActionSent] = useState(false);
+  const [contactSent, setContactSent] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const menuDialogRef = useRef<HTMLDivElement>(null);
+  const searchDialogRef = useRef<HTMLDivElement>(null);
+  const actionDialogRef = useRef<HTMLElement>(null);
+  const lastActionTriggerRef = useRef<HTMLElement | null>(null);
+  const [{ page, base }] = useState(() => getRouteContext(initialPage));
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) setCarouselPlaying(false);
+  }, []);
+
+  useEffect(() => {
+    if (!carouselPlaying) return;
+    const timer = window.setInterval(() => {
+      setCarouselIndex((current) => (current + 1) % carouselSlides.length);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [carouselPlaying]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (activeAction) closeAction();
+      else if (searchOpen) closeSearch();
+      else if (menuOpen) closeMenu();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen, searchOpen, activeAction]);
+
+  useEffect(() => {
+    const container = activeAction ? actionDialogRef.current : searchOpen ? searchDialogRef.current : menuOpen ? menuDialogRef.current : null;
+    if (!container) return;
+    const focusable = Array.from(container.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const initial = container.querySelector<HTMLElement>("[autofocus]") ?? first;
+    const timer = window.setTimeout(() => initial.focus(), 0);
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    container.addEventListener("keydown", trapFocus);
+    return () => {
+      window.clearTimeout(timer);
+      container.removeEventListener("keydown", trapFocus);
+    };
+  }, [menuOpen, searchOpen, activeAction, actionSent]);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = menuOpen || searchOpen || activeAction ? "hidden" : previous;
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [menuOpen, searchOpen, activeAction]);
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return searchItems.slice(0, 5);
+    return searchItems.filter((item) => `${item.title} ${item.area} ${item.text}`.toLowerCase().includes(query));
+  }, [searchQuery]);
+
+  const activeSlide = carouselSlides[carouselIndex];
+  const activeCopy = activeAction ? actionCopy[activeAction] : null;
+  const routeHref = (destination: Exclude<PageKind, "home">) => `${base}${destination}/`;
+  const homeHref = (hash = "") => `${base}${hash}`;
+  const assetUrl = (filename: string) => `${base}images/${filename}`;
+
+  function resolveHref(href: string) {
+    if (["#academics", "#programs", "#guidance"].includes(href)) {
+      return `${routeHref("academics")}${href === "#academics" ? "" : href}`;
+    }
+    if (["#admissions", "#requirements", "#faq", "#contact"].includes(href)) {
+      return `${routeHref("admissions")}${href === "#admissions" ? "" : href}`;
+    }
+    return homeHref(href);
+  }
+
+  function closeLayers() {
+    setMenuOpen(false);
+    setSearchOpen(false);
+  }
+
+  function openAction(action: ActionType) {
+    lastActionTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeLayers();
+    setActionSent(false);
+    setActiveAction(action);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+    window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    window.setTimeout(() => searchButtonRef.current?.focus(), 0);
+  }
+
+  function closeAction() {
+    setActiveAction(null);
+    const fallback = menuButtonRef.current;
+    window.setTimeout(() => {
+      const target = lastActionTriggerRef.current;
+      if (target && document.contains(target)) target.focus();
+      else fallback?.focus();
+    }, 0);
+  }
+
+  function handleActionSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setActionSent(true);
+  }
+
+  function handleContactSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setContactSent(true);
+  }
+
+  function changeSlide(direction: number) {
+    setCarouselIndex((current) => (current + direction + carouselSlides.length) % carouselSlides.length);
+  }
+
+  return (
+    <>
+      <a className="skip-link" href="#top">Skip to main content</a>
+      <div className="demo-banner">Fictional North York school concept - not affiliated with any existing institution</div>
+
+      <header className="site-header">
+        <a className="brand" href={homeHref()} aria-label="Lake Forest Academy home">
+          <img className="brand-logo" src={assetUrl("lake-forest-academy-logo.png")} alt="Lake Forest Academy" />
+        </a>
+
+        <nav className="nav-links" aria-label="Primary navigation">
+          <a href={homeHref("#about")}>Our School</a>
+          <a href={routeHref("academics")} aria-current={page === "academics" ? "page" : undefined}>Academics</a>
+          <a href={homeHref("#student-life")}>Student Life</a>
+          <a href={routeHref("admissions")} aria-current={page === "admissions" ? "page" : undefined}>Admissions</a>
+          <button className="nav-cta" type="button" onClick={() => openAction("enquire")}>Enquire</button>
+        </nav>
+
+        <div className="header-tools">
+          <button ref={searchButtonRef} className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
+            <span className="search-symbol" aria-hidden="true" />
+            <span className="tool-label">Search</span>
+          </button>
+          <button ref={menuButtonRef} className="header-tool menu-button" type="button" aria-label="Open full website menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+            <span className="menu-lines" aria-hidden="true"><i /><i /><i /></span>
+            <span className="tool-label">Menu</span>
+          </button>
+        </div>
+      </header>
+
+      {menuOpen && (
+        <div ref={menuDialogRef} className="menu-overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+          <div className="overlay-top">
+            <img src={assetUrl("lake-forest-academy-logo-light.png")} alt="Lake Forest Academy" />
+            <button className="close-button light" type="button" autoFocus onClick={closeMenu} aria-label="Close website menu">Close <span aria-hidden="true">x</span></button>
+          </div>
+          <div className="menu-heading">
+            <p className="eyebrow light">Explore Lake Forest Academy</p>
+            <h2 id="menu-title">Find your next step.</h2>
+          </div>
+          <div className="menu-grid">
+            {menuGroups.map((group) => (
               <section className="menu-group" key={group.title}>
                 <h3>{group.title}</h3>
                 <p>{group.description}</p>
@@ -533,4 +749,3 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
 export default function Home() {
   return <SchoolSite />;
 }
-
