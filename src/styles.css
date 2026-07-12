@@ -203,7 +203,7 @@ h1, h2, h3, p { overflow-wrap: break-word; }
 .program-card p { color: var(--muted); line-height: 1.65; margin: 0; }
 .program-card-cta { margin-top: auto; padding-top: 28px; display: inline-flex; align-items: center; gap: 11px; color: var(--forest); font-size: 14px; font-weight: 600; }
 .program-card-cta > span { color: var(--gold-ink); transition: transform .18s ease; }
-.program-card:hover .program-card-cta > span { transform: translateX(4px); }
+.program-card:hover .program-card-cta > span, .program-card:focus-visible .program-card-cta > span { transform: translateX(4px); }
 .feature-row { display: grid; grid-template-columns: 1.15fr .85fr; margin-top: clamp(68px, 7vw, 84px); background: var(--forest); color: white; }
 .feature-image img { width: 100%; height: 100%; object-fit: cover; min-height: 520px; }
 .feature-copy { padding: clamp(42px, 6vw, 84px); display: flex; flex-direction: column; justify-content: center; }
@@ -216,7 +216,7 @@ h1, h2, h3, p { overflow-wrap: break-word; }
 .support { display: grid; grid-template-columns: .95fr 1.05fr; gap: 8vw; align-items: center; }
 .support-copy > p:not(.eyebrow) { max-width: 62ch; color: var(--muted); line-height: 1.7; font-size: 17px; }
 .support-list { margin-top: 38px; }
-.support-list > div { display: grid; grid-template-columns: 45px 1fr; gap: 14px; padding: 20px 0; …4916 tokens truncated…); background: var(--cream); border-top: 3px solid var(--forest); }
+.support-list > div { display: grid; grid-te…4930 tokens truncated…); background: var(--cream); border-top: 3px solid var(--forest); }
 .science-map-heading { display: grid; grid-template-columns: .34fr 1fr; gap: 32px; margin-bottom: 30px; align-items: start; }
 .science-map-heading > span { color: var(--forest); font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .science-map-heading p { max-width: 64ch; margin: 0; color: var(--muted); line-height: 1.6; }
@@ -612,4 +612,3 @@ h3, .menu-group h3, .menu-actions button, .search-results strong,
   html { scroll-behavior: auto; }
   *, *:before, *:after { transition: none !important; animation: none !important; }
 }
-
