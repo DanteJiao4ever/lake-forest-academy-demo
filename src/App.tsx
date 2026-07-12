@@ -11,7 +11,7 @@ const programs = [
   { slug: "business", code: "BUS", title: "Business", text: "Case studies and practical assignments introduce entrepreneurship, accounting, marketing and responsible decision-making." },
   { slug: "humanities", code: "HUM", title: "Humanities & Social Sciences", text: "History, geography and the social sciences invite students to read closely and understand different perspectives." },
   { slug: "english-support", code: "ENG", title: "English & Language Support", text: "English courses and targeted language support help students communicate confidently and prepare for senior-level study." },
-];
+] as const;
 
 type CourseListing = {
   code: string;
@@ -169,7 +169,7 @@ const applicationChecklist = [
   "The student's current grade and intended entry term",
   "Certified English translations when original records are in another language",
   "A short introduction to the student's interests and goals",
-  "Information ab…9102 tokens truncated…aceholder="Try OSSD, student life or admissions" /></label>
+  "Infor…9162 tokens truncated…aceholder="Try OSSD, student life or admissions" /></label>
             <div className="search-results" aria-live="polite">
               {searchResults.length ? searchResults.map((item) => (
                 <a href={resolveHref(item.href)} key={item.title} onClick={closeSearch}>
@@ -425,4 +425,3 @@ const applicationChecklist = [
 export default function Home() {
   return <SchoolSite />;
 }
-
