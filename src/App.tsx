@@ -275,7 +275,7 @@ type PageViewProps = {
 function ProgramCard({ program, routeHref }: { program: (typeof programs)[number]; routeHref: PageViewProps["routeHref"] }) {
   return (
     <a className="program-card" href={`${routeHref("courses")}#${program.slug}`}>
-      <span className="program-card-top"><span className="program-code">{program.code}</span><span className="program-card-arrow" aria-hidden="true">&nearr;</span></span>
+      <span className="program-card-top"><span className="program-code">{program.code}</span><span className="program-card-arrow" aria-hidden="true">{"\u2197"}</span></span>
       <h3>{program.title}</h3>
       <p>{program.text}</p>
       <span className="program-card-cta">View Course Details <span aria-hidden="true">-&gt;</span></span>
@@ -432,7 +432,7 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
           <a className="button ghost" href={routeHref("academics")}>Review The OSSD Pathway</a>
           <a className="text-link light-link" href={`${routeHref("admissions")}#contact`}>Contact Admissions <span aria-hidden="true">-&gt;</span></a>
         </div>
-        <div className="curriculum-references"><span>Curriculum References</span><a href="https://www.dcp.edu.gov.on.ca/en/curriculum" target="_blank" rel="noreferrer">Ontario Curriculum & Resources <span aria-hidden="true">&nearr;</span></a><a href="https://www.ontario.ca/page/earning-your-high-school-diploma" target="_blank" rel="noreferrer">Current OSSD Requirements <span aria-hidden="true">&nearr;</span></a></div>
+        <div className="curriculum-references"><span>Curriculum References</span><a href="https://www.dcp.edu.gov.on.ca/en/curriculum" target="_blank" rel="noreferrer">Ontario Curriculum & Resources <span aria-hidden="true">{"\u2197"}</span></a><a href="https://www.ontario.ca/page/earning-your-high-school-diploma" target="_blank" rel="noreferrer">Current OSSD Requirements <span aria-hidden="true">{"\u2197"}</span></a></div>
       </section>
     </>
   );
