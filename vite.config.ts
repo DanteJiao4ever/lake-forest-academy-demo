@@ -13,8 +13,10 @@ export default defineConfig({
       input: {
         home: resolve(root, "index.html"),
         academics: resolve(root, "academics/index.html"),
+        courses: resolve(root, "courses/index.html"),
         admissions: resolve(root, "admissions/index.html"),
       },
     },
   },
 });
+
