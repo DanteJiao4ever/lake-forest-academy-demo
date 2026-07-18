@@ -6,7 +6,9 @@ import { defineConfig } from "vite";
 const root = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  base: "/lake-forest-academy-demo/",
+  // Relative asset URLs keep both the custom domain and the original
+  // GitHub Pages project URL working during DNS propagation.
+  base: "./",
   plugins: [react()],
   build: {
     rolldownOptions: {
@@ -19,4 +21,3 @@ export default defineConfig({
     },
   },
 });
-
