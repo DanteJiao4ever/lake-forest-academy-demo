@@ -10,4 +10,3 @@ This file is the working source of truth for public school contact details.
 - Main telephone number: To be provided
 
 Do not publish a street address or telephone number until the school confirms it.
-
