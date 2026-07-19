@@ -4,8 +4,18 @@
   const APP_ROOT = document.querySelector("#app");
   const STATE_KEY = "lake-forest-learning-state-v1";
   const SESSION_KEY = "lake-forest-learning-session-v1";
+  const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
+  const REGISTERED_ACCOUNT_KEY = "lake-forest-learning-registration-v1";
   const ACCESS_EMAIL = "student@example.invalid";
   const ACCESS_PASSWORD = null;
+  const SCHOOL_ACCOUNT = {
+    firstName: "Alex",
+    lastName: "Morgan",
+    displayName: "Alex Morgan",
+    email: ACCESS_EMAIL,
+    accountType: "school",
+    program: "OSSD · Grade 12",
+  };
 
   const COURSES = [
     {
@@ -705,16 +715,124 @@
     },
   };
 
+  const NEW_ACCOUNT_STATE = {
+    completed: [],
+    guideChecks: {
+      mhf4u: [],
+      sbi4u: [],
+      eng4u: [],
+    },
+    read: [],
+    feedbackRead: [],
+    submissions: {},
+  };
+
   let state = loadState();
   let assignmentFilter = "all";
   let replacingSubmissionId = null;
   let toastTimer = null;
+  let signInNotice = "";
+  let signInPrefill = "";
 
-  function loadState() {
+  function normalizeEmail(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function loadAccounts() {
     try {
-      const saved = JSON.parse(localStorage.getItem(STATE_KEY));
+      const saved = JSON.parse(localStorage.getItem(ACCOUNTS_KEY));
+      if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+      return Object.fromEntries(
+        Object.entries(saved).filter(
+          ([email, account]) =>
+            normalizeEmail(email) === email &&
+            account &&
+            typeof account === "object" &&
+            typeof account.firstName === "string" &&
+            typeof account.lastName === "string" &&
+            typeof account.passwordHash === "string" &&
+            typeof account.salt === "string",
+        ),
+      );
+    } catch {
+      return {};
+    }
+  }
+
+  function saveAccounts(accounts) {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+  }
+
+  function registeredAccount(email) {
+    return loadAccounts()[normalizeEmail(email)] || null;
+  }
+
+  function readSession() {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (saved === "signed-in") return { email: ACCESS_EMAIL };
+    try {
+      const session = JSON.parse(saved);
+      return session && typeof session.email === "string"
+        ? { email: normalizeEmail(session.email) }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function currentUser() {
+    const session = readSession();
+    if (!session) return null;
+    if (session.email === ACCESS_EMAIL) return SCHOOL_ACCOUNT;
+    const account = registeredAccount(session.email);
+    if (!account) return null;
+    return {
+      ...account,
+      displayName: `${account.firstName} ${account.lastName}`.trim(),
+      accountType: "personal",
+      program: "OSSD · Grade 12",
+    };
+  }
+
+  function startSession(account) {
+    sessionStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ email: normalizeEmail(account.email) }),
+    );
+  }
+
+  function stateStorageKey(user = currentUser()) {
+    if (!user || user.email === ACCESS_EMAIL) return STATE_KEY;
+    return `${STATE_KEY}:${encodeURIComponent(normalizeEmail(user.email))}`;
+  }
+
+  function initialStateForUser(user = currentUser()) {
+    return structuredCopy(
+      user && user.email !== ACCESS_EMAIL ? NEW_ACCOUNT_STATE : DEFAULT_STATE,
+    );
+  }
+
+  function hasSeededAcademicRecord() {
+    return currentUser()?.email === ACCESS_EMAIL;
+  }
+
+  function userInitials(user = currentUser()) {
+    const parts = [user?.firstName, user?.lastName].filter(Boolean);
+    return (
+      parts
+        .map((part) => String(part).trim().charAt(0))
+        .join("")
+        .slice(0, 2)
+        .toUpperCase() || "LF"
+    );
+  }
+
+  function loadState(user = currentUser()) {
+    const initialState = initialStateForUser(user);
+    try {
+      const saved = JSON.parse(localStorage.getItem(stateStorageKey(user)));
       if (!saved || typeof saved !== "object") {
-        return structuredCopy(DEFAULT_STATE);
+        return initialState;
       }
       const lessonIds = new Set(
         COURSES.flatMap((course) => course.lessons.map((lesson) => lesson.id)),
@@ -723,14 +841,14 @@
       const courseIds = new Set(COURSES.map((course) => course.id));
       const guideStepIds = new Set(COURSE_GUIDE_STEPS.map((step) => step.id));
       const feedbackIds = new Set(
-        ASSIGNMENTS.filter((assignment) => assignment.feedback).map(
+        ASSIGNMENTS.filter((assignment) => assignmentFeedback(assignment)).map(
           (assignment) => assignment.id,
         ),
       );
       const savedSubmissions =
         saved.submissions && typeof saved.submissions === "object"
           ? saved.submissions
-          : structuredCopy(DEFAULT_STATE.submissions);
+          : structuredCopy(initialState.submissions);
       const submissions = Object.fromEntries(
         Object.entries(savedSubmissions).map(([id, submission]) => {
           const assignment = findAssignment(id);
@@ -755,7 +873,7 @@
               receiptId,
               status:
                 submission.status ||
-                (assignment?.score != null
+                (assignment && assignmentScore(assignment) != null
                   ? "graded"
                   : assignment?.status === "submitted"
                     ? "review"
@@ -765,7 +883,7 @@
           ];
         }),
       );
-      const guideChecks = structuredCopy(DEFAULT_STATE.guideChecks);
+      const guideChecks = structuredCopy(initialState.guideChecks);
       if (saved.guideChecks && typeof saved.guideChecks === "object") {
         Object.entries(saved.guideChecks).forEach(([courseId, checks]) => {
           if (!courseIds.has(courseId) || !Array.isArray(checks)) return;
@@ -777,18 +895,18 @@
       return {
         completed: Array.isArray(saved.completed)
           ? [...new Set(saved.completed.filter((id) => lessonIds.has(id)))]
-          : [...DEFAULT_STATE.completed],
+          : [...initialState.completed],
         guideChecks,
         read: Array.isArray(saved.read)
           ? [...new Set(saved.read.filter((id) => announcementIds.has(id)))]
-          : [...DEFAULT_STATE.read],
+          : [...initialState.read],
         feedbackRead: Array.isArray(saved.feedbackRead)
           ? [...new Set(saved.feedbackRead.filter((id) => feedbackIds.has(id)))]
-          : [...DEFAULT_STATE.feedbackRead],
+          : [...initialState.feedbackRead],
         submissions,
       };
     } catch {
-      return structuredCopy(DEFAULT_STATE);
+      return initialState;
     }
   }
 
@@ -807,11 +925,105 @@
   }
 
   function saveState() {
-    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(stateStorageKey(), JSON.stringify(state));
   }
 
   function isSignedIn() {
-    return sessionStorage.getItem(SESSION_KEY) === "signed-in";
+    return Boolean(currentUser());
+  }
+
+  function isValidEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(normalizeEmail(value));
+  }
+
+  function isValidName(value) {
+    const name = String(value || "").trim();
+    return name.length >= 1 && name.length <= 50 && !/[\u0000-\u001f]/.test(name);
+  }
+
+  function passwordChecks(password, email = "") {
+    const value = String(password || "");
+    const emailName = normalizeEmail(email).split("@")[0];
+    return [
+      {
+        id: "length",
+        label: "12–128 characters",
+        met: value.length >= 12 && value.length <= 128,
+      },
+      {
+        id: "uppercase",
+        label: "One uppercase letter",
+        met: /[A-Z]/.test(value),
+      },
+      {
+        id: "lowercase",
+        label: "One lowercase letter",
+        met: /[a-z]/.test(value),
+      },
+      { id: "number", label: "One number", met: /\d/.test(value) },
+      {
+        id: "symbol",
+        label: "One symbol",
+        met: /[^A-Za-z0-9\s]/.test(value),
+      },
+      {
+        id: "personal",
+        label: "Does not contain your email name",
+        met:
+          !value ||
+          emailName.length < 3 ||
+          !value.toLowerCase().includes(emailName.toLowerCase()),
+      },
+    ];
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = "";
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return window.btoa(binary);
+  }
+
+  function base64ToBytes(value) {
+    const binary = window.atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  function createPasswordSalt() {
+    const salt = new Uint8Array(16);
+    window.crypto.getRandomValues(salt);
+    return bytesToBase64(salt);
+  }
+
+  async function derivePasswordHash(password, salt) {
+    if (!window.crypto?.subtle) {
+      throw new Error("Secure password storage is unavailable in this browser.");
+    }
+    const key = await window.crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      "PBKDF2",
+      false,
+      ["deriveBits"],
+    );
+    const bits = await window.crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        hash: "SHA-256",
+        salt: base64ToBytes(salt),
+        iterations: 120000,
+      },
+      key,
+      256,
+    );
+    return bytesToBase64(new Uint8Array(bits));
+  }
+
+  async function verifyRegisteredPassword(account, password) {
+    if (!account?.salt || !account?.passwordHash) return false;
+    const candidate = await derivePasswordHash(password, account.salt);
+    return candidate === account.passwordHash;
   }
 
   function escapeHtml(value) {
@@ -920,7 +1132,16 @@
   }
 
   function courseGrade(courseId) {
+    if (!hasSeededAcademicRecord()) return null;
     return GRADES.find((grade) => grade.courseId === courseId);
+  }
+
+  function assignmentScore(assignment) {
+    return hasSeededAcademicRecord() ? assignment.score : null;
+  }
+
+  function assignmentFeedback(assignment) {
+    return hasSeededAcademicRecord() ? assignment.feedback : "";
   }
 
   function formatTime(value) {
@@ -962,7 +1183,8 @@
   function unreadFeedback() {
     return ASSIGNMENTS.filter(
       (assignment) =>
-        assignment.feedback && !state.feedbackRead.includes(assignment.id),
+        assignmentFeedback(assignment) &&
+        !state.feedbackRead.includes(assignment.id),
     );
   }
 
@@ -990,7 +1212,7 @@
         route: `assignment/${assignment.id}`,
         eyebrow: `${course.code} · New Feedback`,
         title: assignment.title,
-        meta: `${assignment.score}% · Review instructor comments`,
+        meta: `${assignmentScore(assignment)}% · Review instructor comments`,
         className: "success",
       });
     });
@@ -1026,8 +1248,9 @@
   }
 
   function assignmentStatus(assignment) {
-    if (assignment.score != null) {
-      return { key: "graded", label: `Graded · ${assignment.score}%`, className: "success" };
+    const score = assignmentScore(assignment);
+    if (score != null) {
+      return { key: "graded", label: `Graded · ${score}%`, className: "success" };
     }
     const submission = state.submissions[assignment.id];
     if (submission?.status === "revision") {
@@ -1110,6 +1333,8 @@
 
   function shell(content) {
     const route = routeParts();
+    const user = currentUser() || SCHOOL_ACCOUNT;
+    const initials = userInitials(user);
     const unread = ANNOUNCEMENTS.filter((item) => !state.read.includes(item.id)).length;
     const pending = ASSIGNMENTS.filter((item) =>
       ["due", "late", "overdue", "revision"].includes(
@@ -1134,8 +1359,8 @@
             ${navLink("support", "Student Support", "award")}
           </nav>
           <div class="sidebar-student">
-            <span class="avatar" aria-hidden="true">AM</span>
-            <span><strong>Alex Morgan</strong><span>OSSD · Grade 12</span></span>
+            <span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+            <span><strong>${escapeHtml(user.displayName)}</strong><span>${escapeHtml(user.program)}</span></span>
             <button class="logout-button" type="button" data-action="logout" aria-label="Sign out">${icon("logout")}</button>
           </div>
         </aside>
@@ -1153,8 +1378,8 @@
               ${unread ? `<small>${unread}</small>` : ""}
             </a>
             <div class="header-profile">
-              <span class="avatar" aria-hidden="true">AM</span>
-              <span>Alex Morgan</span>
+              <span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>
+              <span>${escapeHtml(user.displayName)}</span>
             </div>
           </header>
           <main id="main-content" class="page">
@@ -1165,45 +1390,176 @@
     `;
   }
 
-  function loginView(error = "") {
-    document.title = "Sign In | Lake Forest Learning";
+  function authStory() {
+    return `
+      <section class="login-story" aria-label="Lake Forest Academy learning community">
+        <img src="../images/academics-seminar.jpg" alt="Students learning together in a classroom" />
+        <span class="login-overlay"></span>
+        <div class="login-story-content">
+          <img class="login-logo" src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+          <div class="login-story-copy">
+            <p class="eyebrow light">Lake Forest Learning</p>
+            <h1>Your Courses.<br />Your Next Step.</h1>
+            <p>Access OSSD lessons, submit assignments, review feedback and keep your learning on track from one clear workspace.</p>
+          </div>
+          <p class="login-location">North York · Ontario · Canada</p>
+        </div>
+      </section>
+    `;
+  }
+
+  function authPage(title, content) {
+    document.title = `${title} | Lake Forest Learning`;
     APP_ROOT.innerHTML = `
       <main class="login-page" id="main-content">
-        <section class="login-story" aria-label="Lake Forest Academy learning community">
-          <img src="../images/academics-seminar.jpg" alt="Students learning together in a classroom" />
-          <span class="login-overlay"></span>
-          <div class="login-story-content">
-            <img class="login-logo" src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
-            <div class="login-story-copy">
-              <p class="eyebrow light">Lake Forest Learning</p>
-              <h1>Your Courses.<br />Your Next Step.</h1>
-              <p>Access OSSD lessons, submit assignments, review feedback and keep your learning on track from one clear workspace.</p>
-            </div>
-            <p class="login-location">North York · Ontario · Canada</p>
-          </div>
-        </section>
+        ${authStory()}
         <section class="login-panel">
           <div class="login-panel-inner">
             <img class="login-mobile-logo" src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
-            <p class="eyebrow">Student Portal</p>
-            <h1>Welcome Back</h1>
-            <p class="login-intro">Sign in with your Lake Forest Academy student account.</p>
-            <form id="login-form" novalidate>
-              <label for="email">School Email</label>
-              <input id="email" name="email" type="email" autocomplete="username" value="${ACCESS_EMAIL}" required />
-              <div class="password-label">
-                <label for="password">Password</label>
-                <span>Student access</span>
-              </div>
-              <input id="password" name="password" type="password" autocomplete="current-password" value="${ACCESS_PASSWORD}" required />
-              ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
-              <button class="button button-primary login-submit" type="submit">Sign In ${icon("arrow", 17)}</button>
-            </form>
-            <p class="login-help"><strong>Lake Forest Academy Account</strong>Use your assigned school email and password.</p>
+            ${content}
           </div>
         </section>
       </main>
     `;
+  }
+
+  function passwordInput(id, label, autocomplete, describedBy = "") {
+    return `
+      <div class="password-label">
+        <label for="${id}">${label}</label>
+        <span>${id === "password" ? "Secure access" : "Use the same password"}</span>
+      </div>
+      <div class="auth-input-wrap">
+        <input id="${id}" name="${id}" type="password" autocomplete="${autocomplete}" ${describedBy ? `aria-describedby="${describedBy}"` : ""} required />
+        <button class="password-toggle" type="button" data-action="toggle-password" data-target="${id}" aria-label="Show ${label.toLowerCase()}" aria-pressed="false">Show</button>
+      </div>
+    `;
+  }
+
+  function loginView({ error = "", email = "", notice = "" } = {}) {
+    const savedEmail = email || signInPrefill;
+    const message = notice || signInNotice;
+    authPage(
+      "Sign In",
+      `
+        <p class="eyebrow">Student Portal</p>
+        <h1>Welcome Back</h1>
+        <p class="login-intro">Sign in with your school account or a personal email account created on this device.</p>
+        ${message ? `<p class="form-success" role="status">${escapeHtml(message)}</p>` : ""}
+        <form id="login-form" novalidate>
+          <label for="email">Email Address</label>
+          <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
+          ${passwordInput("password", "Password", "current-password")}
+          ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+          <button class="button button-primary login-submit" type="submit">Sign In ${icon("arrow", 17)}</button>
+        </form>
+        <div class="auth-switch">
+          <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
+          <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
+        </div>
+        <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can continue to use their existing credentials.</p>
+      `,
+    );
+  }
+
+  function fieldError(errors, name) {
+    return errors[name]
+      ? `<p class="field-error" id="${name}-error">${escapeHtml(errors[name])}</p>`
+      : "";
+  }
+
+  function registrationView(values = {}, errors = {}) {
+    const errorMessages = Object.values(errors);
+    const errorSummary = errorMessages.length
+      ? `
+        <div class="error-summary" id="registration-errors" role="alert" tabindex="-1">
+          <strong>Please review the following information.</strong>
+          <ul>${errorMessages.map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>
+        </div>
+      `
+      : "";
+    authPage(
+      "Create Account",
+      `
+        <p class="eyebrow">Personal Email Access</p>
+        <h1>Create Your Account</h1>
+        <p class="login-intro">Use any personal email address to create a Lake Forest Learning student profile on this device.</p>
+        ${errorSummary}
+        <form id="registration-form" class="registration-form" novalidate>
+          <div class="register-name-grid">
+            <div class="auth-field">
+              <label for="firstName">First Name</label>
+              <input id="firstName" name="firstName" type="text" autocomplete="given-name" value="${escapeHtml(values.firstName || "")}" ${errors.firstName ? 'aria-invalid="true" aria-describedby="firstName-error"' : ""} required />
+              ${fieldError(errors, "firstName")}
+            </div>
+            <div class="auth-field">
+              <label for="lastName">Last Name</label>
+              <input id="lastName" name="lastName" type="text" autocomplete="family-name" value="${escapeHtml(values.lastName || "")}" ${errors.lastName ? 'aria-invalid="true" aria-describedby="lastName-error"' : ""} required />
+              ${fieldError(errors, "lastName")}
+            </div>
+          </div>
+          <div class="auth-field">
+            <label for="registerEmail">Personal Email</label>
+            <input id="registerEmail" name="email" type="email" autocomplete="email" value="${escapeHtml(values.email || "")}" ${errors.email ? 'aria-invalid="true" aria-describedby="email-error"' : ""} required />
+            ${fieldError(errors, "email")}
+          </div>
+          <div class="auth-field">
+            ${passwordInput("newPassword", "Password", "new-password", `password-rules${errors.password ? " password-error" : ""}`)}
+            ${fieldError(errors, "password")}
+            <ul class="password-rules" id="password-rules" aria-label="Password requirements" aria-live="polite">
+              ${passwordChecks("", values.email || "")
+                .map(
+                  (rule) => `<li data-password-rule="${rule.id}" aria-label="${escapeHtml(rule.label)}: not yet met"><span aria-hidden="true">${icon("check", 12)}</span>${escapeHtml(rule.label)}</li>`,
+                )
+                .join("")}
+            </ul>
+          </div>
+          <div class="auth-field">
+            ${passwordInput("confirmPassword", "Confirm Password", "new-password", errors.confirmPassword ? "confirmPassword-error" : "")}
+            ${fieldError(errors, "confirmPassword")}
+          </div>
+          <label class="consent-row" for="deviceConsent">
+            <input id="deviceConsent" name="deviceConsent" type="checkbox" value="yes" ${errors.deviceConsent ? 'aria-invalid="true" aria-describedby="deviceConsent-error"' : ""} />
+            <span>I understand this account is currently saved only on this device.</span>
+          </label>
+          ${fieldError(errors, "deviceConsent")}
+          <button class="button button-primary login-submit" type="submit">Create Account ${icon("arrow", 17)}</button>
+        </form>
+        <p class="auth-privacy-note"><strong>Your privacy matters.</strong>Your name, email and a protected password record stay in this browser. Do not register on a shared or public device.</p>
+        <p class="auth-return">Already have an account? <a href="#/signin">Return to Sign In</a></p>
+      `,
+    );
+  }
+
+  function accountCreatedView() {
+    let account = null;
+    try {
+      account = JSON.parse(sessionStorage.getItem(REGISTERED_ACCOUNT_KEY));
+    } catch {
+      account = null;
+    }
+    if (!account?.email) {
+      registrationView();
+      return;
+    }
+    authPage(
+      "Account Created",
+      `
+        <div class="account-created">
+          <span class="account-created-mark">${icon("check", 28)}</span>
+          <p class="eyebrow">Registration Complete</p>
+          <h1>Your Account Is Ready</h1>
+          <p class="login-intro">Your personal email account has been created for Lake Forest Learning.</p>
+          <dl>
+            <div><dt>Student</dt><dd>${escapeHtml(account.displayName)}</dd></div>
+            <div><dt>Email</dt><dd>${escapeHtml(account.email)}</dd></div>
+            <div><dt>Account Storage</dt><dd>This browser</dd></div>
+          </dl>
+          <button class="button button-primary full-width" type="button" data-action="continue-to-signin">Continue to Sign In ${icon("arrow", 17)}</button>
+          <p class="auth-privacy-note"><strong>Remember:</strong>Use this same browser and device when signing in with this account.</p>
+        </div>
+      `,
+    );
   }
 
   function pageHeading(eyebrow, title, copy, action = "") {
@@ -1220,6 +1576,7 @@
   }
 
   function dashboardView() {
+    const user = currentUser() || SCHOOL_ACCOUNT;
     const progress = overallProgress();
     const actions = smartActions();
     const primary = actions[0];
@@ -1242,7 +1599,7 @@
       <section class="welcome">
         <div class="welcome-copy">
           <p class="eyebrow light">${todayLabel()}</p>
-          <h1>Good Evening, Alex.</h1>
+          <h1>Good Evening, ${escapeHtml(user.firstName)}.</h1>
           <p>${primaryCopy}</p>
           ${primaryAction}
         </div>
@@ -1321,7 +1678,7 @@
                     const course = findCourse(assignment.courseId);
                     return `
                       <a class="feedback-row" href="#/assignment/${assignment.id}">
-                        <span class="feedback-score">${assignment.score}%</span>
+                        <span class="feedback-score">${assignmentScore(assignment)}%</span>
                         <span><p class="course-code">${course.code} · New Feedback</p><h3>${escapeHtml(assignment.title)}</h3></span>
                         ${icon("arrow", 18)}
                       </a>
@@ -1463,7 +1820,7 @@
               <div class="fact"><span>Completion Date</span><strong>${formatDate(course.completionDate)}</strong></div>
               <div class="fact"><span>Weekly Study Plan</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
               <div class="fact"><span>Live Sessions</span><strong>${escapeHtml(course.schedule)}</strong></div>
-              <div class="fact"><span>Current Standing</span><strong>${grade?.current ?? "—"}%</strong></div>
+              <div class="fact"><span>Current Standing</span><strong>${grade ? `${grade.current}%` : "Not Yet Graded"}</strong></div>
               <div class="fact"><span>OSSD Credit</span><strong>${escapeHtml(course.credit)}</strong></div>
             </div>
           </div>
@@ -1882,8 +2239,10 @@
       !submission || replacingSubmissionId === assignment.id;
     const submittedOnTime =
       submission && new Date(submission.submittedAt) <= new Date(assignment.due);
+    const score = assignmentScore(assignment);
+    const feedback = assignmentFeedback(assignment);
     const lifecycleIndex =
-      assignment.score != null
+      score != null
         ? 3
         : submission?.status === "review"
           ? 1
@@ -1897,7 +2256,7 @@
       ["Graded", "The published result is included in your course standing."],
     ];
     const feedbackUnread =
-      assignment.feedback && !state.feedbackRead.includes(assignment.id);
+      feedback && !state.feedbackRead.includes(assignment.id);
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="assignments">Assignments</button><span>/</span><span>${course.code}</span>
@@ -1930,14 +2289,14 @@
               </div>
             </section>
             ${
-              assignment.feedback
+              feedback
                 ? `
                   <section class="lesson-section feedback-panel ${feedbackUnread ? "is-new" : ""}">
                     <div class="feedback-heading">
                       <div><p class="course-code">${feedbackUnread ? "New Feedback" : "Instructor Feedback"}</p><h2>${escapeHtml(course.instructor)}</h2></div>
-                      <strong>${assignment.score}%</strong>
+                      <strong>${score}%</strong>
                     </div>
-                    <p>${escapeHtml(assignment.feedback)}</p>
+                    <p>${escapeHtml(feedback)}</p>
                     ${
                       feedbackUnread
                         ? `<button class="button button-quiet" type="button" data-action="mark-feedback-read" data-id="${assignment.id}">Mark Feedback as Reviewed</button>`
@@ -1990,7 +2349,7 @@
                       }
                     </div>
                     ${
-                      assignment.score == null
+                      score == null
                         ? `<button class="button button-quiet full-width" type="button" data-action="replace-submission" data-id="${assignment.id}">Replace Submission</button>`
                         : ""
                     }
@@ -2039,10 +2398,16 @@
   }
 
   function progressView() {
-    const average = Math.round(
-      GRADES.reduce((total, grade) => total + grade.current, 0) / GRADES.length,
+    const grades = hasSeededAcademicRecord() ? GRADES : [];
+    const average = grades.length
+      ? Math.round(
+          grades.reduce((total, grade) => total + grade.current, 0) /
+            grades.length,
+        )
+      : null;
+    const graded = ASSIGNMENTS.filter(
+      (assignment) => assignmentScore(assignment) != null,
     );
-    const graded = ASSIGNMENTS.filter((assignment) => assignment.score != null);
     return `
       ${pageHeading(
         "Academic Record",
@@ -2051,13 +2416,13 @@
       )}
       <section class="progress-summary">
         <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${state.completed.length} of ${allLessons().length} lessons complete</span></div>
-        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average}%</strong><span>Across ${COURSES.length} active courses</span></div>
-        <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${graded.length}</strong><span>Published assignment grade</span></div>
+        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${COURSES.length} active courses`}</span></div>
+        <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${graded.length}</strong><span>${graded.length === 1 ? "Published assignment grade" : "Published assignment grades"}</span></div>
       </section>
       <section class="panel">
         <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is returned</p></div></header>
-        ${GRADES.map((grade) => {
-          const course = findCourse(grade.courseId);
+        ${COURSES.map((course) => {
+          const grade = courseGrade(course.id);
           const progress = courseProgress(course);
           return `
             <a class="grade-row" href="#/course/${course.id}">
@@ -2065,26 +2430,30 @@
                 <h3>${course.code} · ${escapeHtml(course.title)}</h3>
                 <p>${progress.completed}/${course.lessons.length} lessons · Instructor: ${escapeHtml(course.instructor)}</p>
               </span>
-              <strong class="grade-score">${grade.current}%</strong>
-              <span class="badge ${grade.current >= grade.target ? "success" : "warning"}">Target ${grade.target}%</span>
+              <strong class="grade-score">${grade ? `${grade.current}%` : "—"}</strong>
+              <span class="badge ${grade ? (grade.current >= grade.target ? "success" : "warning") : ""}">${grade ? `Target ${grade.target}%` : "Not Yet Graded"}</span>
             </a>
           `;
         }).join("")}
       </section>
       <section class="panel" style="margin-top:23px">
         <header class="panel-header"><div><h2>Returned Work</h2><p>Published feedback and scores</p></div></header>
-        ${graded
-          .map((assignment) => {
-            const course = findCourse(assignment.courseId);
-            return `
-              <a class="grade-row" href="#/assignment/${assignment.id}">
-                <span><h3>${escapeHtml(assignment.title)}</h3><p>${course.code} · ${formatDate(assignment.due)}</p></span>
-                <strong class="grade-score">${assignment.score}%</strong>
-                <span>${icon("arrow", 18)}</span>
-              </a>
-            `;
-          })
-          .join("")}
+        ${
+          graded.length
+            ? graded
+                .map((assignment) => {
+                  const course = findCourse(assignment.courseId);
+                  return `
+                    <a class="grade-row" href="#/assignment/${assignment.id}">
+                      <span><h3>${escapeHtml(assignment.title)}</h3><p>${course.code} · ${formatDate(assignment.due)}</p></span>
+                      <strong class="grade-score">${assignmentScore(assignment)}%</strong>
+                      <span>${icon("arrow", 18)}</span>
+                    </a>
+                  `;
+                })
+                .join("")
+            : '<div class="empty-state compact"><p>No grades have been published for this account.</p></div>'
+        }
       </section>
     `;
   }
@@ -2141,7 +2510,11 @@
 
   function render(shouldFocusMain = false) {
     if (!isSignedIn()) {
-      loginView();
+      const authRoute = routeParts()[0];
+      if (authRoute === "register") registrationView();
+      else if (authRoute === "account-created") accountCreatedView();
+      else loginView();
+      if (shouldFocusMain) focusMain();
       return;
     }
     const route = routeParts();
@@ -2187,21 +2560,126 @@
     toastTimer = window.setTimeout(() => toast.remove(), 3200);
   }
 
-  document.addEventListener("submit", (event) => {
+  document.addEventListener("submit", async (event) => {
     if (event.target.id === "login-form") {
       event.preventDefault();
       const form = new FormData(event.target);
-      const email = String(form.get("email") || "").trim().toLowerCase();
+      const email = normalizeEmail(form.get("email"));
       const password = String(form.get("password") || "");
-      if (email !== ACCESS_EMAIL || password !== ACCESS_PASSWORD) {
-        loginView("The email or password does not match the student account.");
-        document.querySelector("#email")?.focus();
+      let account = null;
+      let accepted = false;
+      if (email === ACCESS_EMAIL) {
+        account = SCHOOL_ACCOUNT;
+        accepted = password === ACCESS_PASSWORD;
+      } else {
+        account = registeredAccount(email);
+        try {
+          accepted = Boolean(
+            account && (await verifyRegisteredPassword(account, password)),
+          );
+        } catch {
+          accepted = false;
+        }
+      }
+      if (!accepted || !account) {
+        loginView({
+          error: "The email or password is incorrect. Please try again.",
+          email,
+        });
+        document.querySelector(email ? "#password" : "#email")?.focus();
         return;
       }
-      sessionStorage.setItem(SESSION_KEY, "signed-in");
-      if (!window.location.hash) window.location.hash = "#/dashboard";
+      startSession(account);
+      state = loadState(currentUser());
+      signInNotice = "";
+      signInPrefill = "";
+      sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
+      window.location.hash = "#/dashboard";
       render(true);
-      showToast("Welcome back, Alex.");
+      showToast(`Welcome back, ${currentUser()?.firstName || "student"}.`);
+      return;
+    }
+
+    if (event.target.id === "registration-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const values = {
+        firstName: String(form.get("firstName") || "").trim(),
+        lastName: String(form.get("lastName") || "").trim(),
+        email: normalizeEmail(form.get("email")),
+      };
+      const password = String(form.get("newPassword") || "");
+      const confirmation = String(form.get("confirmPassword") || "");
+      const errors = {};
+      if (!isValidName(values.firstName)) {
+        errors.firstName = "Enter a first name using 1–50 characters.";
+      }
+      if (!isValidName(values.lastName)) {
+        errors.lastName = "Enter a last name using 1–50 characters.";
+      }
+      if (!isValidEmail(values.email)) {
+        errors.email = "Enter a complete email address, such as name@example.com.";
+      } else if (values.email.endsWith("@lakeforestacademy.ca")) {
+        errors.email =
+          "School email accounts are issued by Lake Forest Academy. Sign in with your school credentials or use a personal address.";
+      } else if (registeredAccount(values.email)) {
+        errors.email =
+          "We could not create an account with this email. Try signing in or use another address.";
+      }
+      if (!passwordChecks(password, values.email).every((rule) => rule.met)) {
+        errors.password = "Create a password that meets every requirement.";
+      }
+      if (!confirmation || confirmation !== password) {
+        errors.confirmPassword = "Enter the same password again.";
+      }
+      if (form.get("deviceConsent") !== "yes") {
+        errors.deviceConsent =
+          "Confirm that you understand this account is saved on this device.";
+      }
+      if (Object.keys(errors).length) {
+        registrationView(values, errors);
+        document.querySelector("#registration-errors")?.focus();
+        return;
+      }
+
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Creating Account…";
+      }
+      try {
+        const salt = createPasswordSalt();
+        const passwordHash = await derivePasswordHash(password, salt);
+        const account = {
+          firstName: values.firstName,
+          lastName: values.lastName,
+          email: values.email,
+          passwordHash,
+          salt,
+          createdAt: new Date().toISOString(),
+        };
+        const accounts = loadAccounts();
+        accounts[values.email] = account;
+        saveAccounts(accounts);
+        sessionStorage.setItem(
+          REGISTERED_ACCOUNT_KEY,
+          JSON.stringify({
+            email: account.email,
+            displayName: `${account.firstName} ${account.lastName}`.trim(),
+          }),
+        );
+        signInPrefill = account.email;
+        signInNotice =
+          "Account created. Sign in with your new personal email account.";
+        window.location.hash = "#/account-created";
+        render(true);
+      } catch {
+        registrationView(values, {
+          form:
+            "We could not securely create the account in this browser. Please update your browser or try another device.",
+        });
+        document.querySelector("#registration-errors")?.focus();
+      }
       return;
     }
 
@@ -2249,6 +2727,22 @@
     }
   });
 
+  document.addEventListener("input", (event) => {
+    if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
+    const password = document.querySelector("#newPassword")?.value || "";
+    const email = document.querySelector("#registerEmail")?.value || "";
+    passwordChecks(password, email).forEach((rule) => {
+      const item = document.querySelector(
+        `[data-password-rule="${rule.id}"]`,
+      );
+      item?.classList.toggle("is-met", Boolean(password && rule.met));
+      item?.setAttribute(
+        "aria-label",
+        `${rule.label}: ${password && rule.met ? "met" : "not yet met"}`,
+      );
+    });
+  });
+
   document.addEventListener("click", (event) => {
     const skipLink = event.target.closest(".skip-link");
     if (skipLink) {
@@ -2280,7 +2774,32 @@
     }
 
     const action = target.dataset.action;
-    if (action === "open-menu") {
+    if (action === "toggle-password") {
+      const input = document.querySelector(`#${target.dataset.target}`);
+      if (!input) return;
+      const willShow = input.type === "password";
+      input.type = willShow ? "text" : "password";
+      target.textContent = willShow ? "Hide" : "Show";
+      target.setAttribute("aria-pressed", String(willShow));
+      target.setAttribute(
+        "aria-label",
+        `${willShow ? "Hide" : "Show"} ${input.labels?.[0]?.textContent?.toLowerCase() || "password"}`,
+      );
+      input.focus();
+    } else if (action === "continue-to-signin") {
+      let account = null;
+      try {
+        account = JSON.parse(sessionStorage.getItem(REGISTERED_ACCOUNT_KEY));
+      } catch {
+        account = null;
+      }
+      signInPrefill = account?.email || "";
+      signInNotice =
+        "Account created. Sign in with your new personal email account.";
+      window.location.hash = "#/signin";
+      render(true);
+      document.querySelector("#password")?.focus();
+    } else if (action === "open-menu") {
       document.querySelector("#sidebar")?.classList.add("is-open");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = false;
@@ -2295,7 +2814,10 @@
       menuButton?.focus();
     } else if (action === "logout") {
       sessionStorage.removeItem(SESSION_KEY);
-      window.location.hash = "";
+      state = initialStateForUser(null);
+      signInNotice = "";
+      signInPrefill = "";
+      window.location.hash = "#/signin";
       loginView();
     } else if (action === "toggle-lesson") {
       const id = target.dataset.id;
