@@ -8,6 +8,8 @@
   const REGISTERED_ACCOUNT_KEY = "lake-forest-learning-registration-v1";
   const WORKSPACE_LOGOUT_SUPPRESS_KEY =
     "lake-forest-learning-workspace-signed-out-v1";
+  const DRIVE_MATERIALS_CACHE_KEY =
+    "lake-forest-learning-drive-materials-v1";
   const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
   const FILE_STORE_NAME = "submission-files";
   const ACCESS_EMAIL = "student@lakeforestacademy.ca";
@@ -25,6 +27,23 @@
       window.LFA_AUTH_CONFIG?.workspaceLogoutEndpoint || "",
     ).trim(),
   };
+  const DRIVE_CONFIG = Object.freeze({
+    sourceName: String(
+      window.LFA_DRIVE_CONFIG?.sourceName || "Lotus Google Drive",
+    ).trim(),
+    rootFolderId: String(
+      window.LFA_DRIVE_CONFIG?.rootFolderId || "",
+    ).trim(),
+    rootFolderUrl: String(
+      window.LFA_DRIVE_CONFIG?.rootFolderUrl || "",
+    ).trim(),
+    materialsEndpoint: String(
+      window.LFA_DRIVE_CONFIG?.materialsEndpoint || "",
+    ).trim(),
+    syncEndpoint: String(
+      window.LFA_DRIVE_CONFIG?.syncEndpoint || "",
+    ).trim(),
+  });
   const WORKSPACE_GMAIL_URL =
     "https://mail.google.com/a/lakeforestacademy.ca";
   const SCHOOL_ACCOUNT = {
@@ -770,6 +789,9 @@
   let toastTimer = null;
   let signInNotice = "";
   let signInPrefill = "";
+  let driveMaterialsState = loadDriveMaterialsCache();
+  let driveRequestInFlight = false;
+  let driveEndpointChecked = false;
 
   function normalizeEmail(value) {
     return String(value || "").trim().toLowerCase();
@@ -1217,6 +1239,362 @@
     }
   }
 
+  function configuredDriveUrl(value, base = window.location.href) {
+    if (!value) return "";
+    try {
+      const url = new URL(value, base);
+      const localDevelopment =
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1"].includes(url.hostname);
+      return url.protocol === "https:" || localDevelopment ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function driveRootFolderUrl() {
+    const configured = configuredDriveUrl(DRIVE_CONFIG.rootFolderUrl);
+    if (configured) return configured;
+    return DRIVE_CONFIG.rootFolderId
+      ? `https://drive.google.com/drive/folders/${encodeURIComponent(DRIVE_CONFIG.rootFolderId)}`
+      : "";
+  }
+
+  function scalarLabel(value) {
+    if (typeof value === "string" || typeof value === "number") {
+      return String(value).trim();
+    }
+    if (value && typeof value === "object") {
+      return String(
+        value.name || value.title || value.label || value.code || value.id || "",
+      ).trim();
+    }
+    return "";
+  }
+
+  function canonicalCourseId(value, path = "") {
+    const candidate = scalarLabel(value).toLowerCase();
+    const combined = `${candidate} ${String(path || "").toLowerCase()}`;
+    const course = COURSES.find(
+      (item) =>
+        candidate === item.id ||
+        candidate === item.code.toLowerCase() ||
+        combined.includes(item.code.toLowerCase()) ||
+        combined.includes(item.id),
+    );
+    return course?.id || candidate.replace(/[^a-z0-9_-]/g, "");
+  }
+
+  function extractDriveMaterialItems(payload) {
+    if (Array.isArray(payload)) return { found: true, items: payload };
+    if (!payload || typeof payload !== "object") {
+      return { found: false, items: [] };
+    }
+    for (const key of ["materials", "records", "items", "files"]) {
+      if (Array.isArray(payload[key])) {
+        return { found: true, items: payload[key] };
+      }
+    }
+    if (payload.data && payload.data !== payload) {
+      return extractDriveMaterialItems(payload.data);
+    }
+    return { found: false, items: [] };
+  }
+
+  function normalizeDriveMaterial(raw, index) {
+    if (!raw || typeof raw !== "object") return null;
+    const path = String(raw.path || raw.folderPath || raw.relativePath || "");
+    const pathParts = path
+      .split(/[\\/]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const courseId = canonicalCourseId(
+      raw.courseId || raw.courseCode || raw.course,
+      path,
+    );
+    const course = findCourse(courseId);
+    const name = scalarLabel(
+      raw.name || raw.title || raw.fileName || raw.displayName,
+    );
+    if (!name) return null;
+    const fileUrl = configuredDriveUrl(
+      raw.webViewLink ||
+        raw.openUrl ||
+        raw.webUrl ||
+        raw.url ||
+        raw.link ||
+        raw.alternateLink,
+      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint) ||
+        window.location.href,
+    );
+    const pathUnit =
+      pathParts.find((part) => /^unit\s+\d+/i.test(part)) || "";
+    const pathCategory =
+      pathParts.find((part) =>
+        ["lessons", "resources", "assignments", "assessments"].includes(
+          part.toLowerCase(),
+        ),
+      ) || "";
+    const rawUnit =
+      scalarLabel(raw.unitName || raw.unitTitle || raw.unit) ||
+      pathUnit ||
+      "Course Resources";
+    const rawCategory =
+      scalarLabel(raw.categoryName || raw.category || raw.type) ||
+      pathCategory ||
+      "General Resources";
+    const modifiedAt = String(
+      raw.modifiedTime ||
+        raw.driveModifiedAt ||
+        raw.modifiedAt ||
+        raw.updatedAt ||
+        "",
+    ).trim();
+    return {
+      id: scalarLabel(raw.id || raw.fileId) || `material-${index}`,
+      name,
+      courseId: course?.id || courseId || "unassigned",
+      courseCode:
+        scalarLabel(raw.courseCode) ||
+        course?.code ||
+        scalarLabel(raw.course) ||
+        "Unassigned",
+      unit: rawUnit,
+      category: rawCategory,
+      mimeType: scalarLabel(raw.mimeType || raw.contentType),
+      url: fileUrl,
+      modifiedAt:
+        modifiedAt && !Number.isNaN(new Date(modifiedAt).getTime())
+          ? modifiedAt
+          : "",
+      size: Number.isFinite(Number(raw.size ?? raw.sizeBytes))
+        ? Number(raw.size ?? raw.sizeBytes)
+        : 0,
+      description: scalarLabel(raw.description),
+    };
+  }
+
+  function normalizeDrivePayload(payload) {
+    const extracted = extractDriveMaterialItems(payload);
+    const metadata =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload
+        : {};
+    const nestedMetadata =
+      metadata.data && typeof metadata.data === "object" ? metadata.data : {};
+    const syncValue = String(
+      metadata.lastSyncedAt ||
+        metadata.lastSync ||
+        metadata.syncedAt ||
+        nestedMetadata.lastSyncedAt ||
+        nestedMetadata.lastSync ||
+        nestedMetadata.syncedAt ||
+        "",
+    ).trim();
+    return {
+      found: extracted.found,
+      records: extracted.items
+        .map((item, index) => normalizeDriveMaterial(item, index))
+        .filter(Boolean),
+      lastSyncedAt:
+        syncValue && !Number.isNaN(new Date(syncValue).getTime())
+          ? syncValue
+          : "",
+    };
+  }
+
+  function driveSourceCacheKey() {
+    return (
+      DRIVE_CONFIG.rootFolderId ||
+      DRIVE_CONFIG.rootFolderUrl ||
+      DRIVE_CONFIG.sourceName
+    );
+  }
+
+  function loadDriveMaterialsCache() {
+    const fallback = {
+      records: [],
+      lastSyncedAt: "",
+      lastLoadedAt: "",
+      error: "",
+    };
+    try {
+      const saved = JSON.parse(localStorage.getItem(DRIVE_MATERIALS_CACHE_KEY));
+      if (!saved || typeof saved !== "object" || !Array.isArray(saved.records)) {
+        return fallback;
+      }
+      if (saved.sourceKey !== driveSourceCacheKey()) {
+        return fallback;
+      }
+      return {
+        ...fallback,
+        records: saved.records
+          .map((item, index) => normalizeDriveMaterial(item, index))
+          .filter(Boolean),
+        lastSyncedAt:
+          saved.lastSyncedAt &&
+          !Number.isNaN(new Date(saved.lastSyncedAt).getTime())
+            ? saved.lastSyncedAt
+            : "",
+        lastLoadedAt:
+          saved.lastLoadedAt &&
+          !Number.isNaN(new Date(saved.lastLoadedAt).getTime())
+            ? saved.lastLoadedAt
+            : "",
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveDriveMaterialsCache() {
+    const cache = {
+      sourceKey: driveSourceCacheKey(),
+      records: driveMaterialsState.records,
+      lastSyncedAt: driveMaterialsState.lastSyncedAt,
+      lastLoadedAt: driveMaterialsState.lastLoadedAt,
+    };
+    try {
+      localStorage.setItem(DRIVE_MATERIALS_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // The in-memory material index remains available if storage is restricted.
+    }
+  }
+
+  async function requestDriveJson(endpoint, options = {}) {
+    const url = configuredDriveUrl(endpoint);
+    if (!url) throw new Error("Drive endpoint is not configured.");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+        },
+        ...options,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Drive request failed (${response.status}).`);
+      }
+      return await response.json();
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function refreshDriveMaterials({ silent = false } = {}) {
+    if (
+      driveRequestInFlight ||
+      !configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+    ) {
+      return false;
+    }
+    driveRequestInFlight = true;
+    driveEndpointChecked = true;
+    if (!silent && isTeacher()) render();
+    try {
+      const payload = await requestDriveJson(DRIVE_CONFIG.materialsEndpoint);
+      const normalized = normalizeDrivePayload(payload);
+      if (!normalized.found) {
+        throw new Error("The materials endpoint returned an unsupported response.");
+      }
+      driveMaterialsState = {
+        records: normalized.records,
+        lastSyncedAt:
+          normalized.lastSyncedAt || driveMaterialsState.lastSyncedAt,
+        lastLoadedAt: new Date().toISOString(),
+        error: "",
+      };
+      saveDriveMaterialsCache();
+      return true;
+    } catch (error) {
+      driveMaterialsState.error =
+        error?.name === "AbortError"
+          ? "The Drive service did not respond within 8 seconds."
+          : error?.message || "The Drive materials could not be loaded.";
+      return false;
+    } finally {
+      driveRequestInFlight = false;
+      const route = routeParts();
+      if (
+        (isTeacher() && route[1] === "materials") ||
+        (!isTeacher() && route[0] === "course")
+      ) {
+        render();
+      }
+    }
+  }
+
+  async function syncDriveMaterials() {
+    if (
+      !isTeacher() ||
+      !driveRootFolderUrl() ||
+      !configuredDriveUrl(DRIVE_CONFIG.syncEndpoint) ||
+      driveRequestInFlight
+    ) {
+      return;
+    }
+    driveRequestInFlight = true;
+    driveMaterialsState.error = "";
+    render();
+    try {
+      const payload = await requestDriveJson(DRIVE_CONFIG.syncEndpoint, {
+        method: "POST",
+        body: JSON.stringify({ mode: "incremental" }),
+      });
+      const normalized = normalizeDrivePayload(payload);
+      const syncStatus = scalarLabel(
+        payload?.data?.status || payload?.status,
+      ).toLowerCase();
+      if (["queued", "running"].includes(syncStatus)) {
+        showToast(
+          `Sync started for ${DRIVE_CONFIG.sourceName}. The material index will refresh shortly.`,
+        );
+        window.setTimeout(
+          () => void refreshDriveMaterials({ silent: true }),
+          3000,
+        );
+        return;
+      }
+      if (normalized.found) {
+        driveMaterialsState = {
+          records: normalized.records,
+          lastSyncedAt: normalized.lastSyncedAt || new Date().toISOString(),
+          lastLoadedAt: new Date().toISOString(),
+          error: "",
+        };
+        saveDriveMaterialsCache();
+      } else {
+        driveMaterialsState.lastSyncedAt =
+          normalized.lastSyncedAt || new Date().toISOString();
+      }
+      driveRequestInFlight = false;
+      const refreshed =
+        normalized.found ||
+        (configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+          ? await refreshDriveMaterials({ silent: true })
+          : false);
+      if (!refreshed && !normalized.found) {
+        throw new Error("Sync finished, but no material index was returned.");
+      }
+      showToast(
+        `Synced ${plural(driveMaterialsState.records.length, "material")} from ${DRIVE_CONFIG.sourceName}.`,
+      );
+    } catch (error) {
+      driveMaterialsState.error =
+        error?.name === "AbortError"
+          ? "The Drive sync did not respond within 8 seconds."
+          : error?.message || "Drive sync could not be completed.";
+      showToast(driveMaterialsState.error);
+    } finally {
+      driveRequestInFlight = false;
+      if (isTeacher() && routeParts()[1] === "materials") render();
+    }
+  }
+
   function googleWorkspaceAuthUrl() {
     const url = configuredAuthUrl(AUTH_CONFIG.googleWorkspaceAuthStart);
     if (!url) return "";
@@ -1655,6 +2033,7 @@
     return {
       dashboard: "Faculty Dashboard",
       submissions: "Submission Centre",
+      materials: "Course Materials",
     }[route[1]] || "Faculty Dashboard";
   }
 
@@ -1692,6 +2071,7 @@
           <nav class="sidebar-nav">
             ${teacherNavLink("dashboard", "Dashboard", "home")}
             ${teacherNavLink("submissions", "Submission Centre", "clipboard", awaitingReview)}
+            ${teacherNavLink("materials", "Course Materials", "file")}
             <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
               <summary>
                 <span class="nav-icon">${icon("book", 19)}</span>
@@ -1857,6 +2237,259 @@
           `;
         }).join("")}
       </div>
+    `;
+  }
+
+  function driveTimestampLabel(value) {
+    if (!value || Number.isNaN(new Date(value).getTime())) return "Not synced yet";
+    return formatDate(value, true);
+  }
+
+  function groupDriveRecords(records, keyFor) {
+    return records.reduce((groups, record) => {
+      const key = keyFor(record) || "Other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(record);
+      return groups;
+    }, new Map());
+  }
+
+  function driveMaterialItem(record) {
+    const mimeType = String(record.mimeType || "").toLowerCase();
+    const fileKind = mimeType.includes("pdf")
+      ? "PDF"
+      : mimeType.includes("spreadsheet") || mimeType.includes("sheet")
+        ? "XLS"
+        : mimeType.includes("presentation") || mimeType.includes("slide")
+          ? "PPT"
+          : mimeType.includes("video")
+            ? "VID"
+            : mimeType.includes("audio")
+              ? "AUD"
+              : mimeType.includes("image")
+                ? "IMG"
+                : "DOC";
+    const details = [
+      record.mimeType
+        ? record.mimeType.replace(
+            "application/vnd.google-apps.",
+            "Google ",
+          )
+        : "",
+      record.size ? formatFileSize(record.size) : "",
+      record.modifiedAt
+        ? `Updated ${driveTimestampLabel(record.modifiedAt)}`
+        : "",
+    ].filter(Boolean);
+    return `
+      <li class="drive-material-item" data-file-kind="${fileKind}">
+        <span>
+          <strong>${escapeHtml(record.name)}</strong>
+          ${
+            record.description
+              ? `<span class="drive-material-meta">${escapeHtml(record.description)}</span>`
+              : ""
+          }
+          ${
+            details.length
+              ? `<small class="drive-material-meta">${details.map(escapeHtml).join(" 路 ")}</small>`
+              : ""
+          }
+        </span>
+        ${
+          record.url
+            ? `<a class="button button-secondary" href="${escapeHtml(record.url)}" target="_blank" rel="noopener noreferrer">Open ${icon("arrow", 15)}</a>`
+            : '<span class="badge">Indexed</span>'
+        }
+      </li>
+    `;
+  }
+
+  function driveUnitTree(records) {
+    const unitGroups = groupDriveRecords(records, (record) => record.unit);
+    return [...unitGroups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(
+        ([unit, unitRecords]) => `
+          <details class="drive-unit-group" open>
+            <summary>${escapeHtml(unit)} 路 ${plural(unitRecords.length, "material")}</summary>
+            ${[...groupDriveRecords(unitRecords, (record) => record.category).entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(
+                ([category, categoryRecords]) => `
+                  <section class="drive-category-group">
+                    <h4>${escapeHtml(category)}</h4>
+                    <ul class="drive-material-list">
+                      ${categoryRecords
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map(driveMaterialItem)
+                        .join("")}
+                    </ul>
+                  </section>
+                `,
+              )
+              .join("")}
+          </details>
+        `,
+      )
+      .join("");
+  }
+
+  function teacherDriveMaterialTree(records) {
+    if (!records.length) {
+      return `
+        <div class="panel drive-empty-state">
+          <h2>No synced materials yet</h2>
+          <p>When the Lotus folder is connected and synced, its course, unit and category structure will appear here.</p>
+        </div>
+      `;
+    }
+    const courseGroups = groupDriveRecords(records, (record) => record.courseId);
+    return `
+      <div class="drive-material-tree">
+        ${[...courseGroups.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([courseId, courseRecords]) => {
+            const course = findCourse(courseId);
+            const label = course
+              ? `${course.code} 路 ${course.title}`
+              : courseRecords[0]?.courseCode || "Unassigned";
+            return `
+              <details class="drive-course-group" open>
+                <summary>${escapeHtml(label)} 路 ${plural(courseRecords.length, "material")}</summary>
+                ${driveUnitTree(courseRecords)}
+              </details>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  function teacherMaterialsView() {
+    const folderUrl = driveRootFolderUrl();
+    const folderConfigured = Boolean(folderUrl);
+    const materialsEndpointReady = Boolean(
+      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint),
+    );
+    const syncEndpointReady = Boolean(
+      configuredDriveUrl(DRIVE_CONFIG.syncEndpoint),
+    );
+    let connection = {
+      label: "Awaiting Lotus folder",
+      className: "warning",
+      detail:
+        "The platform administrator still needs to connect the approved Lotus folder and school data service.",
+    };
+    if (!folderConfigured) {
+      connection.detail = driveMaterialsState.records.length
+        ? `The Lotus folder is not configured. Showing ${plural(driveMaterialsState.records.length, "cached material")} until a folder is supplied.`
+        : connection.detail;
+    } else if (driveMaterialsState.error) {
+      connection = {
+        label: "Needs attention",
+        className: "danger",
+        detail: driveMaterialsState.error,
+      };
+    } else if (driveRequestInFlight) {
+      connection = {
+        label: "Syncing",
+        className: "info",
+        detail: `Reading the approved ${DRIVE_CONFIG.sourceName} folder index.`,
+      };
+    } else if (driveMaterialsState.records.length && materialsEndpointReady) {
+      connection = {
+        label: "Connected",
+        className: "success",
+        detail: `${plural(driveMaterialsState.records.length, "material")} available from ${DRIVE_CONFIG.sourceName}.`,
+      };
+    } else if (folderConfigured && materialsEndpointReady) {
+      connection = {
+        label: syncEndpointReady ? "Ready to sync" : "Connected read-only",
+        className: "info",
+        detail: syncEndpointReady
+          ? "The folder and backend adapter are configured."
+          : "Materials can be read, but the sync endpoint is not configured.",
+      };
+    } else if (folderConfigured) {
+      connection = {
+        label: "Folder selected",
+        className: "warning",
+        detail: "Add the materials and sync endpoints to activate the index.",
+      };
+    }
+    const syncDisabled =
+      !folderConfigured || !syncEndpointReady || driveRequestInFlight;
+    return `
+      <header class="teacher-hero drive-materials-hero">
+        <div>
+          <p class="eyebrow">Faculty Materials</p>
+          <h1>${escapeHtml(DRIVE_CONFIG.sourceName)}</h1>
+          <p>Organize school-owned course materials in Drive and publish the synced index to students without sharing a Google password.</p>
+        </div>
+        <div class="drive-materials-actions">
+          <button class="button button-gold" type="button" data-action="sync-drive-materials" ${syncDisabled ? 'disabled aria-disabled="true"' : ""}>
+            ${driveRequestInFlight ? "Syncing..." : `Sync from Drive ${icon("arrow", 16)}`}
+          </button>
+          ${
+            folderUrl
+              ? `<a class="button button-on-dark" href="${escapeHtml(folderUrl)}" target="_blank" rel="noopener noreferrer">Open Drive Folder</a>`
+              : '<button class="button button-on-dark" type="button" disabled aria-disabled="true">Open Drive Folder</button>'
+          }
+        </div>
+      </header>
+      <section class="panel drive-connection-card" aria-label="Drive connection">
+        <div>
+          <p class="eyebrow">Connection</p>
+          <div class="drive-status-line">
+            <h2>Lotus folder</h2>
+            <span class="status ${connection.className}">${escapeHtml(connection.label)}</span>
+          </div>
+          <p class="drive-connection-detail">${escapeHtml(connection.detail)}</p>
+          <p class="drive-connection-detail"><strong>Last sync:</strong> ${escapeHtml(driveTimestampLabel(driveMaterialsState.lastSyncedAt))}</p>
+          ${
+            DRIVE_CONFIG.rootFolderId
+              ? `<p class="drive-connection-detail"><strong>Folder ID:</strong> ${escapeHtml(DRIVE_CONFIG.rootFolderId)}</p>`
+              : ""
+          }
+        </div>
+        <div class="drive-folder-convention">
+          <p class="eyebrow">Folder Convention</p>
+          <strong>Keep every file in this sequence</strong>
+          <ol aria-label="Recommended Drive folder structure">
+            <li>Course Code</li><li>Unit</li><li>Category</li><li>Files</li>
+          </ol>
+        </div>
+      </section>
+      ${
+        !folderConfigured
+          ? '<p class="login-help"><strong>Awaiting Lotus</strong>Share only the approved root folder or school Shared Drive with the backend service account. This page never requests or stores a Google password.</p>'
+          : ""
+      }
+      <section class="teacher-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">Synced Index</p><h2>Course Materials</h2></div>
+          <span class="badge">${plural(driveMaterialsState.records.length, "material")}</span>
+        </div>
+        ${teacherDriveMaterialTree(driveMaterialsState.records)}
+      </section>
+    `;
+  }
+
+  function studentCourseMaterials(course) {
+    const records = driveMaterialsState.records.filter(
+      (record) => record.courseId === course.id,
+    );
+    if (!records.length) return "";
+    return `
+      <section class="module course-materials">
+        <header>
+          <p class="course-code">Synced from ${escapeHtml(DRIVE_CONFIG.sourceName)}</p>
+          <h3>Course Materials</h3>
+          <p>${plural(records.length, "resource")} organized by unit and category.</p>
+        </header>
+        ${driveUnitTree(records)}
+      </section>
     `;
   }
 
@@ -2509,6 +3142,7 @@
               `;
             })
             .join("")}
+          ${studentCourseMaterials(course)}
         </div>
         <aside>
           <div class="panel guide-status-card">
@@ -3232,6 +3866,8 @@
       view = teacherDashboardView();
     } else if (teacherRoute[1] === "submissions") {
       view = teacherSubmissionsView();
+    } else if (teacherRoute[1] === "materials") {
+      view = teacherMaterialsView();
     } else if (teacherRoute[1] === "course") {
       const course = findCourse(teacherRoute[2]);
       view = course
@@ -3248,6 +3884,13 @@
       view = teacherDashboardView();
     }
     APP_ROOT.innerHTML = teacherShell(view);
+    if (
+      teacherRoute[1] === "materials" &&
+      !driveEndpointChecked &&
+      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+    ) {
+      void refreshDriveMaterials({ silent: true });
+    }
   }
 
   function render(shouldFocusMain = false) {
@@ -3305,6 +3948,13 @@
     else if (route[0] === "support") view = supportView();
     else view = notFoundView();
     APP_ROOT.innerHTML = shell(view);
+    if (
+      route[0] === "course" &&
+      !driveEndpointChecked &&
+      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+    ) {
+      void refreshDriveMaterials({ silent: true });
+    }
     window.scrollTo({ top: 0, behavior: "instant" });
     if (shouldFocusMain) focusMain();
   }
@@ -3598,6 +4248,8 @@
       }
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
       window.location.assign(authorizationUrl);
+    } else if (action === "sync-drive-materials") {
+      await syncDriveMaterials();
     } else if (action === "download-submission") {
       const receiptId = target.dataset.receipt || "";
       target.disabled = true;
