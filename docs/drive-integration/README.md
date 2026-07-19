@@ -421,6 +421,306 @@ overlapping/idempotency conflict, `422` valid JSON that violates the folder
 contract, `429` throttled, and `500/502/503` for redacted server or upstream
 failures.
 
+## Student submission and grading contract
+
+Drive is the file store for submitted work; PostgreSQL is the source of truth
+for ownership, course/unit placement, submission state, and grades. A
+successful student upload writes the file to the configured Drive destination
+and commits its metadata to PostgreSQL before returning. The teacher portal
+reads PostgreSQL, so a completed upload appears without waiting for the
+curriculum-materials import job.
+
+Use a separate, staff-only Drive root named `Student Submissions`. The backend
+service identity needs write access to this root. Students and browsers never
+receive that identity, a Google token, or direct write access. A recommended
+storage hierarchy is:
+
+```text
+Student Submissions/
+  {course code}/
+    {opaque student ID}/
+      Unit {n}/
+        {assignment ID}/
+          Attempt {n}/
+            {server-generated safe filename}
+```
+
+The database maps the opaque student ID to the display name shown to teachers.
+Do not put a student's password, email address, session token, or other secret
+in a Drive folder or filename. Manual files placed in this tree are not trusted
+as submissions; a reconciliation job may report them, but only the
+authenticated upload API can create a submission record.
+
+The public frontend uses two base URLs:
+
+- `submissionsEndpoint`: `/v1/submissions`
+- `gradingEndpoint`: `/v1/grades`
+
+Both endpoints require the authenticated school session. The backend derives
+the acting student or teacher from that session and never accepts a client
+assertion of the caller's role.
+
+### Student: upload an assignment
+
+`POST {submissionsEndpoint}`
+
+Required role: `student`. Content type:
+`multipart/form-data; boundary=...`. The client must not set the boundary
+manually.
+
+```http
+Authorization: Bearer <school-session-token>
+Idempotency-Key: 3b16e450-bfc0-43b0-8a30-6d6eea25712d
+```
+
+Multipart fields:
+
+```text
+courseCode=MHF4U
+unitNumber=1
+assignmentId=unit-1-functions
+assignmentTitle=Unit 1 Functions Assignment
+attemptNumber=1
+files=<one or more binary file parts>
+```
+
+`studentId` is deliberately absent. The backend derives it from the session,
+verifies enrollment in `courseCode`, confirms that the assignment belongs to
+the requested unit, and enforces the attempt policy. It streams each upload
+through size, extension, MIME/magic-byte, and malware checks before writing to
+Drive. The backend generates the stored filename and path; it must not use a
+browser-supplied filename as a filesystem or Drive path.
+
+Success: `201 Created`
+
+```json
+{
+  "data": {
+    "id": "8821aebd-423c-41d8-b0db-761f9b63650a",
+    "studentId": "stu_01J4Y8M2",
+    "studentName": "Avery Chen",
+    "courseCode": "MHF4U",
+    "unitNumber": 1,
+    "assignmentId": "unit-1-functions",
+    "assignmentTitle": "Unit 1 Functions Assignment",
+    "attemptNumber": 1,
+    "status": "submitted",
+    "submittedAt": "2026-07-19T10:15:30Z",
+    "files": [
+      {
+        "id": "6835be47-b296-42a3-a2de-d6282b0709d7",
+        "name": "Avery-Chen-Unit-1.pdf",
+        "mimeType": "application/pdf",
+        "sizeBytes": 284193,
+        "openUrl": "/v1/submissions/8821aebd-423c-41d8-b0db-761f9b63650a/files/6835be47-b296-42a3-a2de-d6282b0709d7/open"
+      }
+    ],
+    "grade": null
+  }
+}
+```
+
+The response never exposes a Drive file ID, Drive parent ID, Drive write URL,
+Google token, or credential reference. If Drive succeeds but the database
+transaction fails, the backend deletes the orphaned Drive object or records it
+for a privileged reconciliation job.
+
+`Idempotency-Key` is required. Replaying the same key as the same student with
+the same multipart metadata and file digest returns the original result.
+Reusing it with different content returns `409 IDEMPOTENCY_KEY_REUSED`.
+
+### Student: list submissions, grades, and feedback
+
+`GET {submissionsEndpoint}?courseCode=MHF4U&unitNumber=1`
+
+Required role: `student`. The server always filters by the authenticated
+student. A student-supplied `studentId` filter is rejected rather than used.
+Only the current published grade is returned.
+
+```json
+{
+  "data": [
+    {
+      "id": "8821aebd-423c-41d8-b0db-761f9b63650a",
+      "courseCode": "MHF4U",
+      "unitNumber": 1,
+      "assignmentId": "unit-1-functions",
+      "assignmentTitle": "Unit 1 Functions Assignment",
+      "attemptNumber": 1,
+      "status": "submitted",
+      "submittedAt": "2026-07-19T10:15:30Z",
+      "files": [
+        {
+          "id": "6835be47-b296-42a3-a2de-d6282b0709d7",
+          "name": "Avery-Chen-Unit-1.pdf",
+          "mimeType": "application/pdf",
+          "sizeBytes": 284193,
+          "openUrl": "/v1/submissions/8821aebd-423c-41d8-b0db-761f9b63650a/files/6835be47-b296-42a3-a2de-d6282b0709d7/open"
+        }
+      ],
+      "grade": {
+        "score": 88,
+        "feedback": "Clear method and accurate graph. Label the final intercept.",
+        "gradedAt": "2026-07-20T08:22:11Z",
+        "version": 1
+      }
+    }
+  ],
+  "page": {
+    "nextCursor": null,
+    "limit": 50
+  }
+}
+```
+
+After a teacher publishes a grade, the next student GET returns the score and
+feedback. The score is an integer percentage from `0` through `100`, inclusive.
+Draft grade revisions are never returned to students.
+
+### Teacher: list and organize submissions
+
+`GET {submissionsEndpoint}?courseCode=MHF4U&unitNumber=1&cursor=...&limit=50`
+
+Required role: `teacher` or `teacher_admin`. A teacher can read submissions only
+for assigned courses; `teacher_admin` can read all courses. Optional
+`studentId`, `assignmentId`, and `status` filters are allowed for staff. The
+response is organized as course, then student, then unit:
+
+```json
+{
+  "data": [
+    {
+      "courseCode": "MHF4U",
+      "students": [
+        {
+          "studentId": "stu_01J4Y8M2",
+          "studentName": "Avery Chen",
+          "units": [
+            {
+              "unitNumber": 1,
+              "submissions": [
+                {
+                  "id": "8821aebd-423c-41d8-b0db-761f9b63650a",
+                  "assignmentId": "unit-1-functions",
+                  "assignmentTitle": "Unit 1 Functions Assignment",
+                  "attemptNumber": 1,
+                  "status": "submitted",
+                  "submittedAt": "2026-07-19T10:15:30Z",
+                  "files": [
+                    {
+                      "id": "6835be47-b296-42a3-a2de-d6282b0709d7",
+                      "name": "Avery-Chen-Unit-1.pdf",
+                      "mimeType": "application/pdf",
+                      "sizeBytes": 284193,
+                      "openUrl": "/v1/submissions/8821aebd-423c-41d8-b0db-761f9b63650a/files/6835be47-b296-42a3-a2de-d6282b0709d7/open"
+                    }
+                  ],
+                  "grade": null
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "page": {
+    "nextCursor": null,
+    "limit": 50
+  }
+}
+```
+
+Grouping is a presentation shape, not authorization. Every returned submission
+must pass the staff course-access check before it is included.
+
+### Open a submitted file
+
+`GET {submissionsEndpoint}/{submissionId}/files/{fileId}/open`
+
+Allowed callers are the owning student and staff authorized for the course.
+After that check, the backend either streams the file or returns a short-lived
+authorized redirect. Never return a Google access token or use knowledge of a
+Drive file ID as authorization.
+
+### Teacher: publish or revise a percentage grade
+
+`PUT {gradingEndpoint}/{submissionId}`
+
+Required role: `teacher` or `teacher_admin`, with access to the submission's
+course.
+
+```http
+Authorization: Bearer <school-session-token>
+Content-Type: application/json
+Idempotency-Key: 267e42a4-cc90-4f15-a0ad-70fd0ca2396f
+If-Match: "grade-v0"
+```
+
+```json
+{
+  "submissionId": "8821aebd-423c-41d8-b0db-761f9b63650a",
+  "score": 88,
+  "feedback": "Clear method and accurate graph. Label the final intercept.",
+  "publish": true
+}
+```
+
+`score` must be a JSON integer in the inclusive range `0` to `100`; decimal
+values, numeric strings, negative values, and values above 100 return
+`422 INVALID_SCORE`. `feedback` is plain text with a server-enforced maximum
+length (recommended: 10,000 Unicode characters). Render it as text, never raw
+HTML.
+
+Success: `200 OK`
+
+```json
+{
+  "data": {
+    "submissionId": "8821aebd-423c-41d8-b0db-761f9b63650a",
+    "score": 88,
+    "feedback": "Clear method and accurate graph. Label the final intercept.",
+    "gradedBy": "usr_james_whitmore",
+    "gradedAt": "2026-07-20T08:22:11Z",
+    "publishedAt": "2026-07-20T08:22:11Z",
+    "version": 1,
+    "etag": "\"grade-v1\""
+  }
+}
+```
+
+The path and body `submissionId` must match. `Idempotency-Key` is required and
+is scoped to the authenticated grader. `If-Match` prevents two teacher tabs
+from silently overwriting one another: a stale version returns
+`412 GRADE_VERSION_CONFLICT` with no mutation. A grade revision creates a new
+immutable version and marks the previous version non-current; it does not
+destroy the audit history. When `publish` is `false`, the version is a staff
+draft and remains invisible to the student.
+
+### Submission security and operational rules
+
+- Treat the database as the authorization index and Drive as private object
+  storage. Do not enumerate Drive from a public request.
+- Restrict upload count, total request size, per-file size, file types, and
+  request rate. Reject archives or active content unless specifically needed
+  and safely inspected.
+- Verify MIME type from file bytes, scan for malware before Drive publication,
+  normalize Unicode filenames, and generate collision-resistant stored names.
+- Use a separate least-privileged Drive credential for submission writes where
+  possible. Store only its secret-manager reference; never store a Google
+  password, token, private key, or client secret in PostgreSQL or frontend code.
+- Authorize every list, grade, and open request. A student sees only their own
+  records; a teacher sees only assigned courses; an administrator's broader
+  access must be explicit and audited.
+- Record submission creation, file access, grade publication, grade revision,
+  and permission failures with actor, request ID, and timestamp. Do not log file
+  content, bearer tokens, cookies, or unredacted Google errors.
+- Require HTTPS, same-site secure sessions or validated bearer tokens, strict
+  CORS, CSRF protection for cookie sessions, and rate limiting.
+- Make upload and grading writes idempotent. Use database transactions and
+  row/version locking for grade changes, and run a privileged reconciliation
+  job for rare Drive/database partial failures.
+
 ## Browser configuration
 
 [`sample-config.js`](./sample-config.js) shows the only Drive-related
@@ -435,8 +735,9 @@ action, and never fall back to calling Google Drive directly.
 ## Database
 
 [`schema.sql`](./schema.sql) defines the PostgreSQL source, material, and sync
-run records. Apply it through the backend's migration system. Credential values
-remain outside PostgreSQL; only a secret-manager reference is stored.
+run records plus submission targets, submissions, Drive file metadata, and
+versioned grades. Apply it through the backend's migration system. Credential
+values remain outside PostgreSQL; only a secret-manager reference is stored.
 
 ## Production checklist
 
@@ -447,6 +748,9 @@ remain outside PostgreSQL; only a secret-manager reference is stored.
 - Set an explicit content-security policy for the GitHub Pages site.
 - Add rate limits and CSRF protection appropriate to the chosen session model.
 - Log admin actions and sync run IDs without logging tokens or file contents.
+- Test cross-student and cross-course access denial, duplicate upload retries,
+  stale grade versions, scores at `0` and `100`, invalid decimal scores,
+  oversized files, MIME mismatches, and malware rejection.
 - Add alerting for repeated failed runs or revoked Drive access.
 - Test rename, move, trash, restore, duplicate names, pagination, expired
   cursor, `429`, and partial upstream failure cases.

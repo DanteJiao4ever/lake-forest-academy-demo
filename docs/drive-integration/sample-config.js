@@ -19,4 +19,14 @@ window.LFA_DRIVE_CONFIG = Object.freeze({
     "https://api.lakeforestacademy.ca/v1/materials",
   syncEndpoint:
     "https://api.lakeforestacademy.ca/v1/admin/drive/sources/237d4ec2-ce04-4fd0-b4c6-d38e6d0f103b/sync",
+
+  // Students POST multipart uploads and GET only their own submissions here.
+  // Teachers GET their authorized courses from the same endpoint.
+  submissionsEndpoint:
+    "https://api.lakeforestacademy.ca/v1/submissions",
+
+  // Teachers save a 0-100 integer score and plain-text feedback here. Students
+  // receive only the current published grade through submissionsEndpoint.
+  gradingEndpoint:
+    "https://api.lakeforestacademy.ca/v1/grades",
 });
