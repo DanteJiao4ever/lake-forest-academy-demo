@@ -427,7 +427,7 @@
           title: "Source Evaluation and Synthesis",
           duration: "45 min",
           summary:
-            "Evaluate source credibility and place sou…30298 tokens truncated… : teacherSubmissionsView();
+            "Evaluate source credibility and place sou…30324 tokens truncated… : teacherSubmissionsView();
     } else if (teacherRoute[1] === "submission") {
       view = teacherSubmissionDetailView(
         safeDecode(teacherRoute[2] || ""),
