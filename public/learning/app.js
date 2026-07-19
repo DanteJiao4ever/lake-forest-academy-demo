@@ -6,15 +6,44 @@
   const SESSION_KEY = "lake-forest-learning-session-v1";
   const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
   const REGISTERED_ACCOUNT_KEY = "lake-forest-learning-registration-v1";
+  const WORKSPACE_LOGOUT_SUPPRESS_KEY =
+    "lake-forest-learning-workspace-signed-out-v1";
+  const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
+  const FILE_STORE_NAME = "submission-files";
   const ACCESS_EMAIL = "student@example.invalid";
   const ACCESS_PASSWORD = null;
+  const TEACHER_EMAIL = "james.whitmore@example.invalid";
+  const TEACHER_PASSWORD = null;
+  const AUTH_CONFIG = {
+    googleWorkspaceAuthStart: String(
+      window.LFA_AUTH_CONFIG?.googleWorkspaceAuthStart || "",
+    ).trim(),
+    workspaceSessionEndpoint: String(
+      window.LFA_AUTH_CONFIG?.workspaceSessionEndpoint || "",
+    ).trim(),
+    workspaceLogoutEndpoint: String(
+      window.LFA_AUTH_CONFIG?.workspaceLogoutEndpoint || "",
+    ).trim(),
+  };
+  const WORKSPACE_GMAIL_URL =
+    "https://mail.google.com/a/lakeforestacademy.ca";
   const SCHOOL_ACCOUNT = {
     firstName: "Alex",
     lastName: "Morgan",
     displayName: "Alex Morgan",
     email: ACCESS_EMAIL,
     accountType: "school",
+    role: "student",
     program: "OSSD · Grade 12",
+  };
+  const TEACHER_ACCOUNT = {
+    firstName: "James",
+    lastName: "Whitmore",
+    displayName: "James Whitmore",
+    email: TEACHER_EMAIL,
+    accountType: "faculty",
+    role: "teacher",
+    program: "Faculty · All Courses",
   };
 
   const COURSES = [
@@ -435,6 +464,8 @@
     {
       id: "a1",
       courseId: "mhf4u",
+      unit: "Unit 2",
+      unitTitle: "Polynomial and Rational Functions",
       title: "Quadratic Models Investigation",
       due: "2026-07-22T23:59:00-04:00",
       availableUntil: "2026-07-24T23:59:00-04:00",
@@ -452,6 +483,8 @@
     {
       id: "a2",
       courseId: "sbi4u",
+      unit: "Unit 2",
+      unitTitle: "Metabolic Processes",
       title: "Cellular Respiration Lab Analysis",
       due: "2026-07-18T23:59:00-04:00",
       availableUntil: "2026-07-20T23:59:00-04:00",
@@ -469,6 +502,8 @@
     {
       id: "a3",
       courseId: "eng4u",
+      unit: "Unit 2",
+      unitTitle: "Academic Writing",
       title: "Comparative Literary Essay",
       due: "2026-07-15T23:59:00-04:00",
       availableUntil: "2026-07-17T23:59:00-04:00",
@@ -489,6 +524,8 @@
     {
       id: "a4",
       courseId: "mhf4u",
+      unit: "Unit 4",
+      unitTitle: "Trigonometric Functions",
       title: "Trigonometric Proof Portfolio",
       due: "2026-07-29T23:59:00-04:00",
       availableUntil: "2026-07-31T23:59:00-04:00",
@@ -784,12 +821,14 @@
     const session = readSession();
     if (!session) return null;
     if (session.email === ACCESS_EMAIL) return SCHOOL_ACCOUNT;
+    if (session.email === TEACHER_EMAIL) return TEACHER_ACCOUNT;
     const account = registeredAccount(session.email);
     if (!account) return null;
     return {
       ...account,
       displayName: `${account.firstName} ${account.lastName}`.trim(),
       accountType: "personal",
+      role: "student",
       program: "OSSD · Grade 12",
     };
   }
@@ -812,8 +851,12 @@
     );
   }
 
-  function hasSeededAcademicRecord() {
-    return currentUser()?.email === ACCESS_EMAIL;
+  function hasSeededAcademicRecord(user = currentUser()) {
+    return user?.email === ACCESS_EMAIL;
+  }
+
+  function isTeacher(user = currentUser()) {
+    return user?.role === "teacher";
   }
 
   function userInitials(user = currentUser()) {
@@ -841,7 +884,9 @@
       const courseIds = new Set(COURSES.map((course) => course.id));
       const guideStepIds = new Set(COURSE_GUIDE_STEPS.map((step) => step.id));
       const feedbackIds = new Set(
-        ASSIGNMENTS.filter((assignment) => assignmentFeedback(assignment)).map(
+        ASSIGNMENTS.filter((assignment) =>
+          assignmentFeedback(assignment, user),
+        ).map(
           (assignment) => assignment.id,
         ),
       );
@@ -863,6 +908,9 @@
                     fileName: submission.fileName || "",
                     submittedAt,
                     receiptId,
+                    fileReceiptId: submission.fileReceiptId || "",
+                    fileSize: submission.fileSize || 0,
+                    fileType: submission.fileType || "",
                   },
                 ];
           return [
@@ -873,7 +921,7 @@
               receiptId,
               status:
                 submission.status ||
-                (assignment && assignmentScore(assignment) != null
+                (assignment && assignmentScore(assignment, user) != null
                   ? "graded"
                   : assignment?.status === "submitted"
                     ? "review"
@@ -938,7 +986,11 @@
 
   function isValidName(value) {
     const name = String(value || "").trim();
-    return name.length >= 1 && name.length <= 50 && !/[\u0000-\u001f]/.test(name);
+    return (
+      name.length >= 1 &&
+      name.length <= 50 &&
+      /^[\p{L}\p{M}][\p{L}\p{M} .'’\-]*$/u.test(name)
+    );
   }
 
   function passwordChecks(password, email = "") {
@@ -1024,6 +1076,211 @@
     if (!account?.salt || !account?.passwordHash) return false;
     const candidate = await derivePasswordHash(password, account.salt);
     return candidate === account.passwordHash;
+  }
+
+  function openFileDatabase() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error("Local file storage is unavailable."));
+        return;
+      }
+      const request = window.indexedDB.open(FILE_DATABASE_NAME, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(FILE_STORE_NAME)) {
+          database.createObjectStore(FILE_STORE_NAME, {
+            keyPath: "receiptId",
+          });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error || new Error("Could not open local file storage."));
+    });
+  }
+
+  async function storeSubmissionFile(record) {
+    const database = await openFileDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(FILE_STORE_NAME, "readwrite");
+      transaction.objectStore(FILE_STORE_NAME).put(record);
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        database.close();
+        reject(
+          transaction.error || new Error("Could not save the submission file."),
+        );
+      };
+    });
+  }
+
+  async function getSubmissionFile(receiptId) {
+    const database = await openFileDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(FILE_STORE_NAME, "readonly");
+      const request = transaction.objectStore(FILE_STORE_NAME).get(receiptId);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () =>
+        reject(request.error || new Error("Could not retrieve the file."));
+      transaction.oncomplete = () => database.close();
+      transaction.onerror = () => database.close();
+    });
+  }
+
+  function allStudentAccounts() {
+    const personalAccounts = Object.values(loadAccounts()).map((account) => ({
+      ...account,
+      displayName: `${account.firstName} ${account.lastName}`.trim(),
+      accountType: "personal",
+      role: "student",
+      program: "OSSD · Grade 12",
+    }));
+    return [SCHOOL_ACCOUNT, ...personalAccounts].sort((a, b) =>
+      a.displayName.localeCompare(b.displayName),
+    );
+  }
+
+  function teacherSubmissionRecords() {
+    const records = [];
+    allStudentAccounts().forEach((student) => {
+      const studentState = loadState(student);
+      Object.entries(studentState.submissions || {}).forEach(
+        ([assignmentId, submission]) => {
+          const assignment = findAssignment(assignmentId);
+          if (!assignment) return;
+          const course = findCourse(assignment.courseId);
+          const history = Array.isArray(submission.history)
+            ? submission.history
+            : [];
+          records.push({
+            id: `${student.email}:${assignmentId}`,
+            student,
+            course,
+            assignment,
+            submission,
+            history,
+            versionCount: Math.max(history.length, 1),
+            latestFileReceiptId:
+              submission.fileReceiptId ||
+              history.at(-1)?.fileReceiptId ||
+              submission.receiptId,
+          });
+        },
+      );
+    });
+    return records.sort(
+      (a, b) =>
+        new Date(b.submission.submittedAt) -
+        new Date(a.submission.submittedAt),
+    );
+  }
+
+  function teacherSubmissionStatus(record) {
+    if (record.submission.status === "graded") {
+      return { label: "Returned", className: "success" };
+    }
+    if (record.submission.status === "revision") {
+      return { label: "Revision Requested", className: "warning" };
+    }
+    return { label: "Awaiting Review", className: "info" };
+  }
+
+  function formatFileSize(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "Size unavailable";
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function safeDecode(value) {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  function configuredAuthUrl(value) {
+    if (!value) return "";
+    try {
+      const url = new URL(value, window.location.href);
+      const localDevelopment =
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1"].includes(url.hostname);
+      return url.protocol === "https:" || localDevelopment ? url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function googleWorkspaceAuthUrl() {
+    const url = configuredAuthUrl(AUTH_CONFIG.googleWorkspaceAuthStart);
+    if (!url) return "";
+    const returnTo = new URL(window.location.href);
+    returnTo.search = "";
+    returnTo.hash = "#/teacher/dashboard";
+    url.searchParams.set("returnTo", returnTo.toString());
+    url.searchParams.set("portal", "faculty");
+    return url.toString();
+  }
+
+  async function restoreWorkspaceSession() {
+    if (
+      readSession() ||
+      sessionStorage.getItem(WORKSPACE_LOGOUT_SUPPRESS_KEY) === "1"
+    ) {
+      return false;
+    }
+    const endpoint = configuredAuthUrl(AUTH_CONFIG.workspaceSessionEndpoint);
+    if (!endpoint) return false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(endpoint, {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const session = await response.json();
+      const validTeacher =
+        session?.authenticated === true &&
+        session?.role === "teacher" &&
+        normalizeEmail(session?.email) === TEACHER_EMAIL;
+      if (!validTeacher) return false;
+      sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      startSession(TEACHER_ACCOUNT);
+      state = loadState(TEACHER_ACCOUNT);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function closeWorkspaceSession() {
+    const endpoint = configuredAuthUrl(AUTH_CONFIG.workspaceLogoutEndpoint);
+    if (!endpoint) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        keepalive: true,
+        signal: controller.signal,
+      });
+    } catch {
+      // Local sign-out still completes when the optional Workspace backend is offline.
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
 
   function escapeHtml(value) {
@@ -1131,17 +1388,17 @@
     };
   }
 
-  function courseGrade(courseId) {
-    if (!hasSeededAcademicRecord()) return null;
+  function courseGrade(courseId, user = currentUser()) {
+    if (!hasSeededAcademicRecord(user)) return null;
     return GRADES.find((grade) => grade.courseId === courseId);
   }
 
-  function assignmentScore(assignment) {
-    return hasSeededAcademicRecord() ? assignment.score : null;
+  function assignmentScore(assignment, user = currentUser()) {
+    return hasSeededAcademicRecord(user) ? assignment.score : null;
   }
 
-  function assignmentFeedback(assignment) {
-    return hasSeededAcademicRecord() ? assignment.feedback : "";
+  function assignmentFeedback(assignment, user = currentUser()) {
+    return hasSeededAcademicRecord(user) ? assignment.feedback : "";
   }
 
   function formatTime(value) {
@@ -1390,6 +1647,406 @@
     `;
   }
 
+  function teacherPageTitle(route) {
+    if (route[1] === "course") {
+      return findCourse(route[2])?.title || "Course Submissions";
+    }
+    if (route[1] === "submission") return "Submission Details";
+    return {
+      dashboard: "Faculty Dashboard",
+      submissions: "Submission Centre",
+    }[route[1]] || "Faculty Dashboard";
+  }
+
+  function teacherNavLink(section, label, iconName, count = 0) {
+    const route = routeParts();
+    const active =
+      route[0] === "teacher" &&
+      (route[1] === section ||
+        (section === "submissions" && route[1] === "submission"));
+    return `
+      <a href="#/teacher/${section}" class="${active ? "is-active" : ""}" ${active ? 'aria-current="page"' : ""}>
+        <span class="nav-icon">${icon(iconName, 19)}</span>
+        <span>${label}</span>
+        ${count ? `<small>${count}</small>` : ""}
+      </a>
+    `;
+  }
+
+  function teacherShell(content) {
+    const route = routeParts();
+    const user = currentUser() || TEACHER_ACCOUNT;
+    const records = teacherSubmissionRecords();
+    const awaitingReview = records.filter(
+      (record) => record.submission.status !== "graded",
+    ).length;
+    const courseMenuOpen = route[1] === "course";
+    return `
+      <div class="app-shell">
+        <aside class="sidebar faculty-sidebar" id="sidebar" aria-label="Faculty navigation">
+          <button class="sidebar-close" type="button" data-action="close-menu" aria-label="Close menu">${icon("close")}</button>
+          <div class="sidebar-brand">
+            <img src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <p>Faculty Learning</p>
+          </div>
+          <nav class="sidebar-nav">
+            ${teacherNavLink("dashboard", "Dashboard", "home")}
+            ${teacherNavLink("submissions", "Submission Centre", "clipboard", awaitingReview)}
+            <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
+              <summary>
+                <span class="nav-icon">${icon("book", 19)}</span>
+                <span>Courses</span>
+              </summary>
+              <div>
+                ${COURSES.map((course) => {
+                  const active =
+                    route[1] === "course" && route[2] === course.id;
+                  return `<a class="faculty-course-link ${active ? "is-active" : ""}" href="#/teacher/course/${course.id}" ${active ? 'aria-current="page"' : ""}><strong>${course.code}</strong><span>${course.title}</span></a>`;
+                }).join("")}
+              </div>
+            </details>
+            <a href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">
+              <span class="nav-icon">${icon("file", 19)}</span>
+              <span>Workspace Gmail</span>
+            </a>
+          </nav>
+          <div class="sidebar-student">
+            <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
+            <span><strong>${escapeHtml(user.displayName)}</strong><span>Faculty · All Courses</span></span>
+            <button class="logout-button" type="button" data-action="logout" aria-label="Sign out">${icon("logout")}</button>
+          </div>
+        </aside>
+        <button class="sidebar-scrim" type="button" data-action="close-menu" aria-label="Close menu" hidden></button>
+        <section class="stage">
+          <header class="app-header">
+            <button class="mobile-menu" type="button" data-action="open-menu" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">${icon("menu")}</button>
+            <div class="header-title">
+              <span>Lake Forest Learning</span>
+              <strong>${escapeHtml(teacherPageTitle(route))}</strong>
+            </div>
+            <span class="header-spacer"></span>
+            <span class="faculty-badge">Faculty</span>
+            <a class="notification-link" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer" aria-label="Open Workspace Gmail">
+              ${icon("file", 18)}
+            </a>
+            <div class="header-profile">
+              <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
+              <span>${escapeHtml(user.displayName)}</span>
+            </div>
+          </header>
+          <main id="main-content" class="page teacher-page">
+            ${content}
+          </main>
+        </section>
+      </div>
+    `;
+  }
+
+  function teacherRecordLink(record) {
+    return `#/teacher/submission/${encodeURIComponent(record.student.email)}/${record.assignment.id}`;
+  }
+
+  function teacherRecordMarkup(record) {
+    const status = teacherSubmissionStatus(record);
+    return `
+      <article class="teacher-record">
+        <a class="teacher-record-main" href="${teacherRecordLink(record)}">
+          <span class="teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(record.student))}</span>
+          <span>
+            <strong>${escapeHtml(record.student.displayName)}</strong>
+            <small>${escapeHtml(record.assignment.title)}</small>
+          </span>
+        </a>
+        <div class="teacher-record-meta">
+          <span><strong>${escapeHtml(record.course.code)}</strong> · ${escapeHtml(record.assignment.unit)}</span>
+          <span>${formatDate(record.submission.submittedAt, true)}</span>
+          <span>${escapeHtml(record.submission.fileName || "Submission note only")}</span>
+        </div>
+        <span class="status ${status.className}">${status.label}</span>
+        <a class="button button-quiet" href="${teacherRecordLink(record)}">Review</a>
+      </article>
+    `;
+  }
+
+  function teacherHierarchy(records) {
+    if (!records.length) {
+      return `
+        <div class="teacher-empty">
+          ${icon("clipboard", 30)}
+          <h3>No Submissions Yet</h3>
+          <p>Student work will be organized here by course, student, unit and assignment.</p>
+        </div>
+      `;
+    }
+    return `
+      <div class="hierarchy-list">
+        ${COURSES.map((course) => {
+          const courseRecords = records.filter(
+            (record) => record.course.id === course.id,
+          );
+          if (!courseRecords.length) return "";
+          const students = [
+            ...new Map(
+              courseRecords.map((record) => [record.student.email, record.student]),
+            ).values(),
+          ];
+          return `
+            <details class="hierarchy-course" open>
+              <summary>
+                <span><strong>${course.code}</strong>${escapeHtml(course.title)}</span>
+                <small>${plural(courseRecords.length, "submission")}</small>
+              </summary>
+              <div class="hierarchy-list">
+                ${students.map((student) => {
+                  const studentRecords = courseRecords.filter(
+                    (record) => record.student.email === student.email,
+                  );
+                  const units = [
+                    ...new Map(
+                      studentRecords.map((record) => [
+                        record.assignment.unit,
+                        {
+                          id: record.assignment.unit,
+                          title: record.assignment.unitTitle,
+                        },
+                      ]),
+                    ).values(),
+                  ].sort((a, b) => a.id.localeCompare(b.id));
+                  return `
+                    <details class="hierarchy-student">
+                      <summary>
+                        <span class="teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(student))}</span>
+                        <span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span>
+                        <small>${plural(studentRecords.length, "submission")}</small>
+                      </summary>
+                      <div class="hierarchy-list">
+                        ${units.map((unit) => {
+                          const unitRecords = studentRecords.filter(
+                            (record) => record.assignment.unit === unit.id,
+                          );
+                          return `
+                            <section class="hierarchy-unit" aria-labelledby="${course.id}-${encodeURIComponent(student.email)}-${unit.id.replace(/\s+/g, "-")}">
+                              <header>
+                                <span class="course-code">${escapeHtml(unit.id)}</span>
+                                <h3 id="${course.id}-${encodeURIComponent(student.email)}-${unit.id.replace(/\s+/g, "-")}">${escapeHtml(unit.title)}</h3>
+                              </header>
+                              <div>
+                                ${unitRecords.map((record) => {
+                                  const status = teacherSubmissionStatus(record);
+                                  return `
+                                    <a class="hierarchy-assignment" href="${teacherRecordLink(record)}">
+                                      <span>
+                                        <strong>${escapeHtml(record.assignment.title)}</strong>
+                                        <small>${formatDate(record.submission.submittedAt, true)} · ${escapeHtml(record.submission.fileName || "Note only")}</small>
+                                      </span>
+                                      <span class="status ${status.className}">${status.label}</span>
+                                      ${icon("arrow", 17)}
+                                    </a>
+                                  `;
+                                }).join("")}
+                              </div>
+                            </section>
+                          `;
+                        }).join("")}
+                      </div>
+                    </details>
+                  `;
+                }).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  function teacherDashboardView() {
+    const records = teacherSubmissionRecords();
+    const awaitingReview = records.filter(
+      (record) => record.submission.status !== "graded",
+    ).length;
+    const attachedFiles = records.filter(
+      (record) => record.submission.fileName,
+    ).length;
+    return `
+      <header class="teacher-hero">
+        <div>
+          <p class="eyebrow">Faculty Portal</p>
+          <h1>Welcome Back, James</h1>
+          <p>Review student progress and find submitted work across every OSSD course from one organized workspace.</p>
+        </div>
+        <a class="button button-gold" href="#/teacher/submissions">Open Submission Centre ${icon("arrow", 17)}</a>
+      </header>
+      <section class="teacher-metrics" aria-label="Faculty overview">
+        <article class="teacher-metric"><span>${icon("book", 22)}</span><strong>${COURSES.length}</strong><p>Active Courses</p></article>
+        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${allStudentAccounts().length}</strong><p>Students</p></article>
+        <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></article>
+        <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></article>
+      </section>
+      <section class="teacher-section">
+        <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
+        <div class="teacher-course-grid">
+          ${COURSES.map((course) => {
+            const courseRecords = records.filter(
+              (record) => record.course.id === course.id,
+            );
+            const pending = courseRecords.filter(
+              (record) => record.submission.status !== "graded",
+            ).length;
+            return `
+              <a class="teacher-course-card" href="#/teacher/course/${course.id}">
+                <span class="course-code">${course.code}</span>
+                <h3>${escapeHtml(course.title)}</h3>
+                <p>${escapeHtml(course.subject)} · ${escapeHtml(course.term)}</p>
+                <dl>
+                  <div><dt>Submissions</dt><dd>${courseRecords.length}</dd></div>
+                  <div><dt>Awaiting Review</dt><dd>${pending}</dd></div>
+                </dl>
+                <span class="text-link">Open Course ${icon("arrow", 16)}</span>
+              </a>
+            `;
+          }).join("")}
+        </div>
+      </section>
+      <section class="teacher-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">Latest Activity</p><h2>Recent Submissions</h2></div>
+          <a class="text-link" href="#/teacher/submissions">View All ${icon("arrow", 15)}</a>
+        </div>
+        <div class="teacher-records">
+          ${records.length ? records.slice(0, 5).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
+        </div>
+      </section>
+    `;
+  }
+
+  function teacherSubmissionsView(courseId = "") {
+    const course = courseId ? findCourse(courseId) : null;
+    const records = teacherSubmissionRecords().filter(
+      (record) => !course || record.course.id === course.id,
+    );
+    const title = course
+      ? `${course.code} · ${course.title}`
+      : "All Student Submissions";
+    return `
+      ${pageHeading(
+        course ? course.subject : "Submission Centre",
+        title,
+        course
+          ? `Browse ${course.term} work by student, unit and assignment.`
+          : "Every uploaded assignment is organized by course, student, unit and assignment.",
+        course
+          ? '<a class="button button-secondary" href="#/teacher/submissions">View All Courses</a>'
+          : "",
+      )}
+      <section class="teacher-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">${course ? "Course Files" : "Faculty Records"}</p><h2>${plural(records.length, "Submission")}</h2></div>
+        </div>
+        ${teacherHierarchy(records)}
+      </section>
+    `;
+  }
+
+  function teacherSubmissionDetailView(studentEmail, assignmentId) {
+    const record = teacherSubmissionRecords().find(
+      (item) =>
+        normalizeEmail(item.student.email) === normalizeEmail(studentEmail) &&
+        item.assignment.id === assignmentId,
+    );
+    if (!record) {
+      return `
+        <div class="teacher-empty">
+          ${icon("file", 30)}
+          <h1>Submission Not Found</h1>
+          <p>This record is unavailable or no longer belongs to an active student account.</p>
+          <a class="button button-primary" href="#/teacher/submissions">Return to Submission Centre</a>
+        </div>
+      `;
+    }
+    const status = teacherSubmissionStatus(record);
+    const history = record.history.length
+      ? [...record.history].reverse()
+      : [
+          {
+            fileName: record.submission.fileName,
+            submittedAt: record.submission.submittedAt,
+            receiptId: record.submission.receiptId,
+            fileReceiptId: record.submission.fileReceiptId,
+            fileSize: record.submission.fileSize,
+            fileType: record.submission.fileType,
+          },
+        ];
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb">
+        <a href="#/teacher/submissions">Submissions</a><span>/</span>
+        <a href="#/teacher/course/${record.course.id}">${record.course.code}</a><span>/</span>
+        <span>${escapeHtml(record.student.displayName)}</span><span>/</span>
+        <span>${escapeHtml(record.assignment.unit)}</span><span>/</span>
+        <span aria-current="page">${escapeHtml(record.assignment.title)}</span>
+      </nav>
+      ${pageHeading(
+        `${escapeHtml(record.course.code)} · ${escapeHtml(record.assignment.unit)}`,
+        escapeHtml(record.assignment.title),
+        `${escapeHtml(record.student.displayName)} · ${escapeHtml(record.student.email)}`,
+        `<span class="status ${status.className}">${status.label}</span>`,
+      )}
+      <section class="teacher-detail-grid">
+        <div>
+          <article class="teacher-detail-card">
+            <p class="eyebrow">Student Submission</p>
+            <h2>Submission Note</h2>
+            <p>${escapeHtml(record.submission.text || "No written response was included.")}</p>
+          </article>
+          <article class="teacher-detail-card">
+            <div class="section-heading"><div><p class="eyebrow">Files & Versions</p><h2>Submission History</h2></div></div>
+            <div class="teacher-records">
+              ${history.map((version, index) => {
+                const fileReceiptId =
+                  version.fileReceiptId ||
+                  (index === 0 ? record.submission.fileReceiptId : "");
+                const fileName =
+                  version.fileName ||
+                  (index === 0 ? record.submission.fileName : "") ||
+                  "Submission note only";
+                return `
+                  <article class="submission-file-card">
+                    <span>${icon("file", 22)}</span>
+                    <div>
+                      <strong>${escapeHtml(fileName)}</strong>
+                      <p>Version ${history.length - index} · ${formatDate(version.submittedAt, true)}</p>
+                      <small>${escapeHtml(version.receiptId || "")}${version.fileSize ? ` · ${formatFileSize(version.fileSize)}` : ""}</small>
+                    </div>
+                    ${
+                      fileReceiptId
+                        ? `<button class="button button-secondary" type="button" data-action="download-submission" data-receipt="${escapeHtml(fileReceiptId)}">Download File</button>`
+                        : '<span class="file-unavailable">File metadata only</span>'
+                    }
+                  </article>
+                `;
+              }).join("")}
+            </div>
+            <p class="login-help"><strong>File Availability</strong>Files uploaded in this browser can be downloaded here. Earlier sample records display metadata only until central storage is connected.</p>
+          </article>
+        </div>
+        <aside>
+          <article class="teacher-detail-card">
+            <p class="eyebrow">Record Details</p>
+            <h2>${escapeHtml(record.student.displayName)}</h2>
+            <dl>
+              <div><dt>Email</dt><dd>${escapeHtml(record.student.email)}</dd></div>
+              <div><dt>Course</dt><dd>${record.course.code} · ${escapeHtml(record.course.title)}</dd></div>
+              <div><dt>Unit</dt><dd>${escapeHtml(record.assignment.unit)} · ${escapeHtml(record.assignment.unitTitle)}</dd></div>
+              <div><dt>Submitted</dt><dd>${formatDate(record.submission.submittedAt, true)}</dd></div>
+              <div><dt>Receipt</dt><dd>${escapeHtml(record.submission.receiptId)}</dd></div>
+              <div><dt>Versions</dt><dd>${record.versionCount}</dd></div>
+            </dl>
+          </article>
+        </aside>
+      </section>
+    `;
+  }
+
   function authStory() {
     return `
       <section class="login-story" aria-label="Lake Forest Academy learning community">
@@ -1436,28 +2093,79 @@
     `;
   }
 
-  function loginView({ error = "", email = "", notice = "" } = {}) {
-    const savedEmail = email || signInPrefill;
+  function loginView({
+    error = "",
+    email = "",
+    notice = "",
+    portal = "student",
+  } = {}) {
+    const facultyPortal = portal === "faculty";
+    const savedEmail = facultyPortal
+      ? email || TEACHER_EMAIL
+      : email || signInPrefill;
     const message = notice || signInNotice;
+    const workspaceReady = Boolean(googleWorkspaceAuthUrl());
+    const portalSwitcher = `
+      <nav class="portal-switcher" aria-label="Choose a sign-in portal">
+        <a class="portal-switch-link ${facultyPortal ? "" : "is-active"}" href="#/signin/student" ${facultyPortal ? "" : 'aria-current="page"'}>Student Sign In</a>
+        <a class="portal-switch-link ${facultyPortal ? "is-active" : ""}" href="#/signin/faculty" ${facultyPortal ? 'aria-current="page"' : ""}>Faculty Sign In</a>
+      </nav>
+    `;
     authPage(
-      "Sign In",
+      facultyPortal ? "Faculty Sign In" : "Student Sign In",
       `
-        <p class="eyebrow">Student Portal</p>
+        ${portalSwitcher}
+        <p class="eyebrow">${facultyPortal ? "Faculty Portal" : "Student Portal"}</p>
         <h1>Welcome Back</h1>
-        <p class="login-intro">Sign in with your school account or a personal email account created on this device.</p>
+        <p class="login-intro">${
+          facultyPortal
+            ? "James Whitmore can continue with his Lake Forest Academy Google Workspace account or use the assigned faculty credentials."
+            : "Sign in with your school account or a personal email account created on this device."
+        }</p>
         ${message ? `<p class="form-success" role="status">${escapeHtml(message)}</p>` : ""}
+        ${
+          facultyPortal
+            ? `
+              <button class="button workspace-button full-width" type="button" data-action="google-workspace-signin" ${workspaceReady ? "" : 'disabled aria-disabled="true"'}>
+                <span class="google-mark" aria-hidden="true">G</span>
+                Continue with Google Workspace
+              </button>
+              <p class="auth-setup-note ${workspaceReady ? "is-ready" : ""}" role="status">
+                ${
+                  workspaceReady
+                    ? "Secure Workspace authorization is connected."
+                    : "Workspace authorization will activate after the school OAuth client and backend callback are connected. Use the assigned faculty credentials for now."
+                }
+              </p>
+              <div class="auth-divider"><span>or use faculty credentials</span></div>
+            `
+            : ""
+        }
         <form id="login-form" novalidate>
+          <input type="hidden" name="portal" value="${facultyPortal ? "faculty" : "student"}" />
           <label for="email">Email Address</label>
           <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
           ${passwordInput("password", "Password", "current-password")}
           ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
-          <button class="button button-primary login-submit" type="submit">Sign In ${icon("arrow", 17)}</button>
+          <button class="button button-primary login-submit" type="submit">${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
         </form>
-        <div class="auth-switch">
-          <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
-          <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
-        </div>
-        <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can continue to use their existing credentials.</p>
+        ${
+          facultyPortal
+            ? `
+              <div class="auth-switch">
+                <p><strong>Need your school mailbox?</strong>Open the Google Workspace Gmail page in a new tab.</p>
+                <a class="button button-secondary full-width" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">Open Workspace Gmail</a>
+              </div>
+              <p class="login-help"><strong>Faculty Access</strong>This entry is currently assigned to James Whitmore. Additional faculty accounts can be added after central authentication is connected.</p>
+            `
+            : `
+              <div class="auth-switch">
+                <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
+                <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
+              </div>
+              <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can continue to use their existing credentials.</p>
+            `
+        }
       `,
     );
   }
@@ -1526,7 +2234,7 @@
           <button class="button button-primary login-submit" type="submit">Create Account ${icon("arrow", 17)}</button>
         </form>
         <p class="auth-privacy-note"><strong>Your privacy matters.</strong>Your name, email and a protected password record stay in this browser. Do not register on a shared or public device.</p>
-        <p class="auth-return">Already have an account? <a href="#/signin">Return to Sign In</a></p>
+        <p class="auth-return">Already have an account? <a href="#/signin/student">Return to Student Sign In</a></p>
       `,
     );
   }
@@ -2508,16 +3216,72 @@
     }
   }
 
+  function replaceRoute(route) {
+    window.history.replaceState(null, "", `#/${route}`);
+  }
+
+  function renderTeacher(route) {
+    let teacherRoute = route;
+    if (teacherRoute[0] !== "teacher") {
+      replaceRoute("teacher/dashboard");
+      teacherRoute = ["teacher", "dashboard"];
+    }
+    document.title = `${teacherPageTitle(teacherRoute)} | Lake Forest Learning`;
+    let view;
+    if (teacherRoute[1] === "dashboard") {
+      view = teacherDashboardView();
+    } else if (teacherRoute[1] === "submissions") {
+      view = teacherSubmissionsView();
+    } else if (teacherRoute[1] === "course") {
+      const course = findCourse(teacherRoute[2]);
+      view = course
+        ? teacherSubmissionsView(course.id)
+        : teacherSubmissionsView();
+    } else if (teacherRoute[1] === "submission") {
+      view = teacherSubmissionDetailView(
+        safeDecode(teacherRoute[2] || ""),
+        teacherRoute[3] || "",
+      );
+    } else {
+      replaceRoute("teacher/dashboard");
+      teacherRoute = ["teacher", "dashboard"];
+      view = teacherDashboardView();
+    }
+    APP_ROOT.innerHTML = teacherShell(view);
+  }
+
   function render(shouldFocusMain = false) {
     if (!isSignedIn()) {
-      const authRoute = routeParts()[0];
+      const authParts = routeParts();
+      const authRoute = authParts[0];
       if (authRoute === "register") registrationView();
       else if (authRoute === "account-created") accountCreatedView();
-      else loginView();
+      else
+        loginView({
+          portal:
+            authRoute === "signin" && authParts[1] === "faculty"
+              ? "faculty"
+              : "student",
+        });
       if (shouldFocusMain) focusMain();
       return;
     }
-    const route = routeParts();
+    let route = routeParts();
+    if (isTeacher()) {
+      renderTeacher(route);
+      window.scrollTo({ top: 0, behavior: "instant" });
+      if (shouldFocusMain) focusMain();
+      return;
+    }
+    if (
+      route[0] === "teacher" ||
+      route[0] === "signin" ||
+      route[0] === "register" ||
+      route[0] === "account-created"
+    ) {
+      replaceRoute("dashboard");
+      route = ["dashboard"];
+    }
     document.title = `${pageTitle(route)} | Lake Forest Learning`;
     let view;
     if (route[0] === "dashboard") view = dashboardView();
@@ -2566,25 +3330,37 @@
       const form = new FormData(event.target);
       const email = normalizeEmail(form.get("email"));
       const password = String(form.get("password") || "");
+      const portal = form.get("portal") === "faculty" ? "faculty" : "student";
       let account = null;
       let accepted = false;
-      if (email === ACCESS_EMAIL) {
-        account = SCHOOL_ACCOUNT;
-        accepted = password === ACCESS_PASSWORD;
+      if (portal === "faculty") {
+        if (email === TEACHER_EMAIL) {
+          account = TEACHER_ACCOUNT;
+          accepted = password === TEACHER_PASSWORD;
+        }
       } else {
-        account = registeredAccount(email);
-        try {
-          accepted = Boolean(
-            account && (await verifyRegisteredPassword(account, password)),
-          );
-        } catch {
-          accepted = false;
+        if (email === ACCESS_EMAIL) {
+          account = SCHOOL_ACCOUNT;
+          accepted = password === ACCESS_PASSWORD;
+        } else if (email !== TEACHER_EMAIL) {
+          account = registeredAccount(email);
+          try {
+            accepted = Boolean(
+              account && (await verifyRegisteredPassword(account, password)),
+            );
+          } catch {
+            accepted = false;
+          }
         }
       }
       if (!accepted || !account) {
         loginView({
-          error: "The email or password is incorrect. Please try again.",
+          error:
+            portal === "faculty"
+              ? "The faculty email or password is incorrect. Please try again."
+              : "The student email or password is incorrect. Please try again.",
           email,
+          portal,
         });
         document.querySelector(email ? "#password" : "#email")?.focus();
         return;
@@ -2594,7 +3370,9 @@
       signInNotice = "";
       signInPrefill = "";
       sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
-      window.location.hash = "#/dashboard";
+      window.location.hash = isTeacher()
+        ? "#/teacher/dashboard"
+        : "#/dashboard";
       render(true);
       showToast(`Welcome back, ${currentUser()?.firstName || "student"}.`);
       return;
@@ -2704,12 +3482,40 @@
       }
       const submittedAt = new Date().toISOString();
       const receiptId = receiptIdFor(id, submittedAt);
+      let fileReceiptId = existing?.fileReceiptId || "";
+      let fileSize = existing?.fileSize || 0;
+      let fileType = existing?.fileType || "";
+      let fileStorageWarning = false;
+      if (newFileName) {
+        fileReceiptId = receiptId;
+        fileSize = file.size;
+        fileType = file.type || "application/octet-stream";
+        try {
+          await storeSubmissionFile({
+            receiptId,
+            studentEmail: currentUser()?.email || "",
+            assignmentId: id,
+            fileName,
+            fileSize,
+            fileType,
+            lastModified: file.lastModified,
+            blob: file,
+            createdAt: submittedAt,
+          });
+        } catch {
+          fileReceiptId = "";
+          fileStorageWarning = true;
+        }
+      }
       const history = [
         ...(existing?.history || []),
         {
           fileName,
           submittedAt,
           receiptId,
+          fileReceiptId,
+          fileSize,
+          fileType,
         },
       ];
       state.submissions[id] = {
@@ -2717,13 +3523,20 @@
         fileName,
         submittedAt,
         receiptId,
+        fileReceiptId,
+        fileSize,
+        fileType,
         status: "submitted",
         history,
       };
       replacingSubmissionId = null;
       saveState();
       render(true);
-      showToast(`Submission received. Receipt ${receiptId}.`);
+      showToast(
+        fileStorageWarning
+          ? `Submission received. Receipt ${receiptId}. The file metadata was saved, but this browser could not store the file for download.`
+          : `Submission received. Receipt ${receiptId}.`,
+      );
     }
   });
 
@@ -2743,7 +3556,7 @@
     });
   });
 
-  document.addEventListener("click", (event) => {
+  document.addEventListener("click", async (event) => {
     const skipLink = event.target.closest(".skip-link");
     if (skipLink) {
       event.preventDefault();
@@ -2774,7 +3587,43 @@
     }
 
     const action = target.dataset.action;
-    if (action === "toggle-password") {
+    if (action === "google-workspace-signin") {
+      const authorizationUrl = googleWorkspaceAuthUrl();
+      if (!authorizationUrl) {
+        showToast(
+          "Google Workspace needs the school OAuth client and backend callback endpoint before authorization can begin.",
+        );
+        document.querySelector(".auth-setup-note")?.setAttribute("role", "alert");
+        return;
+      }
+      sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      window.location.assign(authorizationUrl);
+    } else if (action === "download-submission") {
+      const receiptId = target.dataset.receipt || "";
+      target.disabled = true;
+      try {
+        const fileRecord = await getSubmissionFile(receiptId);
+        if (!fileRecord?.blob) {
+          showToast(
+            "The original file is not stored in this browser. Only its submission metadata is available.",
+          );
+          return;
+        }
+        const downloadUrl = URL.createObjectURL(fileRecord.blob);
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = fileRecord.fileName || "student-submission";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        showToast(`Downloading ${fileRecord.fileName || "student submission"}.`);
+      } catch {
+        showToast("This file could not be retrieved from local storage.");
+      } finally {
+        target.disabled = false;
+      }
+    } else if (action === "toggle-password") {
       const input = document.querySelector(`#${target.dataset.target}`);
       if (!input) return;
       const willShow = input.type === "password";
@@ -2796,7 +3645,7 @@
       signInPrefill = account?.email || "";
       signInNotice =
         "Account created. Sign in with your new personal email account.";
-      window.location.hash = "#/signin";
+      window.location.hash = "#/signin/student";
       render(true);
       document.querySelector("#password")?.focus();
     } else if (action === "open-menu") {
@@ -2813,12 +3662,20 @@
       menuButton?.setAttribute("aria-expanded", "false");
       menuButton?.focus();
     } else if (action === "logout") {
+      const facultySession = isTeacher();
+      target.disabled = true;
+      if (facultySession) {
+        sessionStorage.setItem(WORKSPACE_LOGOUT_SUPPRESS_KEY, "1");
+        await closeWorkspaceSession();
+      }
       sessionStorage.removeItem(SESSION_KEY);
       state = initialStateForUser(null);
       signInNotice = "";
       signInPrefill = "";
-      window.location.hash = "#/signin";
-      loginView();
+      window.location.hash = facultySession
+        ? "#/signin/faculty"
+        : "#/signin/student";
+      loginView({ portal: facultySession ? "faculty" : "student" });
     } else if (action === "toggle-lesson") {
       const id = target.dataset.id;
       if (state.completed.includes(id)) {
@@ -2914,4 +3771,7 @@
 
   window.addEventListener("hashchange", () => render(true));
   render();
+  restoreWorkspaceSession().then((restored) => {
+    if (restored) render(true);
+  });
 })();
