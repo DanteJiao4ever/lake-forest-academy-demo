@@ -387,7 +387,7 @@
       id: "a1",
       courseId: "mhf4u",
       title: "Quadratic Models Investigation",
-      due: "2026-07-22T23:59:00",
+      due: "2026-07-22T23:59:00-04:00",
       points: 100,
       status: "due",
       instructions:
@@ -397,7 +397,7 @@
       id: "a2",
       courseId: "sbi4u",
       title: "Cellular Respiration Lab Analysis",
-      due: "2026-07-18T23:59:00",
+      due: "2026-07-18T23:59:00-04:00",
       points: 80,
       status: "submitted",
       instructions:
@@ -407,7 +407,7 @@
       id: "a3",
       courseId: "eng4u",
       title: "Comparative Literary Essay",
-      due: "2026-07-15T23:59:00",
+      due: "2026-07-15T23:59:00-04:00",
       points: 100,
       status: "graded",
       score: 92,
@@ -420,77 +420,7 @@
       id: "a4",
       courseId: "mhf4u",
       title: "Trigonometric Proof Portfolio",
-      due: "2026-07-29T23…5216 tokens truncated…w light">${course.subject} 路 ${course.code}</p>
-          <h1>${escapeHtml(course.title)}</h1>
-          <p>${escapeHtml(course.overview)}</p>
-          <div class="course-progress">
-            <div><span>${progress.completed} of ${course.lessons.length} lessons complete</span><strong>${progress.percent}%</strong></div>
-            <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
-          </div>
-        </div>
-        <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
-      </section>
-      <section class="course-detail-grid">
-        <div class="panel">
-          <header class="panel-header"><div><h2>Course Lessons</h2><p>Work through each unit at your own pace</p></div></header>
-          ${modules
-            .map((unit) => {
-              const lessons = course.lessons.filter((lesson) => lesson.unit === unit);
-              return `
-                <section class="module">
-                  <header class="module-heading">
-                    <p class="course-code">${unit}</p>
-                    <h3>${escapeHtml(lessons[0].unitTitle)}</h3>
-                    <p>${plural(lessons.length, "lesson")} in this unit</p>
-                  </header>
-                  ${lessons
-                    .map((lesson) => {
-                      const complete = state.completed.includes(lesson.id);
-                      return `
-                        <a class="lesson-row" href="#/lesson/${lesson.id}">
-                          <span class="lesson-status ${complete ? "complete" : ""}">${complete ? icon("check", 14) : ""}</span>
-                          <span><h4>${escapeHtml(lesson.title)}</h4><p>${escapeHtml(lesson.summary)}</p></span>
-                          <span class="badge">${icon("clock", 13)} ${lesson.duration}</span>
-                          ${icon("arrow", 17)}
-                        </a>
-                      `;
-                    })
-                    .join("")}
-                </section>
-              `;
-            })
-            .join("")}
-        </div>
-        <aside>
-          <div class="panel">
-            <header class="panel-header"><h3>Course Details</h3></header>
-            <div class="panel-content course-facts">
-              <div class="fact"><span>Instructor</span><strong>${escapeHtml(course.instructor)}</strong></div>
-              <div class="fact"><span>Term</span><strong>${escapeHtml(course.term)}</strong></div>
-              <div class="fact"><span>Live Sessions</span><strong>${escapeHtml(course.schedule)}</strong></div>
-              <div class="fact"><span>OSSD Course Type</span><strong>Grade 12 路 University</strong></div>
-            </div>
-          </div>
-        </aside>
-      </section>
-    `;
-  }
-
-  function lessonView(lesson) {
-    const complete = state.completed.includes(lesson.id);
-    const courseLessons = lesson.course.lessons;
-    const index = courseLessons.findIndex((item) => item.id === lesson.id);
-    const previous = courseLessons[index - 1];
-    const next = courseLessons[index + 1];
-    return `
-      <nav class="breadcrumb" aria-label="Breadcrumb">
-        <button type="button" data-route="courses">My Courses</button><span>/</span>
-        <button type="button" data-route="course/${lesson.course.id}">${lesson.course.code}</button><span>/</span>
-        <span>${lesson.unit}</span>
-      </nav>
-      <section class="lesson-layout">
-        <article class="panel lesson-article">
-          <header class="lesson-title">
+      d…6294 tokens truncated…        <header class="lesson-title">
             <p class="course-code">${lesson.course.code} 路 ${lesson.unit}</p>
             <h1>${escapeHtml(lesson.title)}</h1>
             <p>${escapeHtml(lesson.summary)}</p>
@@ -551,11 +481,11 @@
         "Assignments",
         "Review due dates, submit your work and return to instructor feedback.",
       )}
-      <div class="assignment-filters" aria-label="Filter assignments">
+      <div class="assignment-filters" role="group" aria-label="Filter assignments">
         ${filters
           .map(
             ([key, label]) =>
-              `<button class="filter-button ${assignmentFilter === key ? "is-active" : ""}" type="button" data-action="filter-assignment" data-filter="${key}">${label}</button>`,
+              `<button class="filter-button ${assignmentFilter === key ? "is-active" : ""}" type="button" data-action="filter-assignment" data-filter="${key}" aria-pressed="${assignmentFilter === key}">${label}</button>`,
           )
           .join("")}
       </div>
@@ -590,6 +520,8 @@
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
     const submission = state.submissions[assignment.id];
+    const showSubmissionForm =
+      !submission || replacingSubmissionId === assignment.id;
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="assignments">Assignments</button><span>/</span><span>${course.code}</span>
@@ -620,7 +552,7 @@
                 <div class="fact"><span>Value</span><strong>${assignment.points} Points</strong></div>
               </div>
               ${
-                submission
+                !showSubmissionForm
                   ? `
                     <div class="submission-note">
                       <strong>Submitted ${formatDate(submission.submittedAt, true)}</strong><br />
@@ -636,11 +568,15 @@
                   : `
                     <form class="assignment-form" id="assignment-form" data-id="${assignment.id}">
                       <label for="submission-note">Submission Note</label>
-                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor鈥?></textarea>
+                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor鈥?>${escapeHtml(submission?.text || "")}</textarea>
                       <label for="submission-file">Attach a File</label>
                       <input id="submission-file" name="file" type="file" />
-                      <p class="login-help">For this public preview, the file name is saved in this browser; the file itself is not uploaded.</p>
-                      <button class="button button-primary" type="submit">${icon("file", 17)} Submit Assignment</button>
+                      <p class="login-help">
+                        For this public preview, the file name is saved in this browser; the file itself is not uploaded.
+                        ${submission?.fileName ? `<br />Current file: ${escapeHtml(submission.fileName)}` : ""}
+                      </p>
+                      <button class="button button-primary" type="submit">${icon("file", 17)} ${submission ? "Save Replacement" : "Submit Assignment"}</button>
+                      ${submission ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
                     </form>
                   `
               }
@@ -744,12 +680,21 @@
     `;
   }
 
-  function render() {
+  function focusMain() {
+    const main = document.querySelector("#main-content");
+    if (main) {
+      main.setAttribute("tabindex", "-1");
+      main.focus();
+    }
+  }
+
+  function render(shouldFocusMain = false) {
     if (!isSignedIn()) {
       loginView();
       return;
     }
     const route = routeParts();
+    document.title = `${pageTitle(route)} | Lake Forest Learning`;
     let view;
     if (route[0] === "dashboard") view = dashboardView();
     else if (route[0] === "courses") view = coursesView();
@@ -768,6 +713,7 @@
     else view = notFoundView();
     APP_ROOT.innerHTML = shell(view);
     window.scrollTo({ top: 0, behavior: "instant" });
+    if (shouldFocusMain) focusMain();
   }
 
   function navigate(route) {
@@ -798,7 +744,7 @@
       }
       sessionStorage.setItem(SESSION_KEY, "signed-in");
       if (!window.location.hash) window.location.hash = "#/dashboard";
-      render();
+      render(true);
       showToast("Welcome back, Alex.");
       return;
     }
@@ -808,18 +754,49 @@
       const id = event.target.dataset.id;
       const form = new FormData(event.target);
       const file = form.get("file");
+      const existing = state.submissions[id];
+      const text = String(form.get("note") || "").trim();
+      const newFileName = file instanceof File && file.name ? file.name : "";
+      const fileName = newFileName || existing?.fileName || "";
+      if (!text && !fileName) {
+        showToast("Add a submission note or choose a file before submitting.");
+        document.querySelector("#submission-note")?.focus();
+        return;
+      }
       state.submissions[id] = {
-        text: String(form.get("note") || "").trim(),
-        fileName: file instanceof File && file.name ? file.name : "",
+        text,
+        fileName,
         submittedAt: new Date().toISOString(),
       };
+      replacingSubmissionId = null;
       saveState();
-      render();
+      render(true);
       showToast("Assignment submitted. Your local preview has been updated.");
     }
   });
 
   document.addEventListener("click", (event) => {
+    const skipLink = event.target.closest(".skip-link");
+    if (skipLink) {
+      event.preventDefault();
+      const main = document.querySelector("#main-content");
+      if (main) {
+        main.setAttribute("tabindex", "-1");
+        main.focus();
+      }
+      return;
+    }
+
+    if (event.target.closest(".sidebar-nav a")) {
+      const sidebar = document.querySelector("#sidebar");
+      const wasOpen = sidebar?.classList.contains("is-open");
+      sidebar?.classList.remove("is-open");
+      const scrim = document.querySelector(".sidebar-scrim");
+      if (scrim) scrim.hidden = true;
+      document.querySelector(".mobile-menu")?.setAttribute("aria-expanded", "false");
+      if (wasOpen) focusMain();
+    }
+
     const target = event.target.closest("[data-action], [data-route]");
     if (!target) return;
 
@@ -833,10 +810,15 @@
       document.querySelector("#sidebar")?.classList.add("is-open");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = false;
+      target.setAttribute("aria-expanded", "true");
+      document.querySelector(".sidebar-close")?.focus();
     } else if (action === "close-menu") {
       document.querySelector("#sidebar")?.classList.remove("is-open");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = true;
+      const menuButton = document.querySelector(".mobile-menu");
+      menuButton?.setAttribute("aria-expanded", "false");
+      menuButton?.focus();
     } else if (action === "logout") {
       sessionStorage.removeItem(SESSION_KEY);
       window.location.hash = "";
@@ -850,27 +832,60 @@
       }
       saveState();
       render();
+      document.querySelector('[data-action="toggle-lesson"]')?.focus();
       showToast(state.completed.includes(id) ? "Lesson marked complete." : "Lesson returned to in progress.");
     } else if (action === "filter-assignment") {
       assignmentFilter = target.dataset.filter || "all";
-      APP_ROOT.innerHTML = shell(assignmentsView());
-    } else if (action === "replace-submission") {
-      delete state.submissions[target.dataset.id];
-      saveState();
       render();
-      showToast("You can now upload a replacement submission.");
+      document.querySelector(`[data-filter="${assignmentFilter}"]`)?.focus();
+    } else if (action === "replace-submission") {
+      replacingSubmissionId = target.dataset.id;
+      render();
+      document.querySelector("#submission-note")?.focus();
+    } else if (action === "cancel-replacement") {
+      replacingSubmissionId = null;
+      render();
+      document.querySelector('[data-action="replace-submission"]')?.focus();
     } else if (action === "read-announcement") {
       if (!state.read.includes(target.dataset.id)) state.read.push(target.dataset.id);
       saveState();
-      render();
+      render(true);
     } else if (action === "read-all") {
       state.read = ANNOUNCEMENTS.map((item) => item.id);
       saveState();
-      render();
+      render(true);
       showToast("All announcements marked as read.");
     }
   });
 
-  window.addEventListener("hashchange", render);
+  document.addEventListener("keydown", (event) => {
+    const sidebar = document.querySelector("#sidebar");
+    if (!sidebar?.classList.contains("is-open")) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      document.querySelector('[data-action="close-menu"]')?.click();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...sidebar.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled])',
+      ),
+    ].filter((element) => element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
+  window.addEventListener("hashchange", () => render(true));
   render();
 })();
