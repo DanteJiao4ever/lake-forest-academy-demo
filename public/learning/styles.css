@@ -323,6 +323,12 @@ textarea:focus-visible {
   line-height: 1.02;
 }
 
+.login-panel h1 {
+  margin: 10px 0 14px;
+  font-size: clamp(2.65rem, 4.2vw, 4.05rem);
+  line-height: 1.02;
+}
+
 .login-intro {
   margin-bottom: 32px;
   color: var(--muted);
@@ -408,6 +414,7 @@ textarea:focus-visible {
   background: var(--forest-deep);
   color: rgba(255, 255, 255, 0.8);
   padding: 29px 18px 22px;
+  overflow-y: auto;
 }
 
 .sidebar-brand {
@@ -1474,11 +1481,18 @@ textarea:focus-visible {
 
   .sidebar {
     transform: translateX(-102%);
-    transition: transform 200ms ease;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform 200ms ease,
+      visibility 0s linear 200ms;
   }
 
   .sidebar.is-open {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
   }
 
   .sidebar-close {
@@ -1584,15 +1598,23 @@ textarea:focus-visible {
   }
 
   .assignment-card > .badge {
-    display: none;
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .assignment-card > svg {
+    grid-column: 3;
+    grid-row: 1 / 3;
   }
 
   .grade-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .grade-row > :last-child {
-    display: none;
+  .grade-row > .badge {
+    grid-column: 1 / 3;
+    justify-self: start;
   }
 
   .announcement-card {
