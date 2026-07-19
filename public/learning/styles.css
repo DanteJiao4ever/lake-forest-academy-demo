@@ -4268,3 +4268,441 @@ textarea:focus-visible {
     min-height: 44px;
   }
 }
+
+/* Faculty Drive materials */
+
+.drive-materials-hero {
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
+
+.drive-materials-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.drive-materials-actions .button {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
+.drive-materials-actions .button:disabled {
+  transform: none;
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.drive-materials-actions .button:focus-visible,
+.drive-material-item .button:focus-visible,
+.drive-course-group > summary:focus-visible,
+.drive-unit-group > summary:focus-visible {
+  position: relative;
+  z-index: 2;
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.drive-connection-card {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(280px, 0.82fr);
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  margin-bottom: 24px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--gold);
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(6, 29, 24, 0.06);
+}
+
+.drive-connection-card > div {
+  min-width: 0;
+  padding: clamp(21px, 3vw, 30px);
+}
+
+.drive-status-line {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 11px;
+}
+
+.drive-status-line h2 {
+  margin: 0;
+  color: var(--forest);
+  font-size: 1.52rem;
+}
+
+.drive-status-line .status {
+  box-shadow: inset 0 0 0 1px rgba(6, 29, 24, 0.04);
+}
+
+.drive-connection-detail {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.drive-connection-detail strong {
+  color: var(--ink);
+}
+
+.drive-folder-convention {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-left: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(216, 171, 80, 0.09), transparent 62%),
+    #f8f8f3;
+}
+
+.drive-folder-convention > strong {
+  margin-top: 5px;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.1rem;
+}
+
+.drive-folder-convention ol {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 19px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.drive-folder-convention li {
+  position: relative;
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d7deda;
+  border-radius: 2px;
+  background: var(--surface);
+  padding: 7px 6px;
+  color: var(--forest);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.drive-folder-convention li::before {
+  position: absolute;
+  top: -8px;
+  left: 7px;
+  width: 17px;
+  height: 8px;
+  border: 1px solid #d7deda;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  background: var(--gold-soft);
+  content: "";
+}
+
+.drive-folder-convention li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -16px;
+  color: var(--gold);
+  content: "\203A";
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  line-height: 1;
+  transform: translateY(-52%);
+}
+
+.drive-material-tree {
+  display: block;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.drive-course-group,
+.drive-unit-group {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.drive-course-group + .drive-course-group {
+  border-top: 1px solid var(--line);
+}
+
+.drive-unit-group {
+  border-top: 1px solid var(--line);
+  background: #f8f8f4;
+}
+
+.drive-course-group > summary,
+.drive-unit-group > summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 27px;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.drive-course-group > summary {
+  min-height: 70px;
+  border-left: 4px solid var(--forest);
+  padding: 14px 19px;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.drive-unit-group > summary {
+  min-height: 58px;
+  border-left: 4px solid var(--lake);
+  padding: 12px 19px 12px 29px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.drive-course-group > summary::-webkit-details-marker,
+.drive-unit-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.drive-course-group > summary::after,
+.drive-unit-group > summary::after {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--forest);
+  content: "\203A";
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 1;
+  transform: rotate(0);
+  transition: transform 150ms ease;
+}
+
+.drive-course-group[open] > summary::after,
+.drive-unit-group[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.drive-course-group > summary:hover,
+.drive-unit-group > summary:hover {
+  background: #f3f7f4;
+}
+
+.drive-category-group {
+  border-top: 1px solid #e2e7e3;
+  border-left: 4px solid var(--gold);
+  background: var(--surface);
+  padding: 14px 18px 16px 40px;
+}
+
+.drive-category-group h4 {
+  margin: 0 0 9px;
+  color: var(--lake-deep);
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.drive-material-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.drive-material-item {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dce3de;
+  border-radius: 2px;
+  background: #fdfdfb;
+  padding: 9px 11px;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.drive-material-item::before {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #c7d8d1;
+  border-radius: 3px;
+  background: #edf5f1;
+  color: var(--forest);
+  content: attr(data-file-kind);
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+
+.drive-material-item:hover {
+  border-color: #b8cbc2;
+  background: #f5f9f7;
+  box-shadow: inset 3px 0 var(--gold);
+}
+
+.drive-material-item > span:first-of-type {
+  min-width: 0;
+}
+
+.drive-material-item strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.drive-material-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.drive-material-item .button {
+  min-height: 40px;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.drive-empty-state {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 10%, rgba(216, 171, 80, 0.11), transparent 38%),
+    var(--surface);
+  padding: 38px 24px;
+  text-align: center;
+}
+
+.drive-empty-state h2 {
+  margin-bottom: 8px;
+  color: var(--forest);
+  font-size: 1.45rem;
+}
+
+.drive-empty-state p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.course-materials {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+
+.course-materials > header {
+  margin: 0 20px 14px;
+}
+
+.course-materials .drive-material-list {
+  margin: 0 20px 20px;
+}
+
+@media (max-width: 860px) {
+  .drive-materials-hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .drive-materials-actions {
+    justify-content: flex-start;
+  }
+
+  .drive-connection-card {
+    grid-template-columns: 1fr;
+  }
+
+  .drive-folder-convention {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 650px) {
+  .drive-materials-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .drive-materials-actions .button {
+    width: 100%;
+    min-height: 47px;
+  }
+
+  .drive-connection-card > div {
+    padding: 21px 18px;
+  }
+
+  .drive-folder-convention ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .drive-folder-convention li:not(:last-child)::after {
+    display: none;
+  }
+
+  .drive-course-group > summary {
+    padding: 13px 12px;
+  }
+
+  .drive-unit-group > summary {
+    padding: 11px 12px 11px 19px;
+  }
+
+  .drive-category-group {
+    padding: 13px 10px 14px 22px;
+  }
+
+  .drive-material-item {
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .drive-material-item .button,
+  .drive-material-item > .badge {
+    grid-column: 2;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .course-materials > header {
+    margin: 0 15px 12px;
+  }
+
+  .course-materials .drive-material-list {
+    margin: 0 15px 15px;
+  }
+}
