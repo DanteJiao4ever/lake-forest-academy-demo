@@ -44,6 +44,18 @@
       window.LFA_DRIVE_CONFIG?.syncEndpoint || "",
     ).trim(),
   });
+  const SUBMISSION_CONFIG = Object.freeze({
+    submissionsEndpoint: String(
+      window.LFA_SUBMISSION_CONFIG?.submissionsEndpoint ||
+        window.LFA_DRIVE_CONFIG?.submissionsEndpoint ||
+        "",
+    ).trim(),
+    gradingEndpoint: String(
+      window.LFA_SUBMISSION_CONFIG?.gradingEndpoint ||
+        window.LFA_DRIVE_CONFIG?.gradingEndpoint ||
+        "",
+    ).trim(),
+  });
   const WORKSPACE_GMAIL_URL =
     "https://mail.google.com/a/lakeforestacademy.ca";
   const SCHOOL_ACCOUNT = {
@@ -783,7 +795,7 @@
     submissions: {},
   };
 
-  let state = loadState();
+  let state;
   let assignmentFilter = "all";
   let replacingSubmissionId = null;
   let toastTimer = null;
@@ -792,6 +804,14 @@
   let driveMaterialsState = loadDriveMaterialsCache();
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
+  let remoteSubmissionsState = {
+    records: [],
+    error: "",
+    lastLoadedAt: "",
+  };
+  let submissionsRequestInFlight = false;
+  let submissionsEndpointCheckedFor = "";
+  state = loadState();
 
   function normalizeEmail(value) {
     return String(value || "").trim().toLowerCase();
@@ -860,6 +880,12 @@
       SESSION_KEY,
       JSON.stringify({ email: normalizeEmail(account.email) }),
     );
+    remoteSubmissionsState = {
+      records: [],
+      error: "",
+      lastLoadedAt: "",
+    };
+    submissionsEndpointCheckedFor = "";
   }
 
   function stateStorageKey(user = currentUser()) {
@@ -992,6 +1018,13 @@
       .replace(/\D/g, "")
       .slice(2, 14);
     return `LFA-${course?.code || "COURSE"}-${compactDate}`;
+  }
+
+  function requestIdFor(prefix) {
+    if (window.crypto?.randomUUID) {
+      return window.crypto.randomUUID();
+    }
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
   }
 
   function saveState() {
@@ -1166,6 +1199,36 @@
   }
 
   function teacherSubmissionRecords() {
+    if (submissionsEndpointUrl()) {
+      return remoteSubmissionsState.records
+        .map((remote) => {
+          const assignment = findAssignment(remote.assignmentId);
+          const course = findCourse(remote.courseId || assignment?.courseId);
+          if (!assignment || !course) return null;
+          const history = Array.isArray(remote.submission.history)
+            ? remote.submission.history
+            : [];
+          return {
+            id: remote.id,
+            student: remote.student,
+            course,
+            assignment,
+            submission: remote.submission,
+            history,
+            versionCount: Math.max(history.length, 1),
+            latestFileReceiptId:
+              remote.submission.fileReceiptId ||
+              history.at(-1)?.fileReceiptId ||
+              remote.submission.receiptId,
+          };
+        })
+        .filter(Boolean)
+        .sort(
+          (a, b) =>
+            new Date(b.submission.submittedAt) -
+            new Date(a.submission.submittedAt),
+        );
+    }
     const records = [];
     allStudentAccounts().forEach((student) => {
       const studentState = loadState(student);
@@ -1210,6 +1273,13 @@
     return { label: "Awaiting Review", className: "info" };
   }
 
+  function studentRecordKey(student) {
+    return (
+      normalizeEmail(student?.email) ||
+      scalarLabel(student?.id || student?.studentId)
+    );
+  }
+
   function formatFileSize(bytes) {
     const value = Number(bytes);
     if (!Number.isFinite(value) || value <= 0) return "Size unavailable";
@@ -1249,6 +1319,427 @@
       return url.protocol === "https:" || localDevelopment ? url.toString() : "";
     } catch {
       return "";
+    }
+  }
+
+  function submissionsEndpointUrl(scope = "") {
+    const configured = configuredDriveUrl(
+      SUBMISSION_CONFIG.submissionsEndpoint,
+    );
+    if (!configured) return "";
+    const url = new URL(configured);
+    if (scope) url.searchParams.set("scope", scope);
+    return url.toString();
+  }
+
+  function submissionScopeKey(user = currentUser()) {
+    if (!user) return "";
+    return isTeacher(user)
+      ? `teacher:${normalizeEmail(user.email)}`
+      : `student:${normalizeEmail(user.email)}`;
+  }
+
+  function flattenSubmissionItems(items) {
+    const flattened = [];
+    items.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      if (!Array.isArray(item.students)) {
+        flattened.push(item);
+        return;
+      }
+      item.students.forEach((student) => {
+        const units = Array.isArray(student?.units) ? student.units : [];
+        units.forEach((unit) => {
+          const submissions = Array.isArray(unit?.submissions)
+            ? unit.submissions
+            : [];
+          submissions.forEach((submission) => {
+            flattened.push({
+              ...submission,
+              courseCode:
+                submission.courseCode || item.courseCode || item.courseId,
+              unitNumber:
+                submission.unitNumber ?? unit.unitNumber ?? unit.number,
+              student: {
+                ...student,
+                id: student.studentId || student.id,
+              },
+            });
+          });
+        });
+      });
+    });
+    return flattened;
+  }
+
+  function extractSubmissionItems(payload) {
+    if (Array.isArray(payload)) {
+      return { found: true, items: flattenSubmissionItems(payload) };
+    }
+    if (!payload || typeof payload !== "object") {
+      return { found: false, items: [] };
+    }
+    for (const key of ["submissions", "records", "items"]) {
+      if (Array.isArray(payload[key])) {
+        return {
+          found: true,
+          items: flattenSubmissionItems(payload[key]),
+        };
+      }
+    }
+    if (payload.data && payload.data !== payload) {
+      return extractSubmissionItems(payload.data);
+    }
+    return { found: false, items: [] };
+  }
+
+  function validTimestamp(value, fallback = "") {
+    const timestamp = String(value || "").trim();
+    return timestamp && !Number.isNaN(new Date(timestamp).getTime())
+      ? timestamp
+      : fallback;
+  }
+
+  function normalizeSubmissionVersion(raw, fallback = {}) {
+    const version = raw && typeof raw === "object" ? raw : {};
+    const submittedAt = validTimestamp(
+      version.submittedAt || version.createdAt,
+      fallback.submittedAt || new Date().toISOString(),
+    );
+    const receiptId =
+      scalarLabel(version.receiptId || version.id) ||
+      fallback.receiptId ||
+      "";
+    return {
+      fileName:
+        scalarLabel(version.fileName || version.name) ||
+        fallback.fileName ||
+        "",
+      submittedAt,
+      receiptId,
+      fileReceiptId:
+        scalarLabel(version.fileReceiptId || version.driveFileId) ||
+        fallback.fileReceiptId ||
+        "",
+      fileSize: Number.isFinite(Number(version.fileSize ?? version.size))
+        ? Number(version.fileSize ?? version.size)
+        : Number(fallback.fileSize || 0),
+      fileType:
+        scalarLabel(version.fileType || version.mimeType) ||
+        fallback.fileType ||
+        "",
+      fileUrl: configuredDriveUrl(
+        version.fileUrl ||
+          version.downloadUrl ||
+          version.webViewLink ||
+          version.openUrl ||
+          fallback.fileUrl ||
+          "",
+        configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
+          window.location.href,
+      ),
+    };
+  }
+
+  function normalizeRemoteSubmission(raw, index, defaultStudent = null) {
+    if (!raw || typeof raw !== "object") return null;
+    const nested =
+      raw.submission && typeof raw.submission === "object"
+        ? raw.submission
+        : {};
+    const source = { ...raw, ...nested };
+    const assignmentId = scalarLabel(
+      source.assignmentId || source.assignment?.id,
+    );
+    if (!assignmentId) return null;
+    const assignment = findAssignment(assignmentId);
+    const courseId =
+      canonicalCourseId(
+        source.courseId ||
+          source.courseCode ||
+          source.course?.id ||
+          source.course,
+      ) ||
+      assignment?.courseId ||
+      "";
+    const course = findCourse(courseId) || findCourse(assignment?.courseId);
+    const studentSource =
+      raw.student && typeof raw.student === "object" ? raw.student : {};
+    const studentId = scalarLabel(
+      source.studentId || studentSource.studentId || studentSource.id,
+    );
+    const studentEmail = normalizeEmail(
+      source.studentEmail ||
+        studentSource.email ||
+        defaultStudent?.email ||
+        "",
+    );
+    const firstName = scalarLabel(
+      studentSource.firstName || source.studentFirstName,
+    );
+    const lastName = scalarLabel(
+      studentSource.lastName || source.studentLastName,
+    );
+    const displayName =
+      scalarLabel(
+        studentSource.displayName ||
+          studentSource.studentName ||
+          studentSource.name ||
+          source.studentName,
+      ) ||
+      `${firstName} ${lastName}`.trim() ||
+      defaultStudent?.displayName ||
+      studentEmail ||
+      studentId ||
+      "Student";
+    const submittedAt = validTimestamp(
+      source.submittedAt || source.createdAt,
+      new Date().toISOString(),
+    );
+    const receiptId =
+      scalarLabel(source.receiptId || source.submissionId || source.id) ||
+      receiptIdFor(assignmentId, submittedAt);
+    const primaryFile =
+      source.file && typeof source.file === "object"
+        ? source.file
+        : Array.isArray(source.files) &&
+            source.files[0] &&
+            typeof source.files[0] === "object"
+          ? source.files[0]
+          : {};
+    const fileName = scalarLabel(source.fileName || primaryFile.name);
+    const fileUrl = configuredDriveUrl(
+      source.fileUrl ||
+        source.downloadUrl ||
+        source.webViewLink ||
+        source.openUrl ||
+        primaryFile.openUrl ||
+        primaryFile.url ||
+        "",
+      configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
+        window.location.href,
+    );
+    const rawScore = source.score ?? source.grade?.score;
+    const numericScore =
+      rawScore === "" || rawScore == null ? null : Number(rawScore);
+    const score =
+      Number.isInteger(numericScore) &&
+      numericScore >= 0 &&
+      numericScore <= 100
+        ? numericScore
+        : null;
+    const updatedAt = validTimestamp(
+      source.updatedAt || source.gradedAt || source.grade?.updatedAt,
+      "",
+    );
+    const historySource = Array.isArray(source.history)
+      ? source.history
+      : Array.isArray(source.versions)
+        ? source.versions
+        : [];
+    const fallbackVersion = {
+      fileName,
+      submittedAt,
+      receiptId,
+      fileReceiptId: scalarLabel(
+        source.fileReceiptId || source.driveFileId || primaryFile.id,
+      ),
+      fileSize: Number(
+        source.fileSize ?? primaryFile.sizeBytes ?? primaryFile.size ?? 0,
+      ),
+      fileType: scalarLabel(
+        source.fileType || source.mimeType || primaryFile.mimeType,
+      ),
+      fileUrl,
+    };
+    const history = (
+      historySource.length ? historySource : [fallbackVersion]
+    ).map((version) => normalizeSubmissionVersion(version, fallbackVersion));
+    return {
+      id:
+        scalarLabel(source.submissionId || source.id) ||
+        `${studentEmail || "student"}:${assignmentId}:${index}`,
+      student: {
+        id: studentId || studentEmail,
+        firstName: firstName || defaultStudent?.firstName || "",
+        lastName: lastName || defaultStudent?.lastName || "",
+        displayName,
+        email: studentEmail,
+        role: "student",
+      },
+      assignmentId,
+      courseId: course?.id || courseId || assignment?.courseId || "",
+      submission: {
+        id:
+          scalarLabel(source.submissionId || source.id) ||
+          scalarLabel(source.receiptId),
+        text: scalarLabel(source.note || source.text || source.comment),
+        fileName,
+        submittedAt,
+        receiptId,
+        fileReceiptId: fallbackVersion.fileReceiptId,
+        fileSize: fallbackVersion.fileSize,
+        fileType: fallbackVersion.fileType,
+        fileUrl,
+        status: score != null ? "graded" : scalarLabel(source.status) || "submitted",
+        score,
+        feedback: scalarLabel(
+          source.feedback || source.teacherFeedback || source.grade?.feedback,
+        ),
+        gradeEtag: scalarLabel(source.etag || source.grade?.etag),
+        gradeVersion: Number.isInteger(
+          Number(source.version ?? source.grade?.version),
+        )
+          ? Number(source.version ?? source.grade?.version)
+          : null,
+        gradedAt: validTimestamp(
+          source.gradedAt || source.grade?.gradedAt,
+          score != null ? updatedAt : "",
+        ),
+        updatedAt,
+        history,
+      },
+    };
+  }
+
+  function normalizeRemoteSubmissions(payload, defaultStudent = null) {
+    const extracted = extractSubmissionItems(payload);
+    return {
+      found: extracted.found,
+      records: extracted.items
+        .map((item, index) =>
+          normalizeRemoteSubmission(item, index, defaultStudent),
+        )
+        .filter(Boolean),
+    };
+  }
+
+  async function requestSubmissionEndpoint(endpoint, options = {}) {
+    const url = configuredDriveUrl(endpoint);
+    if (!url) throw new Error("Submission service is not configured.");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 45000);
+    const headers = { Accept: "application/json", ...(options.headers || {}) };
+    if (
+      options.body &&
+      !(options.body instanceof FormData) &&
+      !headers["Content-Type"]
+    ) {
+      headers["Content-Type"] = "application/json";
+    }
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = new Error(
+          `Submission service request failed (${response.status}).`,
+        );
+        error.status = response.status;
+        throw error;
+      }
+      if (response.status === 204) return {};
+      const text = await response.text();
+      return text ? JSON.parse(text) : {};
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  function upsertRemoteSubmission(record) {
+    if (!record) return;
+    const index = remoteSubmissionsState.records.findIndex(
+      (item) =>
+        (record.id && item.id === record.id) ||
+        (item.assignmentId === record.assignmentId &&
+          studentRecordKey(item.student) === studentRecordKey(record.student)),
+    );
+    if (index >= 0) {
+      const current = remoteSubmissionsState.records[index];
+      remoteSubmissionsState.records[index] = {
+        ...current,
+        ...record,
+        student: { ...current.student, ...record.student },
+        submission: { ...current.submission, ...record.submission },
+      };
+    } else {
+      remoteSubmissionsState.records.push(record);
+    }
+  }
+
+  function remoteSubmissionFor(assignmentId, user = currentUser()) {
+    if (!user || isTeacher(user)) return null;
+    return (
+      remoteSubmissionsState.records.find(
+        (record) =>
+          record.assignmentId === assignmentId &&
+          (!record.student.email ||
+            normalizeEmail(record.student.email) ===
+              normalizeEmail(user.email)),
+      )?.submission || null
+    );
+  }
+
+  function submissionForAssignment(assignmentId, user = currentUser()) {
+    if (submissionsEndpointUrl()) {
+      return remoteSubmissionFor(assignmentId, user);
+    }
+    if (user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)) {
+      return loadState(user).submissions?.[assignmentId] || null;
+    }
+    return state?.submissions?.[assignmentId] || null;
+  }
+
+  async function refreshRemoteSubmissions({ silent = false } = {}) {
+    const user = currentUser();
+    const scope = isTeacher(user) ? "teacher" : "student";
+    const endpoint = submissionsEndpointUrl(scope);
+    const scopeKey = submissionScopeKey(user);
+    if (!user || !endpoint || submissionsRequestInFlight) return false;
+    submissionsRequestInFlight = true;
+    submissionsEndpointCheckedFor = scopeKey;
+    if (!silent) render();
+    try {
+      const payload = await requestSubmissionEndpoint(endpoint);
+      const normalized = normalizeRemoteSubmissions(
+        payload,
+        isTeacher(user) ? null : user,
+      );
+      if (!normalized.found) {
+        throw new Error(
+          "The submission service returned an unsupported response.",
+        );
+      }
+      const records = isTeacher(user)
+        ? normalized.records
+        : normalized.records.filter(
+            (record) =>
+              !record.student.email ||
+              normalizeEmail(record.student.email) ===
+                normalizeEmail(user.email),
+          );
+      remoteSubmissionsState = {
+        records,
+        error: "",
+        lastLoadedAt: new Date().toISOString(),
+      };
+      return true;
+    } catch (error) {
+      remoteSubmissionsState = {
+        records: [],
+        error:
+          error?.name === "AbortError"
+            ? "The submission service did not respond in time."
+            : error?.message || "Submissions could not be loaded.",
+        lastLoadedAt: "",
+      };
+      return false;
+    } finally {
+      submissionsRequestInFlight = false;
+      render();
     }
   }
 
@@ -1772,10 +2263,22 @@
   }
 
   function assignmentScore(assignment, user = currentUser()) {
+    const submission = submissionForAssignment(assignment.id, user);
+    if (
+      Number.isInteger(submission?.score) &&
+      submission.score >= 0 &&
+      submission.score <= 100
+    ) {
+      return submission.score;
+    }
+    if (submissionsEndpointUrl()) return null;
     return hasSeededAcademicRecord(user) ? assignment.score : null;
   }
 
   function assignmentFeedback(assignment, user = currentUser()) {
+    const submission = submissionForAssignment(assignment.id, user);
+    if (submission?.feedback) return submission.feedback;
+    if (submissionsEndpointUrl()) return "";
     return hasSeededAcademicRecord(user) ? assignment.feedback : "";
   }
 
@@ -1887,7 +2390,7 @@
     if (score != null) {
       return { key: "graded", label: `Graded · ${score}%`, className: "success" };
     }
-    const submission = state.submissions[assignment.id];
+    const submission = submissionForAssignment(assignment.id);
     if (submission?.status === "revision") {
       return {
         key: "revision",
@@ -1899,7 +2402,11 @@
       return { key: "review", label: "Under Review", className: "info" };
     }
     if (submission) {
-      return { key: "submitted", label: "Submitted", className: "info" };
+      return {
+        key: "submitted",
+        label: "Awaiting Grading",
+        className: "info",
+      };
     }
     const overdue = new Date(assignment.due) < new Date();
     if (overdue) {
@@ -2123,7 +2630,7 @@
   }
 
   function teacherRecordLink(record) {
-    return `#/teacher/submission/${encodeURIComponent(record.student.email)}/${record.assignment.id}`;
+    return `#/teacher/submission/${encodeURIComponent(studentRecordKey(record.student))}/${record.assignment.id}`;
   }
 
   function teacherRecordMarkup(record) {
@@ -2167,7 +2674,10 @@
           if (!courseRecords.length) return "";
           const students = [
             ...new Map(
-              courseRecords.map((record) => [record.student.email, record.student]),
+              courseRecords.map((record) => [
+                studentRecordKey(record.student),
+                record.student,
+              ]),
             ).values(),
           ];
           return `
@@ -2179,8 +2689,13 @@
               <div class="hierarchy-list">
                 ${students.map((student) => {
                   const studentRecords = courseRecords.filter(
-                    (record) => record.student.email === student.email,
+                    (record) =>
+                      studentRecordKey(record.student) ===
+                      studentRecordKey(student),
                   );
+                  const studentKey = studentRecordKey(student);
+                  const studentReference =
+                    student.email || student.id || "Student record";
                   const units = [
                     ...new Map(
                       studentRecords.map((record) => [
@@ -2196,7 +2711,7 @@
                     <details class="hierarchy-student">
                       <summary>
                         <span class="teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(student))}</span>
-                        <span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span>
+                        <span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(studentReference)}</small></span>
                         <small>${plural(studentRecords.length, "submission")}</small>
                       </summary>
                       <div class="hierarchy-list">
@@ -2205,10 +2720,10 @@
                             (record) => record.assignment.unit === unit.id,
                           );
                           return `
-                            <section class="hierarchy-unit" aria-labelledby="${course.id}-${encodeURIComponent(student.email)}-${unit.id.replace(/\s+/g, "-")}">
+                            <section class="hierarchy-unit" aria-labelledby="${course.id}-${encodeURIComponent(studentKey)}-${unit.id.replace(/\s+/g, "-")}">
                               <header>
                                 <span class="course-code">${escapeHtml(unit.id)}</span>
-                                <h3 id="${course.id}-${encodeURIComponent(student.email)}-${unit.id.replace(/\s+/g, "-")}">${escapeHtml(unit.title)}</h3>
+                                <h3 id="${course.id}-${encodeURIComponent(studentKey)}-${unit.id.replace(/\s+/g, "-")}">${escapeHtml(unit.title)}</h3>
                               </header>
                               <div>
                                 ${unitRecords.map((record) => {
@@ -2501,6 +3016,9 @@
     const attachedFiles = records.filter(
       (record) => record.submission.fileName,
     ).length;
+    const studentCount = submissionsEndpointUrl()
+      ? new Set(records.map((record) => studentRecordKey(record.student))).size
+      : allStudentAccounts().length;
     return `
       <header class="teacher-hero">
         <div>
@@ -2512,7 +3030,7 @@
       </header>
       <section class="teacher-metrics" aria-label="Faculty overview">
         <article class="teacher-metric"><span>${icon("book", 22)}</span><strong>${COURSES.length}</strong><p>Active Courses</p></article>
-        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${allStudentAccounts().length}</strong><p>Students</p></article>
+        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></article>
         <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></article>
         <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></article>
       </section>
@@ -2576,15 +3094,22 @@
         <div class="section-heading">
           <div><p class="eyebrow">${course ? "Course Files" : "Faculty Records"}</p><h2>${plural(records.length, "Submission")}</h2></div>
         </div>
+        ${
+          submissionsRequestInFlight
+            ? '<p class="form-notice">Loading submissions from Lotus Drive…</p>'
+            : remoteSubmissionsState.error
+              ? `<p class="form-notice" role="alert">${escapeHtml(remoteSubmissionsState.error)}</p>`
+              : ""
+        }
         ${teacherHierarchy(records)}
       </section>
     `;
   }
 
-  function teacherSubmissionDetailView(studentEmail, assignmentId) {
+  function teacherSubmissionDetailView(studentKey, assignmentId) {
     const record = teacherSubmissionRecords().find(
       (item) =>
-        normalizeEmail(item.student.email) === normalizeEmail(studentEmail) &&
+        studentRecordKey(item.student) === studentKey &&
         item.assignment.id === assignmentId,
     );
     if (!record) {
@@ -2621,7 +3146,7 @@
       ${pageHeading(
         `${escapeHtml(record.course.code)} · ${escapeHtml(record.assignment.unit)}`,
         escapeHtml(record.assignment.title),
-        `${escapeHtml(record.student.displayName)} · ${escapeHtml(record.student.email)}`,
+        `${escapeHtml(record.student.displayName)} · ${escapeHtml(record.student.email || record.student.id || "Student record")}`,
         `<span class="status ${status.className}">${status.label}</span>`,
       )}
       <section class="teacher-detail-grid">
@@ -2638,6 +3163,12 @@
                 const fileReceiptId =
                   version.fileReceiptId ||
                   (index === 0 ? record.submission.fileReceiptId : "");
+                const fileUrl = configuredDriveUrl(
+                  version.fileUrl ||
+                    (index === 0 ? record.submission.fileUrl : ""),
+                  configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
+                    window.location.href,
+                );
                 const fileName =
                   version.fileName ||
                   (index === 0 ? record.submission.fileName : "") ||
@@ -2650,11 +3181,11 @@
                       <p>Version ${history.length - index} · ${formatDate(version.submittedAt, true)}</p>
                       <small>${escapeHtml(version.receiptId || "")}${version.fileSize ? ` · ${formatFileSize(version.fileSize)}` : ""}</small>
                     </div>
-                    ${
-                      fileReceiptId
+                    ${fileUrl
+                      ? `<a class="button button-secondary" href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Open File</a>`
+                      : fileReceiptId
                         ? `<button class="button button-secondary" type="button" data-action="download-submission" data-receipt="${escapeHtml(fileReceiptId)}">Download File</button>`
-                        : '<span class="file-unavailable">File metadata only</span>'
-                    }
+                        : '<span class="file-unavailable">File metadata only</span>'}
                   </article>
                 `;
               }).join("")}
@@ -2667,13 +3198,50 @@
             <p class="eyebrow">Record Details</p>
             <h2>${escapeHtml(record.student.displayName)}</h2>
             <dl>
-              <div><dt>Email</dt><dd>${escapeHtml(record.student.email)}</dd></div>
+              ${
+                record.student.email
+                  ? `<div><dt>Email</dt><dd>${escapeHtml(record.student.email)}</dd></div>`
+                  : `<div><dt>Student ID</dt><dd>${escapeHtml(record.student.id || "Unavailable")}</dd></div>`
+              }
               <div><dt>Course</dt><dd>${record.course.code} · ${escapeHtml(record.course.title)}</dd></div>
               <div><dt>Unit</dt><dd>${escapeHtml(record.assignment.unit)} · ${escapeHtml(record.assignment.unitTitle)}</dd></div>
               <div><dt>Submitted</dt><dd>${formatDate(record.submission.submittedAt, true)}</dd></div>
               <div><dt>Receipt</dt><dd>${escapeHtml(record.submission.receiptId)}</dd></div>
               <div><dt>Versions</dt><dd>${record.versionCount}</dd></div>
             </dl>
+          </article>
+          <article class="teacher-detail-card grading-card">
+            <p class="eyebrow">Assessment</p>
+            <h2>Grade This Submission</h2>
+            <form class="assignment-form grading-form" id="grading-form"
+              data-submission="${escapeHtml(record.submission.id || record.id)}"
+              data-student="${escapeHtml(studentRecordKey(record.student))}"
+              data-assignment="${escapeHtml(record.assignment.id)}">
+              <label for="grade-score">Percentage Score</label>
+              <div class="grade-score-input">
+                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required value="${record.submission.score ?? ""}" />
+                <span aria-hidden="true">%</span>
+              </div>
+              <label for="grade-feedback">Teacher Feedback</label>
+              <textarea id="grade-feedback" name="feedback" maxlength="10000" required placeholder="Explain strengths and the next step for improvement.">${escapeHtml(record.submission.feedback || "")}</textarea>
+              <p class="grading-status ${record.submission.score != null ? "is-graded" : "is-pending"}">${
+                record.submission.score != null
+                  ? `Returned at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
+                  : "Awaiting grading"
+              }</p>
+              <button class="button button-primary" type="submit" ${
+                submissionsEndpointUrl() &&
+                !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
+                  ? "disabled"
+                  : ""
+              }>Save Grade</button>
+              ${
+                submissionsEndpointUrl() &&
+                !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
+                  ? '<p class="login-help">The grading service must be configured before remote grades can be saved.</p>'
+                  : '<p class="login-help">Scores are recorded as an integer from 0 to 100.</p>'
+              }
+            </form>
           </article>
         </aside>
       </section>
@@ -3576,7 +4144,7 @@
   function assignmentView(assignment) {
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
-    const submission = state.submissions[assignment.id];
+    const submission = submissionForAssignment(assignment.id);
     const showSubmissionForm =
       !submission || replacingSubmissionId === assignment.id;
     const submittedOnTime =
@@ -3598,7 +4166,7 @@
       ["Graded", "The published result is included in your course standing."],
     ];
     const feedbackUnread =
-      feedback && !state.feedbackRead.includes(assignment.id);
+      score != null && !state.feedbackRead.includes(assignment.id);
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="assignments">Assignments</button><span>/</span><span>${course.code}</span>
@@ -3631,14 +4199,19 @@
               </div>
             </section>
             ${
-              feedback
+              score != null
                 ? `
                   <section class="lesson-section feedback-panel ${feedbackUnread ? "is-new" : ""}">
                     <div class="feedback-heading">
                       <div><p class="course-code">${feedbackUnread ? "New Feedback" : "Instructor Feedback"}</p><h2>${escapeHtml(course.instructor)}</h2></div>
                       <strong>${score}%</strong>
                     </div>
-                    <p>${escapeHtml(feedback)}</p>
+                    <p>${escapeHtml(feedback || "No written comment was added to this grade.")}</p>
+                    ${
+                      submission?.updatedAt || submission?.gradedAt
+                        ? `<small class="grade-updated-at">Updated ${formatDate(submission.updatedAt || submission.gradedAt, true)}</small>`
+                        : ""
+                    }
                     ${
                       feedbackUnread
                         ? `<button class="button button-quiet" type="button" data-action="mark-feedback-read" data-id="${assignment.id}">Mark Feedback as Reviewed</button>`
@@ -3683,6 +4256,12 @@
                         <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
                         <div><dt>Version</dt><dd>${submission.history?.length || 1}</dd></div>
                         <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
+                        <div><dt>Grading</dt><dd>${score == null ? "Awaiting grading" : `${score}% · Returned`}</dd></div>
+                        ${
+                          score != null && (submission.updatedAt || submission.gradedAt)
+                            ? `<div><dt>Grade Updated</dt><dd>${formatDate(submission.updatedAt || submission.gradedAt, true)}</dd></div>`
+                            : ""
+                        }
                       </dl>
                       ${
                         submission.text
@@ -3891,6 +4470,13 @@
     ) {
       void refreshDriveMaterials({ silent: true });
     }
+    if (
+      submissionsEndpointUrl() &&
+      submissionsEndpointCheckedFor !== submissionScopeKey() &&
+      !submissionsRequestInFlight
+    ) {
+      void refreshRemoteSubmissions({ silent: true });
+    }
   }
 
   function render(shouldFocusMain = false) {
@@ -3954,6 +4540,13 @@
       configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
     ) {
       void refreshDriveMaterials({ silent: true });
+    }
+    if (
+      submissionsEndpointUrl() &&
+      submissionsEndpointCheckedFor !== submissionScopeKey() &&
+      !submissionsRequestInFlight
+    ) {
+      void refreshRemoteSubmissions({ silent: true });
     }
     window.scrollTo({ top: 0, behavior: "instant" });
     if (shouldFocusMain) focusMain();
@@ -4111,12 +4704,173 @@
       return;
     }
 
+    if (event.target.id === "grading-form") {
+      event.preventDefault();
+      const scoreText = String(new FormData(event.target).get("score") || "");
+      const score = Number(scoreText);
+      const feedback = String(
+        new FormData(event.target).get("feedback") || "",
+      ).trim();
+      if (
+        !/^\d{1,3}$/.test(scoreText) ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 100
+      ) {
+        showToast("Enter a whole-number score from 0 to 100.");
+        document.querySelector("#grade-score")?.focus();
+        return;
+      }
+      if (!feedback) {
+        showToast("Add written feedback before publishing this grade.");
+        document.querySelector("#grade-feedback")?.focus();
+        return;
+      }
+      if ([...feedback].length > 10000) {
+        showToast("Teacher feedback must be 10,000 characters or fewer.");
+        document.querySelector("#grade-feedback")?.focus();
+        return;
+      }
+      const studentKey = event.target.dataset.student || "";
+      const assignmentId = event.target.dataset.assignment || "";
+      const submissionId = event.target.dataset.submission || "";
+      const record = teacherSubmissionRecords().find(
+        (item) =>
+          item.assignment.id === assignmentId &&
+          studentRecordKey(item.student) === studentKey,
+      );
+      if (!record) {
+        showToast("This submission is no longer available.");
+        return;
+      }
+      const gradedAt = new Date().toISOString();
+      const gradingEndpointBase = configuredDriveUrl(
+        SUBMISSION_CONFIG.gradingEndpoint,
+      );
+      const targetSubmissionId =
+        record.submission.id || submissionId || record.id;
+      const gradingEndpoint = gradingEndpointBase
+        ? new URL(
+            encodeURIComponent(targetSubmissionId),
+            `${gradingEndpointBase.replace(/\/+$/, "")}/`,
+          ).toString()
+        : "";
+      const submitButton = event.target.querySelector('button[type="submit"]');
+      if (submissionsEndpointUrl() && !gradingEndpoint) {
+        showToast(
+          "The grading service must be configured before this grade can be saved.",
+        );
+        return;
+      }
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Saving Grade…";
+      }
+      try {
+        if (gradingEndpoint) {
+          const payload = await requestSubmissionEndpoint(gradingEndpoint, {
+            method: "PUT",
+            headers: {
+              "Idempotency-Key": requestIdFor("grade"),
+              "If-Match": record.submission.gradeEtag || '"grade-v0"',
+            },
+            body: JSON.stringify({
+              submissionId: targetSubmissionId,
+              score,
+              feedback,
+              publish: true,
+            }),
+          });
+          const normalizedPayload = normalizeRemoteSubmissions(
+            payload,
+            record.student,
+          );
+          const responseSource =
+            payload?.data?.submission ||
+            payload?.submission ||
+            payload?.data ||
+            payload;
+          const returned =
+            normalizedPayload.records[0] ||
+            normalizeRemoteSubmission(responseSource, 0, record.student);
+          upsertRemoteSubmission({
+            id: returned?.id || record.id,
+            student: returned?.student || record.student,
+            assignmentId,
+            courseId: returned?.courseId || record.course.id,
+            submission: {
+              ...record.submission,
+              ...(returned?.submission || {}),
+              id:
+                returned?.submission.id ||
+                record.submission.id ||
+                submissionId ||
+                record.id,
+              score,
+              feedback,
+              gradeEtag:
+                returned?.submission.gradeEtag ||
+                scalarLabel(responseSource?.etag) ||
+                record.submission.gradeEtag ||
+                "",
+              gradeVersion:
+                returned?.submission.gradeVersion ??
+                (Number.isInteger(Number(responseSource?.version))
+                  ? Number(responseSource.version)
+                  : record.submission.gradeVersion ?? null),
+              status: "graded",
+              gradedAt:
+                returned?.submission.gradedAt ||
+                validTimestamp(responseSource?.gradedAt, gradedAt),
+              updatedAt:
+                returned?.submission.updatedAt ||
+                validTimestamp(
+                  responseSource?.publishedAt || responseSource?.gradedAt,
+                  gradedAt,
+                ),
+            },
+          });
+          remoteSubmissionsState.error = "";
+          remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
+        } else {
+          const studentState = loadState(record.student);
+          const currentSubmission =
+            studentState.submissions?.[assignmentId] || record.submission;
+          studentState.submissions[assignmentId] = {
+            ...currentSubmission,
+            score,
+            feedback,
+            status: "graded",
+            gradedAt,
+            updatedAt: gradedAt,
+          };
+          localStorage.setItem(
+            stateStorageKey(record.student),
+            JSON.stringify(studentState),
+          );
+        }
+        render(true);
+        showToast(`Grade saved: ${score}%.`);
+      } catch (error) {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Save Grade";
+        }
+        showToast(
+          error?.name === "AbortError"
+            ? "The grading request timed out. The grade was not saved."
+            : error?.message || "The grade could not be saved.",
+        );
+      }
+      return;
+    }
+
     if (event.target.id === "assignment-form") {
       event.preventDefault();
       const id = event.target.dataset.id;
       const form = new FormData(event.target);
       const file = form.get("file");
-      const existing = state.submissions[id];
+      const existing = submissionForAssignment(id);
       const text = String(form.get("note") || "").trim();
       const newFileName = file instanceof File && file.name ? file.name : "";
       const fileName = newFileName || existing?.fileName || "";
@@ -4132,6 +4886,138 @@
       }
       const submittedAt = new Date().toISOString();
       const receiptId = receiptIdFor(id, submittedAt);
+      const remoteEndpoint = submissionsEndpointUrl();
+      if (remoteEndpoint) {
+        const assignment = findAssignment(id);
+        const course = assignment ? findCourse(assignment.courseId) : null;
+        const user = currentUser();
+        const unitNumber =
+          Number.parseInt(String(assignment?.unit || "").match(/\d+/)?.[0], 10) ||
+          "";
+        const attemptNumber = (existing?.history?.length || 0) + 1;
+        const upload = new FormData();
+        upload.set("assignmentId", id);
+        upload.set("courseCode", course?.code || "");
+        upload.set("unitNumber", String(unitNumber));
+        upload.set("assignmentTitle", assignment?.title || "");
+        upload.set("attemptNumber", String(attemptNumber));
+        upload.set("note", text);
+        upload.set("integrityConfirmed", "true");
+        if (existing?.id) upload.set("replacesSubmissionId", existing.id);
+        if (newFileName) upload.set("files", file, file.name);
+        const submitButton = event.target.querySelector(
+          'button[type="submit"]',
+        );
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = "Uploading to Lotus Drive…";
+        }
+        try {
+          const payload = await requestSubmissionEndpoint(remoteEndpoint, {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": requestIdFor("submission"),
+            },
+            body: upload,
+          });
+          const extracted = normalizeRemoteSubmissions(payload, user);
+          const responseSource =
+            payload?.data?.submission ||
+            payload?.submission ||
+            payload?.data ||
+            payload;
+          const normalized =
+            extracted.records[0] ||
+            normalizeRemoteSubmission(responseSource, 0, user);
+          const fallbackRecord = normalizeRemoteSubmission(
+            {
+              submissionId:
+                scalarLabel(
+                  responseSource?.submissionId || responseSource?.id,
+                ) || receiptId,
+              assignmentId: id,
+              courseId: course?.id || "",
+              courseCode: course?.code || "",
+              studentEmail: user?.email || "",
+              studentName: user?.displayName || "",
+              note: text,
+              fileName,
+              fileSize: newFileName ? file.size : existing?.fileSize || 0,
+              fileType:
+                (newFileName ? file.type : existing?.fileType) ||
+                "application/octet-stream",
+              submittedAt,
+              receiptId:
+                scalarLabel(responseSource?.receiptId) || receiptId,
+              driveFileId: scalarLabel(
+                responseSource?.driveFileId || responseSource?.fileId,
+              ),
+              fileUrl:
+                responseSource?.fileUrl ||
+                responseSource?.webViewLink ||
+                responseSource?.openUrl ||
+                "",
+              status: "submitted",
+              history: [
+                ...(existing?.history || []),
+                {
+                  fileName,
+                  fileSize: newFileName
+                    ? file.size
+                    : existing?.fileSize || 0,
+                  fileType:
+                    (newFileName ? file.type : existing?.fileType) ||
+                    "application/octet-stream",
+                  submittedAt,
+                  receiptId,
+                },
+              ],
+            },
+            0,
+            user,
+          );
+          const storedRecord = normalized
+            ? {
+                ...fallbackRecord,
+                ...normalized,
+                student: {
+                  ...fallbackRecord.student,
+                  ...normalized.student,
+                },
+                submission: {
+                  ...fallbackRecord.submission,
+                  ...normalized.submission,
+                },
+              }
+            : fallbackRecord;
+          upsertRemoteSubmission(storedRecord);
+          remoteSubmissionsState.error = "";
+          remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
+          submissionsEndpointCheckedFor = submissionScopeKey(user);
+          replacingSubmissionId = null;
+          render(true);
+          showToast(
+            `Submission uploaded to Lotus Drive. Receipt ${
+              storedRecord?.submission.receiptId ||
+              receiptId
+            }.`,
+          );
+        } catch (error) {
+          if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = existing
+              ? "Submit New Version"
+              : "Submit Assignment";
+          }
+          showToast(
+            error?.name === "AbortError"
+              ? "The upload timed out. Your work was not submitted."
+              : error?.message ||
+                  "The file could not be uploaded. Your work was not submitted.",
+          );
+        }
+        return;
+      }
       let fileReceiptId = existing?.fileReceiptId || "";
       let fileSize = existing?.fileSize || 0;
       let fileType = existing?.fileType || "";
@@ -4322,6 +5208,12 @@
       }
       sessionStorage.removeItem(SESSION_KEY);
       state = initialStateForUser(null);
+      remoteSubmissionsState = {
+        records: [],
+        error: "",
+        lastLoadedAt: "",
+      };
+      submissionsEndpointCheckedFor = "";
       signInNotice = "";
       signInPrefill = "";
       window.location.hash = facultySession
