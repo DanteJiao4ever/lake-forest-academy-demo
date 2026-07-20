@@ -4959,3 +4959,638 @@ textarea:focus-visible {
     margin: 0 15px 15px;
   }
 }
+
+/* Lotus six-course catalogue, syllabus and faculty course workspaces */
+.selection-count {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  border: 1px solid #c6d7d0;
+  border-radius: 999px;
+  background: #edf5f1;
+  padding: 0 15px;
+  color: var(--forest);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.selection-intro {
+  min-height: 220px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 40px;
+  align-items: end;
+  margin-bottom: 25px;
+  background:
+    linear-gradient(105deg, rgba(2, 26, 21, 0.98), rgba(6, 58, 47, 0.92)),
+    url("../images/academics-seminar.jpg") center / cover;
+  padding: clamp(27px, 4vw, 50px);
+  color: #fff;
+}
+
+.selection-intro h2 {
+  max-width: 760px;
+  margin: 7px 0 11px;
+  font-family: var(--display);
+  font-size: clamp(1.65rem, 3vw, 2.75rem);
+  font-weight: 500;
+  line-height: 1.08;
+}
+
+.selection-intro p:last-child {
+  max-width: 760px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.selection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.selection-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(5, 30, 24, 0.06);
+}
+
+.selection-card.is-selected {
+  border-color: #8aab9d;
+  box-shadow: inset 0 4px var(--forest), 0 18px 38px rgba(5, 30, 24, 0.09);
+}
+
+.selection-image {
+  position: relative;
+  height: 142px;
+  overflow: hidden;
+  background: var(--forest);
+}
+
+.selection-image::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 35%, rgba(1, 20, 16, 0.52));
+  content: "";
+}
+
+.selection-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 360ms ease;
+}
+
+.selection-card:hover .selection-image img {
+  transform: scale(1.035);
+}
+
+.selection-image .status {
+  position: absolute;
+  right: 14px;
+  bottom: 13px;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.selection-card-body {
+  display: flex;
+  min-height: 390px;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.selection-card-title {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.selection-card-title > span:last-child {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.selection-card h2 {
+  margin: 18px 0 8px;
+  color: var(--forest);
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1.12;
+}
+
+.selection-card-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.65;
+}
+
+.selection-facts {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+
+.selection-facts div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.selection-facts dt {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.selection-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
+.selection-note {
+  margin: auto 0 12px !important;
+  border-left: 3px solid var(--gold);
+  background: #faf6eb;
+  padding: 9px 11px;
+  color: #675124 !important;
+}
+
+.selection-note.warning {
+  border-left-color: #a5672c;
+}
+
+.selection-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: auto;
+}
+
+.selection-actions .button {
+  min-width: 0;
+  padding-inline: 12px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.selection-storage-note {
+  max-width: 780px;
+  margin: 18px auto 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.course-empty-selection,
+.course-access-card {
+  grid-column: 1 / -1;
+  max-width: 780px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 85% 12%, rgba(202, 161, 70, 0.16), transparent 31%),
+    var(--surface);
+  padding: clamp(30px, 5vw, 58px);
+  box-shadow: 0 18px 40px rgba(5, 30, 24, 0.07);
+}
+
+.course-empty-selection h2,
+.course-access-card h2 {
+  margin: 18px 0 8px;
+  color: var(--forest);
+  font-family: var(--display);
+  font-size: clamp(1.6rem, 3vw, 2.35rem);
+  font-weight: 600;
+}
+
+.course-empty-selection p,
+.course-access-card p {
+  max-width: 620px;
+  margin: 0 0 22px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.course-access-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.syllabus-hero .guide-progress-summary {
+  min-width: 240px;
+}
+
+.guide-progress-summary small {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.syllabus-units {
+  display: grid;
+  padding: 0 20px 20px;
+}
+
+.syllabus-unit {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 15px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+
+.syllabus-unit:last-child {
+  border-bottom: 0;
+}
+
+.syllabus-unit > span {
+  color: var(--gold-dark);
+  font-family: var(--display);
+  font-size: 1.15rem;
+}
+
+.syllabus-unit h3 {
+  margin: 3px 0 0;
+  color: var(--ink);
+  font-size: 0.87rem;
+  line-height: 1.35;
+}
+
+.syllabus-unit > strong {
+  color: var(--forest);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.syllabus-resources,
+.teacher-drive-actions {
+  display: grid;
+  gap: 10px;
+  padding: 0 20px 20px;
+}
+
+.resource-link {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: #fbfdfc;
+  padding: 13px;
+  color: var(--forest);
+  text-decoration: none;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.resource-link:hover {
+  transform: translateY(-1px);
+  border-color: #9eb7ad;
+  background: #f1f7f4;
+}
+
+.resource-link > span:first-child {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: #e7f0ec;
+}
+
+.resource-link strong,
+.resource-link small {
+  display: block;
+}
+
+.resource-link strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.resource-link small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.syllabus-source-card {
+  margin-top: 18px;
+}
+
+.syllabus-source-card p {
+  color: var(--muted);
+  font-size: 0.73rem;
+  line-height: 1.6;
+}
+
+.teacher-course-management-grid {
+  margin-top: 6px;
+}
+
+.teacher-course-management-grid .teacher-course-card h2 {
+  margin: 10px 0 7px;
+  color: var(--forest);
+  font-family: var(--display);
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.teacher-course-hero {
+  min-height: 260px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 32px;
+  align-items: end;
+  background:
+    linear-gradient(105deg, rgba(2, 25, 20, 0.98), rgba(7, 58, 47, 0.92)),
+    url("../images/technology-class.jpg") center / cover;
+  padding: clamp(28px, 4vw, 50px);
+  color: #fff;
+}
+
+.teacher-course-hero h1 {
+  margin: 8px 0 10px;
+  font-family: var(--display);
+  font-size: clamp(2rem, 4vw, 3.35rem);
+  font-weight: 500;
+  line-height: 1.04;
+}
+
+.teacher-course-hero p:last-child {
+  max-width: 760px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.teacher-course-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.teacher-course-metrics {
+  margin-top: 19px;
+}
+
+.teacher-course-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+.teacher-course-workspace > div,
+.teacher-course-workspace > aside {
+  display: grid;
+  gap: 20px;
+}
+
+.teacher-section-copy {
+  margin: -4px 20px 18px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.teacher-syllabus-list {
+  display: grid;
+  padding: 0 20px;
+}
+
+.teacher-syllabus-list article {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 13px 0;
+}
+
+.teacher-syllabus-list article > span {
+  color: var(--gold-dark);
+  font-family: var(--display);
+  font-size: 1.05rem;
+}
+
+.teacher-syllabus-list small,
+.teacher-syllabus-list strong {
+  display: block;
+}
+
+.teacher-syllabus-list small {
+  color: var(--muted);
+  font-size: 0.61rem;
+  text-transform: uppercase;
+}
+
+.teacher-syllabus-list strong {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 0.77rem;
+}
+
+.teacher-syllabus-list b {
+  color: var(--forest);
+  font-size: 0.69rem;
+}
+
+.teacher-evaluation-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 16px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+}
+
+.teacher-evaluation-strip span {
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: #f7faf8;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.4;
+}
+
+.teacher-evaluation-strip strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--forest);
+  font-family: var(--display);
+  font-size: 1.15rem;
+}
+
+.teacher-assignment-list {
+  display: grid;
+  padding: 0 20px 20px;
+}
+
+.teacher-assignment-list article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 13px 0;
+}
+
+.teacher-assignment-list h3 {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 0.79rem;
+}
+
+.teacher-assignment-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.teacher-roster {
+  display: grid;
+  padding: 0 20px 20px;
+}
+
+.teacher-roster > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.teacher-roster strong,
+.teacher-roster small {
+  display: block;
+}
+
+.teacher-roster strong {
+  color: var(--ink);
+  font-size: 0.75rem;
+}
+
+.teacher-roster small {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.teacher-drive-actions {
+  padding-top: 0;
+}
+
+.teacher-security-note {
+  margin: 0 20px 20px;
+  border-left: 3px solid var(--gold);
+  background: #faf6eb;
+  padding: 11px 12px;
+  color: #665528;
+  font-size: 0.66rem;
+  line-height: 1.55;
+}
+
+.teacher-security-note strong {
+  display: block;
+  color: #4b3c17;
+}
+
+@media (max-width: 1120px) {
+  .selection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .teacher-course-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-course-workspace > aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .selection-intro,
+  .teacher-course-hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .selection-intro .button,
+  .teacher-course-hero-actions,
+  .teacher-course-hero-actions .button {
+    width: 100%;
+  }
+
+  .selection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-card-body {
+    min-height: 0;
+  }
+
+  .teacher-course-workspace > aside {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-evaluation-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .selection-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-actions .button {
+    width: 100%;
+  }
+
+  .syllabus-unit,
+  .teacher-syllabus-list article {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .syllabus-unit > strong,
+  .teacher-syllabus-list b {
+    grid-column: 2;
+  }
+
+  .teacher-assignment-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-assignment-list .button {
+    width: 100%;
+  }
+}
