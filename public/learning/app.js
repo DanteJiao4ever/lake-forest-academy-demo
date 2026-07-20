@@ -491,6 +491,28 @@
     },
   ];
 
+  const DRIVE_CATALOG = Array.isArray(window.LFA_COURSE_CATALOG)
+    ? window.LFA_COURSE_CATALOG
+    : [];
+  DRIVE_CATALOG.forEach((catalogCourse) => {
+    const existing = COURSES.find((course) => course.id === catalogCourse.id);
+    if (existing) {
+      const existingLessons = existing.lessons;
+      Object.assign(existing, catalogCourse);
+      existing.lessons = existingLessons;
+      return;
+    }
+    COURSES.push({
+      ...catalogCourse,
+      lessons: catalogCourse.lessons.map((lesson) => ({ ...lesson })),
+    });
+  });
+  const SELECTABLE_COURSE_IDS = Array.isArray(
+    window.LFA_SELECTABLE_COURSE_IDS,
+  )
+    ? [...window.LFA_SELECTABLE_COURSE_IDS]
+    : ["mhf4u"];
+
   const ASSIGNMENTS = [
     {
       id: "a1",
@@ -571,6 +593,104 @@
         "Complete six selected identities and annotate each proof with a brief explanation of the strategy used. End with a 150-word reflection identifying the two transformations you found most useful.",
     },
   ];
+
+  ASSIGNMENTS.push(
+    {
+      id: "sch4u-u1-assessment",
+      courseId: "sch4u",
+      unit: "Unit 1",
+      unitTitle: "Organic Chemistry",
+      title: "Organic Compound Impact Brief",
+      due: "2026-10-02T23:59:00-04:00",
+      availableUntil: "2026-10-04T23:59:00-04:00",
+      points: 100,
+      status: "upcoming",
+      rubric: [
+        { label: "Chemical Understanding", points: 30 },
+        { label: "Evidence and Analysis", points: 30 },
+        { label: "Scientific Communication", points: 25 },
+        { label: "Source Practice", points: 15 },
+      ],
+      instructions:
+        "Investigate one organic compound used in everyday life. Explain its structure and properties, evaluate one social or environmental impact, and recommend a defensible course of action using cited evidence.",
+    },
+    {
+      id: "ics4u-u2-assessment",
+      courseId: "ics4u",
+      unit: "Unit 2",
+      unitTitle: "Software Development",
+      title: "Software Project Planning Package",
+      due: "2026-10-16T23:59:00-04:00",
+      availableUntil: "2026-10-18T23:59:00-04:00",
+      points: 100,
+      status: "upcoming",
+      rubric: [
+        { label: "Requirements and Design", points: 30 },
+        { label: "Project Planning", points: 25 },
+        { label: "Technical Reasoning", points: 30 },
+        { label: "Documentation", points: 15 },
+      ],
+      instructions:
+        "Prepare the requirements, modular design, test strategy, milestone plan and risk log for a student-managed software project. Include enough detail for another developer to begin implementation.",
+    },
+    {
+      id: "sph4u-u2-assessment",
+      courseId: "sph4u",
+      unit: "Unit 2",
+      unitTitle: "Energy and Momentum",
+      title: "Conservation Investigation",
+      due: "2026-10-30T23:59:00-04:00",
+      availableUntil: "2026-11-01T23:59:00-04:00",
+      points: 100,
+      status: "upcoming",
+      rubric: [
+        { label: "Physics Reasoning", points: 35 },
+        { label: "Data and Calculations", points: 30 },
+        { label: "Model Evaluation", points: 20 },
+        { label: "Communication", points: 15 },
+      ],
+      instructions:
+        "Use experimental data or an approved simulation to investigate conservation of energy or momentum. Submit labelled calculations, uncertainty analysis, a model check and a concise conclusion.",
+    },
+    {
+      id: "mcv4u-u2-assessment",
+      courseId: "mcv4u",
+      unit: "Unit 2",
+      unitTitle: "Derivatives and Their Applications",
+      title: "Optimization Model",
+      due: "2026-11-13T23:59:00-05:00",
+      availableUntil: "2026-11-15T23:59:00-05:00",
+      points: 100,
+      status: "upcoming",
+      rubric: [
+        { label: "Mathematical Model", points: 30 },
+        { label: "Derivative Reasoning", points: 30 },
+        { label: "Verification", points: 25 },
+        { label: "Communication", points: 15 },
+      ],
+      instructions:
+        "Define and solve a contextual optimization problem. State assumptions and domain restrictions, justify the derivative model, verify the optimum and interpret the result in context.",
+    },
+    {
+      id: "bbb4m-u4-assessment",
+      courseId: "bbb4m",
+      unit: "Unit 4",
+      unitTitle: "International Marketing and Distribution",
+      title: "International Market-Entry Proposal",
+      due: "2026-11-27T23:59:00-05:00",
+      availableUntil: "2026-11-29T23:59:00-05:00",
+      points: 100,
+      status: "upcoming",
+      rubric: [
+        { label: "Market Analysis", points: 30 },
+        { label: "Entry and Distribution Strategy", points: 30 },
+        { label: "Risk and Ethics", points: 25 },
+        { label: "Business Communication", points: 15 },
+      ],
+      instructions:
+        "Recommend a market-entry and distribution strategy for a Canadian product in one international market. Address culture, competition, logistics, ethics and major risks using cited evidence.",
+    },
+  );
 
   const ANNOUNCEMENTS = [
     {
@@ -743,11 +863,22 @@
   ];
 
   const DEFAULT_STATE = {
+    enrolledCourseIds: [
+      "sch4u",
+      "ics4u",
+      "sph4u",
+      "mhf4u",
+      "mcv4u",
+      "bbb4m",
+    ],
     completed: ["mhf-1", "sbi-1", "eng-1", "eng-2"],
     guideChecks: {
+      sch4u: [],
+      ics4u: [],
+      sph4u: [],
       mhf4u: ["overview", "evaluation"],
-      sbi4u: ["overview"],
-      eng4u: ["overview", "evaluation", "schedule", "technology", "support"],
+      mcv4u: [],
+      bbb4m: [],
     },
     read: ["ann-4"],
     feedbackRead: [],
@@ -784,11 +915,15 @@
   };
 
   const NEW_ACCOUNT_STATE = {
+    enrolledCourseIds: [],
     completed: [],
     guideChecks: {
+      sch4u: [],
+      ics4u: [],
+      sph4u: [],
       mhf4u: [],
-      sbi4u: [],
-      eng4u: [],
+      mcv4u: [],
+      bbb4m: [],
     },
     read: [],
     feedbackRead: [],
@@ -932,11 +1067,7 @@
       const courseIds = new Set(COURSES.map((course) => course.id));
       const guideStepIds = new Set(COURSE_GUIDE_STEPS.map((step) => step.id));
       const feedbackIds = new Set(
-        ASSIGNMENTS.filter((assignment) =>
-          assignmentFeedback(assignment, user),
-        ).map(
-          (assignment) => assignment.id,
-        ),
+        ASSIGNMENTS.map((assignment) => assignment.id),
       );
       const savedSubmissions =
         saved.submissions && typeof saved.submissions === "object"
@@ -989,6 +1120,15 @@
         });
       }
       return {
+        enrolledCourseIds: Array.isArray(saved.enrolledCourseIds)
+          ? [
+              ...new Set(
+                saved.enrolledCourseIds.filter((id) =>
+                  SELECTABLE_COURSE_IDS.includes(id),
+                ),
+              ),
+            ]
+          : [...initialState.enrolledCourseIds],
         completed: Array.isArray(saved.completed)
           ? [...new Set(saved.completed.filter((id) => lessonIds.has(id)))]
           : [...initialState.completed],
@@ -2232,18 +2372,86 @@
     return ASSIGNMENTS.find((assignment) => assignment.id === id);
   }
 
+  function catalogCourses() {
+    return SELECTABLE_COURSE_IDS.map(findCourse).filter(Boolean);
+  }
+
+  function enrolledCourseIdsFor(userState = state) {
+    return Array.isArray(userState?.enrolledCourseIds)
+      ? userState.enrolledCourseIds.filter((id) =>
+          SELECTABLE_COURSE_IDS.includes(id),
+        )
+      : [];
+  }
+
+  function isCourseEnrolled(courseId, userState = state) {
+    return enrolledCourseIdsFor(userState).includes(courseId);
+  }
+
+  function studentCourses() {
+    const enrolledIds = new Set(enrolledCourseIdsFor());
+    return catalogCourses().filter((course) => enrolledIds.has(course.id));
+  }
+
+  function studentAssignments() {
+    const enrolledIds = new Set(enrolledCourseIdsFor());
+    return ASSIGNMENTS.filter((assignment) =>
+      enrolledIds.has(assignment.courseId),
+    );
+  }
+
+  function studentLessons() {
+    return studentCourses().flatMap((course) =>
+      course.lessons.map((lesson) => ({ ...lesson, course })),
+    );
+  }
+
+  function courseHasAcademicRecord(course) {
+    if (
+      course.lessons.some((lesson) => state.completed.includes(lesson.id))
+    ) {
+      return true;
+    }
+    return ASSIGNMENTS.some(
+      (assignment) =>
+        assignment.courseId === course.id &&
+        Boolean(state.submissions?.[assignment.id]),
+    );
+  }
+
+  function enrollmentRequirement(course) {
+    const requiredIds = Array.isArray(course.prerequisiteCourseIds)
+      ? course.prerequisiteCourseIds
+      : [];
+    const missing = requiredIds.filter((id) => !isCourseEnrolled(id));
+    return {
+      missing,
+      met: missing.length === 0,
+      message: missing.length
+        ? `${missing.map((id) => findCourse(id)?.code || id).join(", ")} must be selected first or concurrently.`
+        : "",
+    };
+  }
+
   function courseProgress(course) {
     const completed = course.lessons.filter((lesson) =>
       state.completed.includes(lesson.id),
     ).length;
     return {
       completed,
-      percent: Math.round((completed / course.lessons.length) * 100),
+      percent: course.lessons.length
+        ? Math.round((completed / course.lessons.length) * 100)
+        : 0,
     };
   }
 
   function overallProgress() {
-    return Math.round((state.completed.length / allLessons().length) * 100);
+    const lessons = studentLessons();
+    if (!lessons.length) return 0;
+    const completed = lessons.filter((lesson) =>
+      state.completed.includes(lesson.id),
+    ).length;
+    return Math.round((completed / lessons.length) * 100);
   }
 
   function guideProgress(course) {
@@ -2291,7 +2499,7 @@
   }
 
   function calendarEvents() {
-    const dueDates = ASSIGNMENTS.map((assignment) => {
+    const dueDates = studentAssignments().map((assignment) => {
       const course = findCourse(assignment.courseId);
       return {
         id: `due-${assignment.id}`,
@@ -2305,7 +2513,10 @@
         courseCode: course.code,
       };
     });
-    return [...CALENDAR_EVENTS, ...dueDates]
+    const scheduledEvents = CALENDAR_EVENTS.filter(
+      (event) => !event.courseId || isCourseEnrolled(event.courseId),
+    );
+    return [...scheduledEvents, ...dueDates]
       .map((event) => ({
         ...event,
         sortTime:
@@ -2319,7 +2530,7 @@
   }
 
   function unreadFeedback() {
-    return ASSIGNMENTS.filter(
+    return studentAssignments().filter(
       (assignment) =>
         assignmentFeedback(assignment) &&
         !state.feedbackRead.includes(assignment.id),
@@ -2328,7 +2539,7 @@
 
   function smartActions() {
     const actions = [];
-    ASSIGNMENTS.forEach((assignment) => {
+    studentAssignments().forEach((assignment) => {
       const status = assignmentStatus(assignment);
       if (!["overdue", "late", "due"].includes(status.key)) return;
       const course = findCourse(assignment.courseId);
@@ -2354,7 +2565,7 @@
         className: "success",
       });
     });
-    COURSES.forEach((course) => {
+    studentCourses().forEach((course) => {
       const guide = guideProgress(course);
       if (guide.isComplete) return;
       actions.push({
@@ -2367,7 +2578,7 @@
         className: "info",
       });
     });
-    COURSES.forEach((course) => {
+    studentCourses().forEach((course) => {
       const lesson = course.lessons.find(
         (item) => !state.completed.includes(item.id),
       );
@@ -2431,11 +2642,14 @@
   function pageTitle(route) {
     const [section, id] = route;
     if (section === "course") return findCourse(id)?.title || "Courses";
-    if (section === "guide") return `${findCourse(id)?.title || "Course"} Guide`;
+    if (section === "guide" || section === "syllabus") {
+      return `${findCourse(id)?.title || "Course"} Syllabus`;
+    }
     if (section === "lesson") return findLesson(id)?.title || "Lesson";
     if (section === "assignment") return findAssignment(id)?.title || "Assignment";
     return {
       dashboard: "Student Dashboard",
+      "course-selection": "Course Selection",
       courses: "My Courses",
       calendar: "Calendar",
       assignments: "Assignments",
@@ -2449,6 +2663,7 @@
     if (
       route[0] === "course" ||
       route[0] === "guide" ||
+      route[0] === "syllabus" ||
       route[0] === "lesson"
     ) {
       return "courses";
@@ -2478,7 +2693,7 @@
     const user = currentUser() || SCHOOL_ACCOUNT;
     const initials = userInitials(user);
     const unread = ANNOUNCEMENTS.filter((item) => !state.read.includes(item.id)).length;
-    const pending = ASSIGNMENTS.filter((item) =>
+    const pending = studentAssignments().filter((item) =>
       ["due", "late", "overdue", "revision"].includes(
         assignmentStatus(item).key,
       ),
@@ -2493,6 +2708,7 @@
           </div>
           <nav class="sidebar-nav">
             ${navLink("dashboard", "Dashboard", "home")}
+            ${navLink("course-selection", "Course Selection", "clipboard")}
             ${navLink("courses", "My Courses", "book")}
             ${navLink("calendar", "Calendar", "calendar")}
             ${navLink("assignments", "Assignments", "clipboard", pending)}
@@ -2539,6 +2755,7 @@
     if (route[1] === "submission") return "Submission Details";
     return {
       dashboard: "Faculty Dashboard",
+      courses: "Course Management",
       submissions: "Submission Centre",
       materials: "Course Materials",
     }[route[1]] || "Faculty Dashboard";
@@ -2577,15 +2794,16 @@
           </div>
           <nav class="sidebar-nav">
             ${teacherNavLink("dashboard", "Dashboard", "home")}
+            ${teacherNavLink("courses", "Course Management", "book")}
             ${teacherNavLink("submissions", "Submission Centre", "clipboard", awaitingReview)}
             ${teacherNavLink("materials", "Course Materials", "file")}
             <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
               <summary>
                 <span class="nav-icon">${icon("book", 19)}</span>
-                <span>Courses</span>
+                <span>Quick Course Access</span>
               </summary>
               <div>
-                ${COURSES.map((course) => {
+                ${catalogCourses().map((course) => {
                   const active =
                     route[1] === "course" && route[2] === course.id;
                   return `<a class="faculty-course-link ${active ? "is-active" : ""}" href="#/teacher/course/${course.id}" ${active ? 'aria-current="page"' : ""}><strong>${course.code}</strong><span>${course.title}</span></a>`;
@@ -3029,7 +3247,7 @@
         <a class="button button-gold" href="#/teacher/submissions">Open Submission Centre ${icon("arrow", 17)}</a>
       </header>
       <section class="teacher-metrics" aria-label="Faculty overview">
-        <article class="teacher-metric"><span>${icon("book", 22)}</span><strong>${COURSES.length}</strong><p>Active Courses</p></article>
+        <article class="teacher-metric"><span>${icon("book", 22)}</span><strong>${catalogCourses().length}</strong><p>Active Courses</p></article>
         <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></article>
         <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></article>
         <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></article>
@@ -3037,7 +3255,7 @@
       <section class="teacher-section">
         <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
         <div class="teacher-course-grid">
-          ${COURSES.map((course) => {
+          ${catalogCourses().map((course) => {
             const courseRecords = records.filter(
               (record) => record.course.id === course.id,
             );
@@ -3067,6 +3285,155 @@
         <div class="teacher-records">
           ${records.length ? records.slice(0, 5).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
         </div>
+      </section>
+    `;
+  }
+
+  function teacherCoursesView() {
+    const records = teacherSubmissionRecords();
+    return `
+      ${pageHeading(
+        "Six-Course Programme",
+        "Course Management",
+        "Open a course workspace to review its syllabus, enrolled students, assignments, submissions and Lotus Drive materials.",
+      )}
+      <section class="teacher-course-grid teacher-course-management-grid">
+        ${catalogCourses()
+          .map((course) => {
+            const enrolled = allStudentAccounts().filter((student) =>
+              isCourseEnrolled(course.id, loadState(student)),
+            ).length;
+            const courseRecords = records.filter(
+              (record) => record.course.id === course.id,
+            );
+            const awaiting = courseRecords.filter(
+              (record) => record.submission.status !== "graded",
+            ).length;
+            return `
+              <a class="teacher-course-card" href="#/teacher/course/${course.id}">
+                <span class="course-code">${course.code}</span>
+                <h2>${escapeHtml(course.title)}</h2>
+                <p>${escapeHtml(course.gradeType)} · ${course.plannedHours} hours</p>
+                <dl>
+                  <div><dt>Enrolled</dt><dd>${enrolled}</dd></div>
+                  <div><dt>Awaiting Review</dt><dd>${awaiting}</dd></div>
+                </dl>
+                <span class="text-link">Open Workspace ${icon("arrow", 16)}</span>
+              </a>
+            `;
+          })
+          .join("")}
+      </section>
+    `;
+  }
+
+  function teacherCourseView(course) {
+    const syllabus = course.syllabus || { units: [], drive: {} };
+    const drive = syllabus.drive || {};
+    const records = teacherSubmissionRecords().filter(
+      (record) => record.course.id === course.id,
+    );
+    const awaiting = records.filter(
+      (record) => record.submission.status !== "graded",
+    );
+    const roster = allStudentAccounts().filter((student) =>
+      isCourseEnrolled(course.id, loadState(student)),
+    );
+    const assignments = ASSIGNMENTS.filter(
+      (assignment) => assignment.courseId === course.id,
+    );
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb">
+        <a href="#/teacher/courses">Course Management</a><span>/</span>
+        <span aria-current="page">${course.code}</span>
+      </nav>
+      <header class="teacher-course-hero">
+        <div>
+          <p class="eyebrow light">${escapeHtml(course.subject)} · ${course.code}</p>
+          <h1>${escapeHtml(course.title)}</h1>
+          <p>${escapeHtml(course.description)}</p>
+        </div>
+        <div class="teacher-course-hero-actions">
+          <a class="button button-gold" href="#/teacher/submissions">Submission Centre</a>
+          ${drive.curriculumMapUrl ? `<a class="button button-on-dark" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer">Open Curriculum Map</a>` : ""}
+        </div>
+      </header>
+      <section class="teacher-metrics teacher-course-metrics" aria-label="${course.code} overview">
+        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${roster.length}</strong><p>Enrolled Students</p></article>
+        <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${assignments.length}</strong><p>Assignments</p></article>
+        <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${records.length}</strong><p>Submissions</p></article>
+        <article class="teacher-metric"><span>${icon("clock", 22)}</span><strong>${awaiting.length}</strong><p>Awaiting Review</p></article>
+      </section>
+      <section class="teacher-course-workspace">
+        <div>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Syllabus</p><h2>110-Hour Course Plan</h2></div><span class="badge">${escapeHtml(course.credit)}</span></div>
+            <p class="teacher-section-copy">${escapeHtml(syllabus.description || course.overview)}</p>
+            <div class="teacher-syllabus-list">
+              ${(syllabus.units || [])
+                .map(
+                  (unit, index) => `
+                    <article><span>${String(index + 1).padStart(2, "0")}</span><div><small>Unit ${index + 1}</small><strong>${escapeHtml(unit.title)}</strong></div><b>${unit.hours}h</b></article>
+                  `,
+                )
+                .join("")}
+            </div>
+            <div class="teacher-evaluation-strip">
+              ${course.evaluation.map((item) => `<span><strong>${item.weight}%</strong>${escapeHtml(item.label)}</span>`).join("")}
+            </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Course Work</p><h2>Assignments</h2></div><span class="badge">${assignments.length}</span></div>
+            <div class="teacher-assignment-list">
+              ${
+                assignments.length
+                  ? assignments
+                      .map(
+                        (assignment) => `
+                          <article>
+                            <span class="course-chip">${escapeHtml(assignment.unit)}</span>
+                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${formatDate(assignment.due, true)} · ${assignment.points} points</p></div>
+                            <a class="button button-quiet" href="#/teacher/submissions">Submissions</a>
+                          </article>
+                        `,
+                      )
+                      .join("")
+                  : '<div class="teacher-empty"><p>No assignments have been added to this course yet.</p></div>'
+              }
+            </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Student Work</p><h2>Recent Submissions</h2></div><a class="text-link" href="#/teacher/submissions">View All ${icon("arrow", 15)}</a></div>
+            <div class="teacher-records">
+              ${records.length ? records.slice(0, 4).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
+            </div>
+          </section>
+        </div>
+        <aside>
+          <section class="teacher-section teacher-roster-card">
+            <div class="section-heading"><div><p class="eyebrow">Roster</p><h2>Enrolled Students</h2></div></div>
+            ${
+              roster.length
+                ? `<div class="teacher-roster">${roster
+                    .map(
+                      (student) => `
+                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span></div>
+                      `,
+                    )
+                    .join("")}</div>`
+                : '<div class="teacher-empty"><p>No students have selected this course on this device.</p></div>'
+            }
+          </section>
+          <section class="teacher-section teacher-drive-card">
+            <div class="section-heading"><div><p class="eyebrow">Lotus Drive</p><h2>Course Files</h2></div></div>
+            <div class="teacher-drive-actions">
+              ${drive.coursebookUrl ? `<a class="resource-link" href="${escapeHtml(drive.coursebookUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("book", 19)}</span><span><strong>Student Coursebook</strong><small>Open in Drive</small></span>${icon("arrow", 16)}</a>` : ""}
+              ${drive.assessmentUrl ? `<a class="resource-link" href="${escapeHtml(drive.assessmentUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("clipboard", 19)}</span><span><strong>Assessment Package</strong><small>Open in Drive</small></span>${icon("arrow", 16)}</a>` : ""}
+              ${drive.curriculumMapUrl ? `<a class="resource-link" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("file", 19)}</span><span><strong>Curriculum Map</strong><small>110-hour plan</small></span>${icon("arrow", 16)}</a>` : ""}
+            </div>
+            <p class="teacher-security-note"><strong>Staff-only materials remain protected.</strong>They are not embedded in this public client and should be opened only after secure Workspace Drive authorization is connected.</p>
+          </section>
+        </aside>
       </section>
     `;
   }
@@ -3486,10 +3853,11 @@
 
   function dashboardView() {
     const user = currentUser() || SCHOOL_ACCOUNT;
+    const enrolled = studentCourses();
     const progress = overallProgress();
     const actions = smartActions();
     const primary = actions[0];
-    const pending = ASSIGNMENTS.filter((item) =>
+    const pending = studentAssignments().filter((item) =>
       ["due", "late", "overdue", "revision"].includes(
         assignmentStatus(item).key,
       ),
@@ -3498,10 +3866,14 @@
     const weekEvents = calendarEvents().filter(
       (event) => event.date >= "2026-07-20" && event.date <= "2026-07-26",
     );
-    const primaryCopy = primary
+    const primaryCopy = !enrolled.length
+      ? "Choose your courses to build your learning plan and unlock course syllabi."
+      : primary
       ? `${escapeHtml(primary.eyebrow)} is the most important item in your learning plan.`
       : "You are caught up. Review your progress or plan the week ahead.";
-    const primaryAction = primary
+    const primaryAction = !enrolled.length
+      ? `<a class="button button-gold" href="#/course-selection">Choose Courses ${icon("arrow", 17)}</a>`
+      : primary
       ? `<a class="button button-gold" href="#/${primary.route}">Open Next Action ${icon("arrow", 17)}</a>`
       : `<a class="button button-gold" href="#/calendar">Plan Your Week ${icon("arrow", 17)}</a>`;
     return `
@@ -3515,7 +3887,7 @@
         <img class="welcome-emblem" src="../images/lake-forest-academy-logo-light.png" alt="" />
       </section>
       <section class="metric-grid" aria-label="Learning summary">
-        <div class="metric"><span class="metric-icon">${icon("book")}</span><span><strong>${COURSES.length}</strong><span>Active Courses</span></span></div>
+        <div class="metric"><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span></div>
         <div class="metric"><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span></div>
         <div class="metric"><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span></div>
         <div class="metric"><span class="metric-icon">${icon("bell")}</span><span><strong>${feedback.length}</strong><span>New Feedback</span></span></div>
@@ -3575,7 +3947,11 @@
             <div><h2>My Courses</h2><p>Progress, pacing and course guides</p></div>
             <a class="text-link" href="#/courses">View All ${icon("arrow", 16)}</a>
           </header>
-          ${COURSES.map(courseRow).join("")}
+          ${
+            enrolled.length
+              ? enrolled.map(courseRow).join("")
+              : '<div class="empty-state"><p>No courses selected yet.</p><a class="button button-secondary" href="#/course-selection">Open Course Selection</a></div>'
+          }
         </div>
         <div class="panel">
           <header class="panel-header"><div><h2>Feedback & Support</h2><p>Returned work and people who can help</p></div></header>
@@ -3619,15 +3995,114 @@
     `;
   }
 
-  function coursesView() {
+  function courseSelectionView() {
+    const enrolled = studentCourses();
     return `
       ${pageHeading(
-        "2026 Summer Term",
+        "Grade 12 Course Planning",
+        "Course Selection",
+        "Choose from the six courses in the Lotus OSSD course library. Five are university-preparation courses; BBB4M is university/college preparation.",
+        `<span class="selection-count">${enrolled.length} of ${catalogCourses().length} selected</span>`,
+      )}
+      <section class="selection-intro">
+        <div>
+          <p class="eyebrow light">Your Learning Plan</p>
+          <h2>Select a course to add its lessons, assignments and deadlines.</h2>
+          <p>MCV4U requires MHF4U before or at the same time. Other Grade 11 prerequisites are reviewed by Guidance during enrolment.</p>
+        </div>
+        <a class="button button-gold" href="#/courses">Open My Courses ${icon("arrow", 17)}</a>
+      </section>
+      <section class="selection-grid" aria-label="Available courses">
+        ${catalogCourses()
+          .map((course) => {
+            const selected = isCourseEnrolled(course.id);
+            const requirement = enrollmentRequirement(course);
+            const dependent = studentCourses().find((candidate) =>
+              (candidate.prerequisiteCourseIds || []).includes(course.id),
+            );
+            const hasRecord = courseHasAcademicRecord(course);
+            const removalLocked = selected && (hasRecord || dependent);
+            const lockCopy = hasRecord
+              ? "Contact Guidance to withdraw because academic work is recorded."
+              : dependent
+                ? `${dependent.code} currently depends on this course.`
+                : "";
+            return `
+              <article class="selection-card ${selected ? "is-selected" : ""}">
+                <div class="selection-image">
+                  <img src="${course.image}" alt="" />
+                  <span class="status ${selected ? "success" : ""}">${selected ? "Selected" : "Available"}</span>
+                </div>
+                <div class="selection-card-body">
+                  <div class="selection-card-title">
+                    <span class="course-chip">${course.code}</span>
+                    <span>${course.plannedHours} hours · ${escapeHtml(course.credit)}</span>
+                  </div>
+                  <h2>${escapeHtml(course.title)}</h2>
+                  <p>${escapeHtml(course.description)}</p>
+                  <dl class="selection-facts">
+                    <div><dt>Level</dt><dd>${escapeHtml(course.gradeType)}</dd></div>
+                    <div><dt>Prerequisite</dt><dd>${escapeHtml(course.prerequisite)}</dd></div>
+                  </dl>
+                  ${
+                    !selected && !requirement.met
+                      ? `<p class="selection-note warning">${escapeHtml(requirement.message)}</p>`
+                      : removalLocked
+                        ? `<p class="selection-note">${escapeHtml(lockCopy)}</p>`
+                        : ""
+                  }
+                  <div class="selection-actions">
+                    <a class="button button-quiet" href="#/syllabus/${course.id}">View Syllabus</a>
+                    <button
+                      class="button ${selected ? "button-secondary" : "button-primary"}"
+                      type="button"
+                      data-action="toggle-enrollment"
+                      data-course="${course.id}"
+                      ${removalLocked || (!selected && !requirement.met) ? "disabled" : ""}
+                    >${selected ? "Remove Course" : "Select Course"}</button>
+                  </div>
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </section>
+      <p class="selection-storage-note">Course choices are saved to this account in the current browser until the central student-record database is connected.</p>
+    `;
+  }
+
+  function courseAccessView(course) {
+    return `
+      ${pageHeading(
+        course.code,
+        "Select This Course First",
+        `${escapeHtml(course.title)} is not currently part of your learning plan.`,
+      )}
+      <section class="course-access-card">
+        <span class="course-chip">${course.code}</span>
+        <h2>${escapeHtml(course.title)}</h2>
+        <p>Review the syllabus, prerequisite and evaluation plan before adding this course.</p>
+        <div>
+          <a class="button button-primary" href="#/course-selection">Open Course Selection</a>
+          <a class="button button-secondary" href="#/syllabus/${course.id}">View Syllabus</a>
+        </div>
+      </section>
+    `;
+  }
+
+  function coursesView() {
+    const enrolled = studentCourses();
+    return `
+      ${pageHeading(
+        "2026–2027 Academic Year",
         "My Courses",
         "Open a course to review its outline, work through lessons and see your current progress.",
+        '<a class="button button-secondary" href="#/course-selection">Add or Change Courses</a>',
       )}
       <section class="course-grid">
-        ${COURSES.map((course) => {
+        ${
+          enrolled.length
+            ? enrolled.map((course) => {
           const progress = courseProgress(course);
           return `
             <a class="course-card" href="#/course/${course.id}">
@@ -3650,7 +4125,9 @@
               </div>
             </a>
           `;
-        }).join("")}
+              }).join("")
+            : '<div class="course-empty-selection"><span class="course-chip">6 Courses Available</span><h2>Build Your Course Plan</h2><p>Select the courses you want to study. Your dashboard, assignments, calendar and grades will follow that plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
+        }
       </section>
     `;
   }
@@ -3674,7 +4151,7 @@
             <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
           </div>
           <div class="course-hero-actions">
-            <a class="button button-gold" href="#/guide/${course.id}">${icon("book", 17)} ${guide.isComplete ? "Review Course Guide" : "Start Here · Course Guide"}</a>
+            <a class="button button-gold" href="#/syllabus/${course.id}">${icon("book", 17)} ${guide.isComplete ? "Review Course Syllabus" : "Start Here · Course Syllabus"}</a>
             <a class="button button-on-dark" href="#/calendar">${icon("calendar", 17)} View Calendar</a>
           </div>
         </div>
@@ -3714,11 +4191,11 @@
         </div>
         <aside>
           <div class="panel guide-status-card">
-            <header class="panel-header"><div><h3>Start Here</h3><p>Course Guide</p></div><span class="badge ${guide.isComplete ? "success" : "warning"}">${guide.isComplete ? "Complete" : `${guide.completed}/${guide.total}`}</span></header>
+            <header class="panel-header"><div><h3>Start Here</h3><p>Course Syllabus</p></div><span class="badge ${guide.isComplete ? "success" : "warning"}">${guide.isComplete ? "Complete" : `${guide.completed}/${guide.total}`}</span></header>
             <div class="panel-content">
               <div class="progress-track" aria-label="${guide.percent}% of course guide complete"><span style="width:${guide.percent}%"></span></div>
               <p>Review expectations, evaluation, dates and support before beginning major assessments.</p>
-              <a class="button button-secondary full-width" href="#/guide/${course.id}">${guide.isComplete ? "Review Guide" : "Continue Guide"}</a>
+              <a class="button button-secondary full-width" href="#/syllabus/${course.id}">${guide.isComplete ? "Review Syllabus" : "Continue Syllabus"}</a>
             </div>
           </div>
           <div class="panel">
@@ -3838,6 +4315,139 @@
               </a>
             </div>
           </section>
+          <section class="panel instructor-card">
+            <header class="panel-header"><div><h3>Course Contact</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
+            <div class="panel-content">
+              <span class="instructor-avatar">${course.instructor.split(" ").map((part) => part[0]).slice(-2).join("")}</span>
+              <h3>${escapeHtml(course.instructor)}</h3>
+              <p>${escapeHtml(course.instructorEmail)}</p>
+              <a class="button button-primary full-width" href="mailto:${encodeURIComponent(course.instructorEmail)}">Email Instructor</a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    `;
+  }
+
+  function courseSyllabusView(course) {
+    const guide = guideProgress(course);
+    const syllabus = course.syllabus || {
+      gradeType: "Grade 12",
+      plannedHours: 110,
+      description: course.overview,
+      units: [],
+      drive: {},
+    };
+    const selected = isCourseEnrolled(course.id);
+    const drive = syllabus.drive || {};
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="${selected ? "courses" : "course-selection"}">${selected ? "My Courses" : "Course Selection"}</button><span>/</span>
+        <span>${course.code}</span><span>/</span>
+        <span>Course Syllabus</span>
+      </nav>
+      <section class="guide-hero syllabus-hero">
+        <div>
+          <p class="eyebrow light">${course.code} · Course Syllabus</p>
+          <h1>${escapeHtml(course.title)}</h1>
+          <p>${escapeHtml(syllabus.description || course.overview)}</p>
+        </div>
+        <div class="guide-progress-summary">
+          <strong>${syllabus.plannedHours || 110}</strong>
+          <span>planned learning hours · ${escapeHtml(course.credit)}</span>
+          <small>${escapeHtml(syllabus.gradeType || course.gradeType || "Grade 12")}</small>
+        </div>
+      </section>
+      <section class="guide-layout">
+        <div class="guide-main">
+          <section class="panel">
+            <header class="panel-header"><div><h2>Course at a Glance</h2><p>${escapeHtml(course.mode)} · ${escapeHtml(course.credit)}</p></div></header>
+            <div class="guide-fact-grid">
+              <div class="guide-fact"><span>Course Code</span><strong>${course.code}</strong></div>
+              <div class="guide-fact"><span>Course Type</span><strong>${escapeHtml(syllabus.gradeType || course.gradeType || "Grade 12")}</strong></div>
+              <div class="guide-fact"><span>Weekly Commitment</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
+              <div class="guide-fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>110-Hour Unit Plan</h2><p>Learning, assessed evidence, teacher feedback and final evaluation</p></div></header>
+            <div class="syllabus-units">
+              ${(syllabus.units || [])
+                .map(
+                  (unit, index) => `
+                    <article class="syllabus-unit">
+                      <span>${String(index + 1).padStart(2, "0")}</span>
+                      <div><p class="course-code">Unit ${index + 1}</p><h3>${escapeHtml(unit.title)}</h3></div>
+                      <strong>${unit.hours} hours</strong>
+                    </article>
+                  `,
+                )
+                .join("")}
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Evaluation Plan</h2><p>Current weighting in the Lotus course implementation package</p></div></header>
+            <div class="evaluation-list">
+              ${course.evaluation
+                .map(
+                  (item) => `
+                    <div class="evaluation-row">
+                      <span>${escapeHtml(item.label)}</span>
+                      <strong>${item.weight}%</strong>
+                      <div class="progress-track"><span style="width:${item.weight}%"></span></div>
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+            <div class="policy-note">
+              <strong>Final-evaluation administration</strong>
+              <p>Mandatory examinations are completed in the designated examination period under school-approved identity, supervision, security and accommodation procedures.</p>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Course Materials</h2><p>Student-facing documents from Lotus Drive</p></div></header>
+            <div class="syllabus-resources">
+              ${drive.coursebookUrl ? `<a class="resource-link" href="${escapeHtml(drive.coursebookUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("book", 20)}</span><span><strong>Student Coursebook & Workbook</strong><small>Readings, practice and evidence tables</small></span>${icon("arrow", 17)}</a>` : ""}
+              ${drive.assessmentUrl ? `<a class="resource-link" href="${escapeHtml(drive.assessmentUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("clipboard", 20)}</span><span><strong>Assessment & Final Evaluation</strong><small>Student instructions and submission requirements</small></span>${icon("arrow", 17)}</a>` : ""}
+              ${drive.studentMaterialsFolderUrl ? `<a class="resource-link" href="${escapeHtml(drive.studentMaterialsFolderUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("file", 20)}</span><span><strong>Open Student Materials Folder</strong><small>Course files and reading library</small></span>${icon("arrow", 17)}</a>` : ""}
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Academic Practice</h2><p>Evidence, authorship and accessible learning</p></div></header>
+            <div class="guide-copy">
+              <p>Retain notes, source records, calculations, drafts, tests, feedback and revisions as evidence of process and authorship. Cite external ideas, data, images, quotations, code, models and media in the format specified by the teacher.</p>
+              <p>Approved accommodations may change the format or timing of evidence without changing the curriculum expectation or authentication standard. Contact Student Support before a timed assessment is scheduled.</p>
+            </div>
+          </section>
+        </div>
+        <aside>
+          <section class="panel guide-checklist">
+            <header class="panel-header"><div><h2>${selected ? "Before You Begin" : "Course Selection"}</h2><p>${selected ? "Complete each orientation step" : "Add this course to your plan"}</p></div></header>
+            <div class="panel-content">
+              ${
+                selected
+                  ? COURSE_GUIDE_STEPS.map((step) => {
+                      const checked = guide.checked.includes(step.id);
+                      return `
+                        <button class="guide-check ${checked ? "is-complete" : ""}" type="button" data-action="toggle-guide-step" data-course="${course.id}" data-step="${step.id}" aria-pressed="${checked}">
+                          <span>${checked ? icon("check", 15) : ""}</span>
+                          <strong>${escapeHtml(step.label)}</strong>
+                        </button>
+                      `;
+                    }).join("")
+                  : `<p>Review the prerequisite and syllabus, then add ${course.code} from Course Selection.</p>`
+              }
+              <a class="button ${selected && guide.isComplete ? "button-primary" : "button-quiet"} full-width" href="#/${selected ? `course/${course.id}` : "course-selection"}">
+                ${selected ? (guide.isComplete ? `Open Course ${icon("arrow", 16)}` : "Return to Course") : "Open Course Selection"}
+              </a>
+            </div>
+          </section>
+          ${
+            drive.curriculumMapUrl
+              ? `<section class="panel syllabus-source-card"><header class="panel-header"><div><h3>Source Document</h3><p>Lotus Academy course package</p></div></header><div class="panel-content"><p>The unit sequence, hours, prerequisite and evaluation weights on this page are drawn from the course curriculum map.</p><a class="text-link" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer">Open Curriculum Map ${icon("arrow", 15)}</a></div></section>`
+              : ""
+          }
           <section class="panel instructor-card">
             <header class="panel-header"><div><h3>Course Contact</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
             <div class="panel-content">
@@ -3974,7 +4584,7 @@
       <section class="calendar-lower-grid">
         <div class="panel">
           <header class="panel-header"><div><h2>Upcoming Deadlines</h2><p>Due date and final submission window</p></div></header>
-          ${ASSIGNMENTS.slice()
+          ${studentAssignments().slice()
             .sort((a, b) => new Date(a.due) - new Date(b.due))
             .map((assignment) => {
               const course = findCourse(assignment.courseId);
@@ -3993,7 +4603,7 @@
         <aside class="panel weekly-plan">
           <header class="panel-header"><div><h2>Weekly Study Plan</h2><p>Recommended independent study time</p></div></header>
           <div class="panel-content">
-            ${COURSES.map((course) => {
+            ${studentCourses().map((course) => {
               const progress = courseProgress(course);
               return `
                 <a class="study-plan-row" href="#/course/${course.id}">
@@ -4048,7 +4658,7 @@
       <section class="support-lower-grid">
         <div class="panel">
           <header class="panel-header"><div><h2>Your Course Team</h2><p>Ask content questions and discuss feedback directly</p></div></header>
-          ${COURSES.map(
+          ${studentCourses().map(
             (course) => `
               <div class="teacher-row">
                 <span class="instructor-avatar">${course.instructor
@@ -4081,7 +4691,7 @@
   }
 
   function assignmentsView() {
-    const visible = ASSIGNMENTS.filter((assignment) => {
+    const visible = studentAssignments().filter((assignment) => {
       const key = assignmentStatus(assignment).key;
       if (assignmentFilter === "all") return true;
       if (assignmentFilter === "open") {
@@ -4319,16 +4929,24 @@
   }
 
   function progressView() {
-    const grades = hasSeededAcademicRecord() ? GRADES : [];
+    const enrolled = studentCourses();
+    const enrolledIds = new Set(enrolled.map((course) => course.id));
+    const grades = hasSeededAcademicRecord()
+      ? GRADES.filter((grade) => enrolledIds.has(grade.courseId))
+      : [];
     const average = grades.length
       ? Math.round(
           grades.reduce((total, grade) => total + grade.current, 0) /
             grades.length,
         )
       : null;
-    const graded = ASSIGNMENTS.filter(
+    const graded = studentAssignments().filter(
       (assignment) => assignmentScore(assignment) != null,
     );
+    const lessons = studentLessons();
+    const completedLessons = lessons.filter((lesson) =>
+      state.completed.includes(lesson.id),
+    ).length;
     return `
       ${pageHeading(
         "Academic Record",
@@ -4336,13 +4954,13 @@
         "A current view of lesson completion and evaluated course work.",
       )}
       <section class="progress-summary">
-        <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${state.completed.length} of ${allLessons().length} lessons complete</span></div>
-        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${COURSES.length} active courses`}</span></div>
+        <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${completedLessons} of ${lessons.length} lessons complete</span></div>
+        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${enrolled.length} active courses`}</span></div>
         <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${graded.length}</strong><span>${graded.length === 1 ? "Published assignment grade" : "Published assignment grades"}</span></div>
       </section>
       <section class="panel">
         <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is returned</p></div></header>
-        ${COURSES.map((course) => {
+        ${enrolled.map((course) => {
           const grade = courseGrade(course.id);
           const progress = courseProgress(course);
           return `
@@ -4443,6 +5061,8 @@
     let view;
     if (teacherRoute[1] === "dashboard") {
       view = teacherDashboardView();
+    } else if (teacherRoute[1] === "courses") {
+      view = teacherCoursesView();
     } else if (teacherRoute[1] === "submissions") {
       view = teacherSubmissionsView();
     } else if (teacherRoute[1] === "materials") {
@@ -4450,8 +5070,8 @@
     } else if (teacherRoute[1] === "course") {
       const course = findCourse(teacherRoute[2]);
       view = course
-        ? teacherSubmissionsView(course.id)
-        : teacherSubmissionsView();
+        ? teacherCourseView(course)
+        : teacherCoursesView();
     } else if (teacherRoute[1] === "submission") {
       view = teacherSubmissionDetailView(
         safeDecode(teacherRoute[2] || ""),
@@ -4514,21 +5134,44 @@
     document.title = `${pageTitle(route)} | Lake Forest Learning`;
     let view;
     if (route[0] === "dashboard") view = dashboardView();
+    else if (route[0] === "course-selection") view = courseSelectionView();
     else if (route[0] === "courses") view = coursesView();
     else if (route[0] === "calendar") view = calendarView();
     else if (route[0] === "course") {
       const course = findCourse(route[1]);
-      view = course ? courseView(course) : notFoundView();
-    } else if (route[0] === "guide") {
+      view = course
+        ? isCourseEnrolled(course.id)
+          ? courseView(course)
+          : SELECTABLE_COURSE_IDS.includes(course.id)
+            ? courseAccessView(course)
+            : notFoundView()
+        : notFoundView();
+    } else if (route[0] === "guide" || route[0] === "syllabus") {
       const course = findCourse(route[1]);
-      view = course ? courseGuideView(course) : notFoundView();
+      view =
+        course && SELECTABLE_COURSE_IDS.includes(course.id)
+          ? courseSyllabusView(course)
+          : notFoundView();
     } else if (route[0] === "lesson") {
       const lesson = findLesson(route[1]);
-      view = lesson ? lessonView(lesson) : notFoundView();
+      view = lesson
+        ? isCourseEnrolled(lesson.course.id)
+          ? lessonView(lesson)
+          : SELECTABLE_COURSE_IDS.includes(lesson.course.id)
+            ? courseAccessView(lesson.course)
+            : notFoundView()
+        : notFoundView();
     } else if (route[0] === "assignments") view = assignmentsView();
     else if (route[0] === "assignment") {
       const assignment = findAssignment(route[1]);
-      view = assignment ? assignmentView(assignment) : notFoundView();
+      const course = assignment ? findCourse(assignment.courseId) : null;
+      view = assignment
+        ? course && isCourseEnrolled(course.id)
+          ? assignmentView(assignment)
+          : course && SELECTABLE_COURSE_IDS.includes(course.id)
+            ? courseAccessView(course)
+            : notFoundView()
+        : notFoundView();
     } else if (route[0] === "progress") view = progressView();
     else if (route[0] === "announcements") view = announcementsView();
     else if (route[0] === "support") view = supportView();
@@ -5220,6 +5863,51 @@
         ? "#/signin/faculty"
         : "#/signin/student";
       loginView({ portal: facultySession ? "faculty" : "student" });
+    } else if (action === "toggle-enrollment") {
+      const course = findCourse(target.dataset.course);
+      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      const selected = isCourseEnrolled(course.id);
+      if (selected) {
+        const dependent = studentCourses().find((candidate) =>
+          (candidate.prerequisiteCourseIds || []).includes(course.id),
+        );
+        if (dependent) {
+          showToast(
+            `${course.code} cannot be removed while ${dependent.code} is selected.`,
+          );
+          return;
+        }
+        if (courseHasAcademicRecord(course)) {
+          showToast(
+            "Contact Guidance to withdraw from a course with recorded academic work.",
+          );
+          return;
+        }
+        state.enrolledCourseIds = enrolledCourseIdsFor().filter(
+          (id) => id !== course.id,
+        );
+      } else {
+        const requirement = enrollmentRequirement(course);
+        if (!requirement.met) {
+          showToast(requirement.message);
+          return;
+        }
+        state.enrolledCourseIds = [
+          ...new Set([...enrolledCourseIdsFor(), course.id]),
+        ];
+        state.guideChecks = state.guideChecks || {};
+        state.guideChecks[course.id] = state.guideChecks[course.id] || [];
+      }
+      saveState();
+      render();
+      document
+        .querySelector(`[data-action="toggle-enrollment"][data-course="${course.id}"]`)
+        ?.focus();
+      showToast(
+        selected
+          ? `${course.code} removed from your plan.`
+          : `${course.code} added to your courses.`,
+      );
     } else if (action === "toggle-lesson") {
       const id = target.dataset.id;
       if (state.completed.includes(id)) {
