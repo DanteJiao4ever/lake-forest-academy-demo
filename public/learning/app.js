@@ -12,6 +12,7 @@
     "lake-forest-learning-drive-materials-v1";
   const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
   const FILE_STORE_NAME = "submission-files";
+  const MAX_SUBMISSION_BYTES = 25 * 1024 * 1024;
   const ACCESS_EMAIL = "student@example.invalid";
   const ACCESS_PASSWORD = null;
   const TEACHER_EMAIL = "james.whitmore@example.invalid";
@@ -934,6 +935,7 @@
   let assignmentFilter = "all";
   let replacingSubmissionId = null;
   let toastTimer = null;
+  let lastEnrollmentChange = null;
   let signInNotice = "";
   let signInPrefill = "";
   let driveMaterialsState = loadDriveMaterialsCache();
@@ -1374,6 +1376,12 @@
       const studentState = loadState(student);
       Object.entries(studentState.submissions || {}).forEach(
         ([assignmentId, submission]) => {
+          if (
+            submission?.status === "draft" ||
+            submission?.delivery === "device"
+          ) {
+            return;
+          }
           const assignment = findAssignment(assignmentId);
           if (!assignment) return;
           const course = findCourse(assignment.courseId);
@@ -2325,6 +2333,19 @@
     }).format(new Date());
   }
 
+  function torontoGreeting() {
+    const hour = Number(
+      new Intl.DateTimeFormat("en-CA", {
+        hour: "numeric",
+        hourCycle: "h23",
+        timeZone: "America/Toronto",
+      }).format(new Date()),
+    );
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  }
+
   function plural(count, singular, pluralForm = `${singular}s`) {
     return `${count} ${count === 1 ? singular : pluralForm}`;
   }
@@ -2445,6 +2466,20 @@
     };
   }
 
+  function nextLessonForCourse(course) {
+    return (
+      course.lessons.find((lesson) => !state.completed.includes(lesson.id)) ||
+      null
+    );
+  }
+
+  function selectedCreditCount() {
+    return studentCourses().reduce((total, course) => {
+      const match = String(course.credit || "").match(/\d+(?:\.\d+)?/);
+      return total + (match ? Number(match[0]) : 1);
+    }, 0);
+  }
+
   function overallProgress() {
     const lessons = studentLessons();
     if (!lessons.length) return 0;
@@ -2550,6 +2585,7 @@
         eyebrow: `${course.code} · ${status.label}`,
         title: assignment.title,
         meta: `Due ${formatDate(assignment.due, true)}`,
+        cta: status.key === "revision" ? "Revise Submission" : `Open ${assignment.title}`,
         className: status.key === "overdue" ? "danger" : "warning",
       });
     });
@@ -2562,6 +2598,7 @@
         eyebrow: `${course.code} · New Feedback`,
         title: assignment.title,
         meta: `${assignmentScore(assignment)}% · Review instructor comments`,
+        cta: "Review Feedback",
         className: "success",
       });
     });
@@ -2575,6 +2612,7 @@
         eyebrow: `${course.code} · Start Here`,
         title: "Complete the Course Guide",
         meta: `${guide.completed} of ${guide.total} steps reviewed`,
+        cta: `Finish ${course.code} Setup`,
         className: "info",
       });
     });
@@ -2590,6 +2628,7 @@
         eyebrow: `${course.code} · Continue Learning`,
         title: lesson.title,
         meta: `${lesson.unit} · ${lesson.duration}`,
+        cta: `Continue ${course.code}`,
         className: "",
       });
     });
@@ -2612,7 +2651,11 @@
     if (submission?.status === "review") {
       return { key: "review", label: "Under Review", className: "info" };
     }
-    if (submission) {
+    if (
+      submission &&
+      submission.status !== "draft" &&
+      submission.delivery !== "device"
+    ) {
       return {
         key: "submitted",
         label: "Awaiting Grading",
@@ -3874,23 +3917,23 @@
     const primaryAction = !enrolled.length
       ? `<a class="button button-gold" href="#/course-selection">Choose Courses ${icon("arrow", 17)}</a>`
       : primary
-      ? `<a class="button button-gold" href="#/${primary.route}">Open Next Action ${icon("arrow", 17)}</a>`
+      ? `<a class="button button-gold" href="#/${primary.route}">${escapeHtml(primary.cta || "Open Next Action")} ${icon("arrow", 17)}</a>`
       : `<a class="button button-gold" href="#/calendar">Plan Your Week ${icon("arrow", 17)}</a>`;
     return `
       <section class="welcome">
         <div class="welcome-copy">
           <p class="eyebrow light">${todayLabel()}</p>
-          <h1>Good Evening, ${escapeHtml(user.firstName)}.</h1>
+          <h1>${torontoGreeting()}, ${escapeHtml(user.firstName)}.</h1>
           <p>${primaryCopy}</p>
           ${primaryAction}
         </div>
         <img class="welcome-emblem" src="../images/lake-forest-academy-logo-light.png" alt="" />
       </section>
       <section class="metric-grid" aria-label="Learning summary">
-        <div class="metric"><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span></div>
-        <div class="metric"><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span></div>
-        <div class="metric"><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span></div>
-        <div class="metric"><span class="metric-icon">${icon("bell")}</span><span><strong>${feedback.length}</strong><span>New Feedback</span></span></div>
+        <a class="metric" href="#/courses" aria-label="${enrolled.length} active courses. Open My Courses."><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/progress" aria-label="${progress}% overall progress. Open Progress and Grades."><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/assignments" aria-label="${pending.length} items need attention. Open Assignments."><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/progress" aria-label="${feedback.length} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedback.length}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
       </section>
       <section class="dashboard-grid">
         <div class="panel dashboard-priority">
@@ -3997,6 +4040,7 @@
 
   function courseSelectionView() {
     const enrolled = studentCourses();
+    const credits = selectedCreditCount();
     return `
       ${pageHeading(
         "Grade 12 Course Planning",
@@ -4012,7 +4056,30 @@
         </div>
         <a class="button button-gold" href="#/courses">Open My Courses ${icon("arrow", 17)}</a>
       </section>
-      <section class="selection-grid" aria-label="Available courses">
+      <section class="selection-toolbar" aria-label="Selected course plan">
+        <div class="selection-toolbar-summary">
+          <span class="selection-toolbar-count">${enrolled.length}</span>
+          <span><strong>${plural(enrolled.length, "course")} selected</strong><small>${credits.toFixed(1)} planned OSSD ${credits === 1 ? "credit" : "credits"} · saved on this device</small></span>
+        </div>
+        <div class="selection-chips">
+          ${
+            enrolled.length
+              ? enrolled
+                  .map(
+                    (course) =>
+                      `<a href="#/course/${course.id}" aria-label="Open ${course.code}: ${escapeHtml(course.title)}">${course.code}</a>`,
+                  )
+                  .join("")
+              : "<span>Choose a course below to begin your plan.</span>"
+          }
+        </div>
+        ${
+          enrolled.length
+            ? `<a class="button button-primary" href="#/courses">Continue to My Courses ${icon("arrow", 16)}</a>`
+            : '<button class="button button-quiet" type="button" disabled>Select Your First Course</button>'
+        }
+      </section>
+      <section class="selection-grid" id="selection-catalog" aria-label="Available courses">
         ${catalogCourses()
           .map((course) => {
             const selected = isCourseEnrolled(course.id);
@@ -4052,14 +4119,27 @@
                         : ""
                   }
                   <div class="selection-actions">
-                    <a class="button button-quiet" href="#/syllabus/${course.id}">View Syllabus</a>
-                    <button
-                      class="button ${selected ? "button-secondary" : "button-primary"}"
-                      type="button"
-                      data-action="toggle-enrollment"
-                      data-course="${course.id}"
-                      ${removalLocked || (!selected && !requirement.met) ? "disabled" : ""}
-                    >${selected ? "Remove Course" : "Select Course"}</button>
+                    ${
+                      selected
+                        ? `
+                          <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 15)}</a>
+                          <button
+                            class="button button-text-danger"
+                            type="button"
+                            data-action="toggle-enrollment"
+                            data-course="${course.id}"
+                            ${removalLocked ? "disabled" : ""}
+                          >Remove</button>
+                        `
+                        : `
+                          <a class="button button-quiet" href="#/syllabus/${course.id}">View Syllabus</a>
+                          ${
+                            !requirement.met && requirement.missing.includes("mhf4u")
+                              ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+                              : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Select Course</button>`
+                          }
+                        `
+                    }
                   </div>
                 </div>
               </article>
@@ -4136,7 +4216,18 @@
     const progress = courseProgress(course);
     const guide = guideProgress(course);
     const grade = courseGrade(course.id);
+    const nextLesson = nextLessonForCourse(course);
     const modules = [...new Set(course.lessons.map((lesson) => lesson.unit))];
+    const primaryCourseRoute = !guide.isComplete
+      ? `syllabus/${course.id}`
+      : nextLesson
+        ? `lesson/${nextLesson.id}`
+        : "progress";
+    const primaryCourseLabel = !guide.isComplete
+      ? `Finish Course Setup (${guide.completed}/${guide.total})`
+      : nextLesson
+        ? `Continue: ${nextLesson.title}`
+        : "Review Course Progress";
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="courses">My Courses</button><span>/</span><span>${course.code}</span>
@@ -4151,8 +4242,8 @@
             <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
           </div>
           <div class="course-hero-actions">
-            <a class="button button-gold" href="#/syllabus/${course.id}">${icon("book", 17)} ${guide.isComplete ? "Review Course Syllabus" : "Start Here · Course Syllabus"}</a>
-            <a class="button button-on-dark" href="#/calendar">${icon("calendar", 17)} View Calendar</a>
+            <a class="button button-gold" href="#/${primaryCourseRoute}">${guide.isComplete ? icon("arrow", 17) : icon("book", 17)} ${escapeHtml(primaryCourseLabel)}</a>
+            <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
           </div>
         </div>
         <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
@@ -4164,26 +4255,27 @@
             .map((unit) => {
               const lessons = course.lessons.filter((lesson) => lesson.unit === unit);
               return `
-                <section class="module">
-                  <header class="module-heading">
-                    <p class="course-code">${unit}</p>
-                    <h3>${escapeHtml(lessons[0].unitTitle)}</h3>
-                    <p>${plural(lessons.length, "lesson")} in this unit</p>
-                  </header>
-                  ${lessons
-                    .map((lesson) => {
-                      const complete = state.completed.includes(lesson.id);
-                      return `
-                        <a class="lesson-row" href="#/lesson/${lesson.id}">
-                          <span class="lesson-status ${complete ? "complete" : ""}">${complete ? icon("check", 14) : ""}</span>
-                          <span><h4>${escapeHtml(lesson.title)}</h4><p>${escapeHtml(lesson.summary)}</p></span>
-                          <span class="badge">${icon("clock", 13)} ${lesson.duration}</span>
-                          ${icon("arrow", 17)}
-                        </a>
-                      `;
-                    })
-                    .join("")}
-                </section>
+                <details class="module" ${lessons.some((lesson) => lesson.id === nextLesson?.id) ? "open" : ""}>
+                  <summary class="module-heading">
+                    <span><p class="course-code">${unit}</p><h3>${escapeHtml(lessons[0].unitTitle)}</h3><p>${plural(lessons.length, "lesson")} in this unit</p></span>
+                    <span class="module-toggle">Open Unit ${icon("arrow", 16)}</span>
+                  </summary>
+                  <div class="module-lessons">
+                    ${lessons
+                      .map((lesson) => {
+                        const complete = state.completed.includes(lesson.id);
+                        return `
+                          <a class="lesson-row" href="#/lesson/${lesson.id}">
+                            <span class="lesson-status ${complete ? "complete" : ""}">${complete ? icon("check", 14) : ""}</span>
+                            <span><h4>${escapeHtml(lesson.title)}</h4><p>${escapeHtml(lesson.summary)}</p></span>
+                            <span class="badge">${icon("clock", 13)} ${lesson.duration}</span>
+                            ${icon("arrow", 17)}
+                          </a>
+                        `;
+                      })
+                      .join("")}
+                  </div>
+                </details>
               `;
             })
             .join("")}
@@ -4339,6 +4431,8 @@
       drive: {},
     };
     const selected = isCourseEnrolled(course.id);
+    const nextLesson = nextLessonForCourse(course);
+    const requirement = enrollmentRequirement(course);
     const drive = syllabus.drive || {};
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -4358,6 +4452,20 @@
           <small>${escapeHtml(syllabus.gradeType || course.gradeType || "Grade 12")}</small>
         </div>
       </section>
+      <section class="syllabus-action-card">
+        <div>
+          <p class="eyebrow">${selected ? `${course.code} Learning Path` : "Ready to Begin?"}</p>
+          <h2>${selected ? (nextLesson ? escapeHtml(nextLesson.title) : "Course Learning Path Complete") : `Add ${course.code} to Your Learning Plan`}</h2>
+          <p>${selected ? (nextLesson ? `${escapeHtml(nextLesson.unit)} is your next step. Your progress is saved as you work.` : "Review your completed work and published feedback.") : `Add this course now to unlock its lessons, assignments and progress tracking.`}</p>
+        </div>
+        ${
+          selected
+            ? `<a class="button button-primary" href="#/${nextLesson ? `lesson/${nextLesson.id}` : `course/${course.id}`}">${nextLesson ? `Start ${escapeHtml(nextLesson.unit)}` : "Review Course"} ${icon("arrow", 16)}</a>`
+            : !requirement.met && requirement.missing.includes("mhf4u")
+              ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+              : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
+        }
+      </section>
       <section class="guide-layout">
         <div class="guide-main">
           <section class="panel">
@@ -4373,15 +4481,30 @@
             <header class="panel-header"><div><h2>110-Hour Unit Plan</h2><p>Learning, assessed evidence, teacher feedback and final evaluation</p></div></header>
             <div class="syllabus-units">
               ${(syllabus.units || [])
-                .map(
-                  (unit, index) => `
-                    <article class="syllabus-unit">
-                      <span>${String(index + 1).padStart(2, "0")}</span>
-                      <div><p class="course-code">Unit ${index + 1}</p><h3>${escapeHtml(unit.title)}</h3></div>
-                      <strong>${unit.hours} hours</strong>
-                    </article>
-                  `,
-                )
+                .map((unit, index) => {
+                  const lesson = course.lessons[index];
+                  const complete = lesson
+                    ? state.completed.includes(lesson.id)
+                    : false;
+                  return `
+                    <details class="syllabus-unit" ${index === 0 ? "open" : ""}>
+                      <summary>
+                        <span class="syllabus-unit-number">${String(index + 1).padStart(2, "0")}</span>
+                        <span><span class="course-code">Unit ${index + 1}</span><strong>${escapeHtml(unit.title)}</strong></span>
+                        <span class="syllabus-unit-hours">${unit.hours} hours</span>
+                        <span class="syllabus-unit-toggle">${complete ? "Complete" : "View Unit"} ${icon("arrow", 15)}</span>
+                      </summary>
+                      <div class="syllabus-unit-body">
+                        <p>${lesson ? escapeHtml(lesson.summary) : `Review the learning goals, evidence requirements and assessments for ${escapeHtml(unit.title)}.`}</p>
+                        ${
+                          selected && lesson
+                            ? `<a class="button button-secondary" href="#/lesson/${lesson.id}">${complete ? "Review Unit" : "Open Unit Orientation"} ${icon("arrow", 15)}</a>`
+                            : `<span class="syllabus-unit-lock">${icon("book", 16)} Add this course to open the unit learning path.</span>`
+                        }
+                      </div>
+                    </details>
+                  `;
+                })
                 .join("")}
             </div>
           </section>
@@ -4438,9 +4561,13 @@
                     }).join("")
                   : `<p>Review the prerequisite and syllabus, then add ${course.code} from Course Selection.</p>`
               }
-              <a class="button ${selected && guide.isComplete ? "button-primary" : "button-quiet"} full-width" href="#/${selected ? `course/${course.id}` : "course-selection"}">
-                ${selected ? (guide.isComplete ? `Open Course ${icon("arrow", 16)}` : "Return to Course") : "Open Course Selection"}
-              </a>
+              ${
+                selected
+                  ? `<a class="button button-primary full-width" href="#/${nextLesson ? `lesson/${nextLesson.id}` : `course/${course.id}`}">${nextLesson ? `${state.completed.some((id) => course.lessons.some((lesson) => lesson.id === id)) ? "Continue" : "Start"} ${escapeHtml(nextLesson.unit)}` : "Review Course"} ${icon("arrow", 16)}</a>`
+                  : !requirement.met && requirement.missing.includes("mhf4u")
+                    ? `<button class="button button-primary full-width" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+                    : `<button class="button button-primary full-width" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
+              }
             </div>
           </section>
           ${
@@ -4755,6 +4882,10 @@
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
     const submission = submissionForAssignment(assignment.id);
+    const remoteSubmissionEnabled = Boolean(submissionsEndpointUrl());
+    const deliveredToLotus =
+      submission?.delivery === "lotus" ||
+      Boolean(submission?.driveFileId || submission?.fileUrl);
     const showSubmissionForm =
       !submission || replacingSubmissionId === assignment.id;
     const submittedOnTime =
@@ -4770,7 +4901,12 @@
             ? 0
             : -1;
     const lifecycle = [
-      ["Submitted", "Your work and submission receipt are recorded."],
+      [
+        deliveredToLotus ? "Submitted" : "Saved on This Device",
+        deliveredToLotus
+          ? "Your work and submission receipt are recorded."
+          : "This draft remains in this browser until the Lotus submission service is connected.",
+      ],
       ["Under Review", "Your instructor is reviewing the submission."],
       ["Feedback Available", "Comments and rubric results are ready."],
       ["Graded", "The published result is included in your course standing."],
@@ -4786,7 +4922,7 @@
           <div class="panel-content">
             <p class="course-code">${course.code} · ${course.title}</p>
             <h1>${escapeHtml(assignment.title)}</h1>
-            <span class="badge ${status.className}">${status.label}</span>
+            <span class="badge ${submission && !deliveredToLotus ? "warning" : status.className}">${submission && !deliveredToLotus ? "Device-Only Draft" : status.label}</span>
             <div class="assignment-date-grid">
               <div><span>Due Date</span><strong>${formatDate(assignment.due, true)}</strong></div>
               <div><span>Available Until</span><strong>${formatDate(assignment.availableUntil, true)}</strong></div>
@@ -4852,17 +4988,24 @@
           <div class="panel">
             <header class="panel-header"><h3>${submission ? "Your Submission" : "Submit Your Work"}</h3></header>
             <div class="panel-content">
+              <div class="submission-destination ${remoteSubmissionEnabled ? "is-connected" : "is-local"}">
+                <span>${icon(remoteSubmissionEnabled ? "check" : "file", 18)}</span>
+                <span>
+                  <strong>${remoteSubmissionEnabled ? "Connected to Lotus Drive" : "Device-Only Draft Mode"}</strong>
+                  <small>${remoteSubmissionEnabled ? "A successful upload will be available to your teacher." : "The submission service is not connected yet. Work saved here remains in this browser and is not sent to your teacher."}</small>
+                </span>
+              </div>
               ${
                 !showSubmissionForm
                   ? `
                     <div class="receipt-card">
                       <div class="receipt-heading">
                         <span>${icon("check", 18)}</span>
-                        <div><p class="course-code">Submission Received</p><h3>${status.label}</h3></div>
+                        <div><p class="course-code">${deliveredToLotus ? "Submitted to Lotus Drive" : "Saved on This Device"}</p><h3>${deliveredToLotus ? status.label : "Local Draft"}</h3></div>
                       </div>
                       <dl>
-                        <div><dt>Submission ID</dt><dd>${escapeHtml(submission.receiptId)}</dd></div>
-                        <div><dt>Submitted</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
+                        <div><dt>Receipt ID</dt><dd>${escapeHtml(submission.receiptId)}</dd></div>
+                        <div><dt>${deliveredToLotus ? "Submitted" : "Saved"}</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
                         <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
                         <div><dt>Version</dt><dd>${submission.history?.length || 1}</dd></div>
                         <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
@@ -4902,6 +5045,7 @@
                   `
                   : `
                     <form class="assignment-form" id="assignment-form" data-id="${assignment.id}">
+                      <div class="form-alert" id="assignment-form-alert" role="alert" tabindex="-1" hidden></div>
                       ${
                         submission
                           ? '<p class="form-notice">Replacing this work creates a new version. Earlier versions remain in the submission history.</p>'
@@ -4910,13 +5054,19 @@
                       <label for="submission-note">Submission Note</label>
                       <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(submission?.text || "")}</textarea>
                       <label for="submission-file">Attach a File</label>
-                      <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" />
+                      <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" aria-describedby="submission-file-help" />
+                      <p class="field-help" id="submission-file-help">PDF, Word, PowerPoint or Excel · maximum 25 MB</p>
+                      <div class="file-preview" id="submission-file-preview" hidden>
+                        <span>${icon("file", 18)}</span>
+                        <span><strong data-file-name></strong><small data-file-meta></small></span>
+                        <button type="button" data-action="clear-submission-file">Remove</button>
+                      </div>
                       ${submission?.fileName ? `<p class="login-help">Current file: ${escapeHtml(submission.fileName)}</p>` : ""}
                       <label class="integrity-check" for="submission-integrity">
                         <input id="submission-integrity" name="integrity" type="checkbox" value="confirmed" />
                         <span>I confirm that this is my own work and that I have credited all sources.</span>
                       </label>
-                      <button class="button button-primary" type="submit">${icon("file", 17)} ${submission ? "Submit New Version" : "Submit Assignment"}</button>
+                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (submission ? "Submit New Version to Lotus Drive" : "Submit to Lotus Drive") : "Save Draft on This Device"}</button>
                       ${submission ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
                     </form>
                   `
@@ -5099,7 +5249,8 @@
     }
   }
 
-  function render(shouldFocusMain = false) {
+  function render(shouldFocusMain = false, preserveScroll = false) {
+    const previousScroll = preserveScroll ? window.scrollY : 0;
     if (!isSignedIn()) {
       const authParts = routeParts();
       const authRoute = authParts[0];
@@ -5112,13 +5263,23 @@
               ? "faculty"
               : "student",
         });
+      if (preserveScroll) {
+        window.requestAnimationFrame(() =>
+          window.scrollTo({ top: previousScroll, behavior: "instant" }),
+        );
+      }
       if (shouldFocusMain) focusMain();
       return;
     }
     let route = routeParts();
     if (isTeacher()) {
       renderTeacher(route);
-      window.scrollTo({ top: 0, behavior: "instant" });
+      window.requestAnimationFrame(() =>
+        window.scrollTo({
+          top: preserveScroll ? previousScroll : 0,
+          behavior: "instant",
+        }),
+      );
       if (shouldFocusMain) focusMain();
       return;
     }
@@ -5191,7 +5352,12 @@
     ) {
       void refreshRemoteSubmissions({ silent: true });
     }
-    window.scrollTo({ top: 0, behavior: "instant" });
+    window.requestAnimationFrame(() =>
+      window.scrollTo({
+        top: preserveScroll ? previousScroll : 0,
+        behavior: "instant",
+      }),
+    );
     if (shouldFocusMain) focusMain();
   }
 
@@ -5199,15 +5365,45 @@
     window.location.hash = `#/${route}`;
   }
 
-  function showToast(message) {
+  function setFormAlert(form, message = "", tone = "error") {
+    const alert = form?.querySelector("#assignment-form-alert");
+    if (!alert) return;
+    alert.textContent = message;
+    alert.className = `form-alert ${tone ? `is-${tone}` : ""}`;
+    alert.hidden = !message;
+    if (message) alert.focus?.();
+  }
+
+  function showToast(
+    message,
+    {
+      tone = "info",
+      actionLabel = "",
+      action = "",
+      persistent = false,
+    } = {},
+  ) {
     document.querySelector(".toast")?.remove();
     const toast = document.createElement("div");
-    toast.className = "toast";
-    toast.setAttribute("role", "status");
-    toast.textContent = message;
+    toast.className = `toast toast-${tone}`;
+    toast.setAttribute("role", tone === "error" ? "alert" : "status");
+    toast.innerHTML = `
+      <span>${escapeHtml(message)}</span>
+      ${
+        actionLabel && action
+          ? `<button type="button" data-action="toast-action" data-toast-action="${escapeHtml(action)}">${escapeHtml(actionLabel)}</button>`
+          : ""
+      }
+      <button class="toast-close" type="button" data-action="dismiss-toast" aria-label="Dismiss notification">${icon("close", 15)}</button>
+    `;
     document.body.append(toast);
     window.clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => toast.remove(), 3200);
+    if (!persistent && !(actionLabel && action)) {
+      toastTimer = window.setTimeout(
+        () => toast.remove(),
+        tone === "error" ? 8000 : 5000,
+      );
+    }
   }
 
   document.addEventListener("submit", async (event) => {
@@ -5325,18 +5521,17 @@
         const accounts = loadAccounts();
         accounts[values.email] = account;
         saveAccounts(accounts);
-        sessionStorage.setItem(
-          REGISTERED_ACCOUNT_KEY,
-          JSON.stringify({
-            email: account.email,
-            displayName: `${account.firstName} ${account.lastName}`.trim(),
-          }),
-        );
-        signInPrefill = account.email;
-        signInNotice =
-          "Account created. Sign in with your new personal email account.";
-        window.location.hash = "#/account-created";
+        startSession(account);
+        state = loadState(currentUser());
+        sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
+        signInPrefill = "";
+        signInNotice = "";
+        window.location.hash = "#/course-selection";
         render(true);
+        showToast(
+          `Welcome, ${account.firstName}. Choose your courses to build your learning plan.`,
+          { tone: "success" },
+        );
       } catch {
         registrationView(values, {
           form:
@@ -5511,19 +5706,34 @@
     if (event.target.id === "assignment-form") {
       event.preventDefault();
       const id = event.target.dataset.id;
+      setFormAlert(event.target);
       const form = new FormData(event.target);
       const file = form.get("file");
       const existing = submissionForAssignment(id);
       const text = String(form.get("note") || "").trim();
       const newFileName = file instanceof File && file.name ? file.name : "";
       const fileName = newFileName || existing?.fileName || "";
+      if (newFileName && file.size > MAX_SUBMISSION_BYTES) {
+        setFormAlert(
+          event.target,
+          `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
       if (!text && !fileName) {
-        showToast("Add a submission note or choose a file before submitting.");
+        setFormAlert(
+          event.target,
+          "Add a submission note or choose a file before continuing.",
+        );
         document.querySelector("#submission-note")?.focus();
         return;
       }
       if (form.get("integrity") !== "confirmed") {
-        showToast("Confirm the academic integrity statement before submitting.");
+        setFormAlert(
+          event.target,
+          "Confirm the academic integrity statement before continuing.",
+        );
         document.querySelector("#submission-integrity")?.focus();
         return;
       }
@@ -5633,6 +5843,7 @@
                 },
               }
             : fallbackRecord;
+          storedRecord.submission.delivery = "lotus";
           upsertRemoteSubmission(storedRecord);
           remoteSubmissionsState.error = "";
           remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
@@ -5649,15 +5860,19 @@
           if (submitButton) {
             submitButton.disabled = false;
             submitButton.textContent = existing
-              ? "Submit New Version"
-              : "Submit Assignment";
+              ? "Submit New Version to Lotus Drive"
+              : "Submit to Lotus Drive";
           }
-          showToast(
+          const message =
             error?.name === "AbortError"
               ? "The upload timed out. Your work was not submitted."
               : error?.message ||
-                  "The file could not be uploaded. Your work was not submitted.",
-          );
+                "The file could not be uploaded. Your work was not submitted.";
+          setFormAlert(event.target, message);
+          showToast(message, {
+            tone: "error",
+            persistent: true,
+          });
         }
         return;
       }
@@ -5705,7 +5920,8 @@
         fileReceiptId,
         fileSize,
         fileType,
-        status: "submitted",
+        delivery: "device",
+        status: "draft",
         history,
       };
       replacingSubmissionId = null;
@@ -5713,8 +5929,9 @@
       render(true);
       showToast(
         fileStorageWarning
-          ? `Submission received. Receipt ${receiptId}. The file metadata was saved, but this browser could not store the file for download.`
-          : `Submission received. Receipt ${receiptId}.`,
+          ? `Draft saved on this device. Receipt ${receiptId}. File metadata was saved, but the browser could not retain the file for download.`
+          : `Draft saved on this device. Receipt ${receiptId}.`,
+        { tone: fileStorageWarning ? "error" : "success" },
       );
     }
   });
@@ -5735,6 +5952,33 @@
     });
   });
 
+  document.addEventListener("change", (event) => {
+    if (event.target.id !== "submission-file") return;
+    const form = event.target.closest("form");
+    const preview = form?.querySelector("#submission-file-preview");
+    const file = event.target.files?.[0];
+    setFormAlert(form);
+    if (!preview) return;
+    if (!file) {
+      preview.hidden = true;
+      return;
+    }
+    preview.hidden = false;
+    preview.classList.toggle("is-error", file.size > MAX_SUBMISSION_BYTES);
+    const name = preview.querySelector("[data-file-name]");
+    const meta = preview.querySelector("[data-file-meta]");
+    if (name) name.textContent = file.name;
+    if (meta) {
+      meta.textContent = `${formatFileSize(file.size)} · ${file.type || "File"}`;
+    }
+    if (file.size > MAX_SUBMISSION_BYTES) {
+      setFormAlert(
+        form,
+        `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
+      );
+    }
+  });
+
   document.addEventListener("click", async (event) => {
     const skipLink = event.target.closest(".skip-link");
     if (skipLink) {
@@ -5751,6 +5995,7 @@
       const sidebar = document.querySelector("#sidebar");
       const wasOpen = sidebar?.classList.contains("is-open");
       sidebar?.classList.remove("is-open");
+      document.querySelector(".stage")?.removeAttribute("inert");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = true;
       document.querySelector(".mobile-menu")?.setAttribute("aria-expanded", "false");
@@ -5766,7 +6011,28 @@
     }
 
     const action = target.dataset.action;
-    if (action === "google-workspace-signin") {
+    if (action === "dismiss-toast") {
+      window.clearTimeout(toastTimer);
+      target.closest(".toast")?.remove();
+    } else if (action === "toast-action") {
+      if (target.dataset.toastAction === "undo-enrollment" && lastEnrollmentChange) {
+        state.enrolledCourseIds = [...lastEnrollmentChange.enrolledCourseIds];
+        saveState();
+        lastEnrollmentChange = null;
+        render(false, true);
+        showToast("Your previous course plan has been restored.", {
+          tone: "success",
+        });
+      }
+    } else if (action === "clear-submission-file") {
+      const form = target.closest("form");
+      const input = form?.querySelector("#submission-file");
+      if (input) input.value = "";
+      const preview = form?.querySelector("#submission-file-preview");
+      if (preview) preview.hidden = true;
+      setFormAlert(form);
+      input?.focus();
+    } else if (action === "google-workspace-signin") {
       const authorizationUrl = googleWorkspaceAuthUrl();
       if (!authorizationUrl) {
         showToast(
@@ -5831,12 +6097,14 @@
       document.querySelector("#password")?.focus();
     } else if (action === "open-menu") {
       document.querySelector("#sidebar")?.classList.add("is-open");
+      document.querySelector(".stage")?.setAttribute("inert", "");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = false;
       target.setAttribute("aria-expanded", "true");
       document.querySelector(".sidebar-close")?.focus();
     } else if (action === "close-menu") {
       document.querySelector("#sidebar")?.classList.remove("is-open");
+      document.querySelector(".stage")?.removeAttribute("inert");
       const scrim = document.querySelector(".sidebar-scrim");
       if (scrim) scrim.hidden = true;
       const menuButton = document.querySelector(".mobile-menu");
@@ -5863,10 +6131,47 @@
         ? "#/signin/faculty"
         : "#/signin/student";
       loginView({ portal: facultySession ? "faculty" : "student" });
+    } else if (action === "add-course-pair") {
+      const course = findCourse(target.dataset.course);
+      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      const prerequisiteIds = (course.prerequisiteCourseIds || []).filter((id) =>
+        SELECTABLE_COURSE_IDS.includes(id),
+      );
+      const previousCourseIds = [...enrolledCourseIdsFor()];
+      const addedIds = [...prerequisiteIds, course.id].filter(
+        (id) => !previousCourseIds.includes(id),
+      );
+      state.enrolledCourseIds = [
+        ...new Set([...previousCourseIds, ...prerequisiteIds, course.id]),
+      ];
+      state.guideChecks = state.guideChecks || {};
+      [...prerequisiteIds, course.id].forEach((id) => {
+        state.guideChecks[id] = state.guideChecks[id] || [];
+      });
+      lastEnrollmentChange = {
+        enrolledCourseIds: previousCourseIds,
+        courseId: course.id,
+      };
+      saveState();
+      render(false, true);
+      document
+        .querySelector(
+          `[data-action="toggle-enrollment"][data-course="${course.id}"], .syllabus-action-card .button`,
+        )
+        ?.focus();
+      showToast(
+        `${addedIds.map((id) => findCourse(id)?.code || id).join(" and ")} added to your learning plan.`,
+        {
+          tone: "success",
+          actionLabel: "Undo",
+          action: "undo-enrollment",
+        },
+      );
     } else if (action === "toggle-enrollment") {
       const course = findCourse(target.dataset.course);
       if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
       const selected = isCourseEnrolled(course.id);
+      const previousCourseIds = [...enrolledCourseIdsFor()];
       if (selected) {
         const dependent = studentCourses().find((candidate) =>
           (candidate.prerequisiteCourseIds || []).includes(course.id),
@@ -5874,12 +6179,14 @@
         if (dependent) {
           showToast(
             `${course.code} cannot be removed while ${dependent.code} is selected.`,
+            { tone: "error", persistent: true },
           );
           return;
         }
         if (courseHasAcademicRecord(course)) {
           showToast(
             "Contact Guidance to withdraw from a course with recorded academic work.",
+            { tone: "error", persistent: true },
           );
           return;
         }
@@ -5889,7 +6196,10 @@
       } else {
         const requirement = enrollmentRequirement(course);
         if (!requirement.met) {
-          showToast(requirement.message);
+          showToast(requirement.message, {
+            tone: "error",
+            persistent: true,
+          });
           return;
         }
         state.enrolledCourseIds = [
@@ -5898,15 +6208,26 @@
         state.guideChecks = state.guideChecks || {};
         state.guideChecks[course.id] = state.guideChecks[course.id] || [];
       }
+      lastEnrollmentChange = {
+        enrolledCourseIds: previousCourseIds,
+        courseId: course.id,
+      };
       saveState();
-      render();
+      render(false, true);
       document
-        .querySelector(`[data-action="toggle-enrollment"][data-course="${course.id}"]`)
+        .querySelector(
+          `[data-action="toggle-enrollment"][data-course="${course.id}"], .syllabus-action-card .button`,
+        )
         ?.focus();
       showToast(
         selected
           ? `${course.code} removed from your plan.`
           : `${course.code} added to your courses.`,
+        {
+          tone: "success",
+          actionLabel: "Undo",
+          action: "undo-enrollment",
+        },
       );
     } else if (action === "toggle-lesson") {
       const id = target.dataset.id;
@@ -5916,7 +6237,7 @@
         state.completed.push(id);
       }
       saveState();
-      render();
+      render(false, true);
       document.querySelector('[data-action="toggle-lesson"]')?.focus();
       showToast(state.completed.includes(id) ? "Lesson marked complete." : "Lesson returned to in progress.");
     } else if (action === "toggle-guide-step") {
@@ -5927,7 +6248,7 @@
         ? current.filter((item) => item !== stepId)
         : [...current, stepId];
       saveState();
-      render();
+      render(false, true);
       document
         .querySelector(
           `[data-action="toggle-guide-step"][data-course="${courseId}"][data-step="${stepId}"]`,
@@ -5941,22 +6262,22 @@
       );
     } else if (action === "filter-assignment") {
       assignmentFilter = target.dataset.filter || "all";
-      render();
+      render(false, true);
       document.querySelector(`[data-filter="${assignmentFilter}"]`)?.focus();
     } else if (action === "replace-submission") {
       replacingSubmissionId = target.dataset.id;
-      render();
+      render(false, true);
       document.querySelector("#submission-note")?.focus();
     } else if (action === "cancel-replacement") {
       replacingSubmissionId = null;
-      render();
+      render(false, true);
       document.querySelector('[data-action="replace-submission"]')?.focus();
     } else if (action === "mark-feedback-read") {
       if (!state.feedbackRead.includes(target.dataset.id)) {
         state.feedbackRead.push(target.dataset.id);
       }
       saveState();
-      render();
+      render(false, true);
       document
         .querySelector('[data-action="mark-feedback-read"]')
         ?.focus();
