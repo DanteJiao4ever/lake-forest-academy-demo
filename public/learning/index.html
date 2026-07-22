@@ -9,21 +9,42 @@
     />
     <meta name="theme-color" content="#061d18" />
     <title>Lake Forest Learning</title>
-    <link rel="stylesheet" href="./styles.css?v=20260720-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260722-2" />
     <script>
+      const localApiOrigin = ["localhost", "127.0.0.1"].includes(
+        window.location.hostname,
+      )
+        ? `http://${window.location.hostname}:8787`
+        : "";
+      const apiOrigin = String(
+        window.LFA_API_ORIGIN || localApiOrigin,
+      ).replace(/\/+$/, "");
+      const apiUrl = (path) => (apiOrigin ? `${apiOrigin}${path}` : "");
+
+      window.LFA_AUTH_CONFIG = Object.freeze({
+        loginEndpoint: apiUrl("/v1/auth/login"),
+        registrationEndpoint: apiUrl("/v1/auth/register"),
+        enrollmentsEndpoint: apiUrl("/v1/me/enrollments"),
+        googleWorkspaceAuthStart: String(
+          window.LFA_GOOGLE_AUTH_START || "",
+        ),
+        workspaceSessionEndpoint: apiUrl("/v1/auth/session"),
+        workspaceLogoutEndpoint: apiUrl("/v1/auth/logout"),
+        allowDeviceAccounts: false,
+      });
       window.LFA_DRIVE_CONFIG = Object.freeze({
         sourceName: "Lotus Grade 12 Six-Course Library",
         rootFolderId: "1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
         rootFolderUrl:
           "https://drive.google.com/drive/folders/1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
-        materialsEndpoint: "",
+        materialsEndpoint: apiUrl("/v1/materials"),
         syncEndpoint: "",
-        submissionsEndpoint: "",
-        gradingEndpoint: "",
+        submissionsEndpoint: apiUrl("/v1/submissions"),
+        gradingEndpoint: apiUrl("/v1/grades"),
       });
     </script>
-    <script src="./course-catalog.js?v=20260720-3" defer></script>
-    <script src="./app.js?v=20260720-3" defer></script>
+    <script src="./course-catalog.js?v=20260722-2" defer></script>
+    <script src="./app.js?v=20260722-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>

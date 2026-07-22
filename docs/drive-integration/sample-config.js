@@ -5,6 +5,20 @@
  * site. Never include a Google client secret, service-account key, OAuth token,
  * database password, session signing key, or secret-manager reference here.
  */
+window.LFA_AUTH_CONFIG = Object.freeze({
+  loginEndpoint: "https://api.lakeforestacademy.ca/v1/auth/login",
+  registrationEndpoint:
+    "https://api.lakeforestacademy.ca/v1/auth/register",
+  enrollmentsEndpoint:
+    "https://api.lakeforestacademy.ca/v1/me/enrollments",
+  workspaceSessionEndpoint:
+    "https://api.lakeforestacademy.ca/v1/auth/session",
+  workspaceLogoutEndpoint:
+    "https://api.lakeforestacademy.ca/v1/auth/logout",
+  googleWorkspaceAuthStart: "",
+  allowDeviceAccounts: false,
+});
+
 window.LFA_DRIVE_CONFIG = Object.freeze({
   sourceName: "Lotus Drive",
 
