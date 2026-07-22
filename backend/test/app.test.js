@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import FormData from "form-data";
 import { createApp } from "../src/app.js";
@@ -66,10 +67,11 @@ describe("Lake Forest Learning API", () => {
   }
 
   async function addFaculty(role = "teacher") {
+    const password = `Test-${randomBytes(12).toString("base64url")}aA1!`;
     const user = await repository.createUser({
       publicId: publicId(role),
-      email: role === "teacher" ? "james.whitmore@lakeforestacademy.ca" : "admin@lakeforestacademy.ca",
-      passwordHash: await hashPassword("FacultyPass2026!", 10),
+      email: role === "teacher" ? "james.whitmore@example.invalid" : "admin@example.invalid",
+      passwordHash: await hashPassword(password, 10),
       firstName: role === "teacher" ? "James" : "Admin",
       lastName: role === "teacher" ? "Whitmore" : "User",
       displayName: role === "teacher" ? "James Whitmore" : "Admin User",
@@ -80,7 +82,7 @@ describe("Lake Forest Learning API", () => {
       method: "POST",
       url: "/v1/auth/login",
       headers: { origin },
-      payload: { email: user.email, password: "FacultyPass2026!", portal: "faculty" },
+      payload: { email: user.email, password, portal: "faculty" },
     });
     return { user, response, body: response.json(), cookie: cookieFrom(response) };
   }
