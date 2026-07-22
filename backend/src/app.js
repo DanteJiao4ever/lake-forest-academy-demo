@@ -391,6 +391,14 @@ export async function createApp({ config, repository, drive, scanner, logger = f
     await repository.ready();
     return { status: "ready" };
   });
+  app.get("/health/upload-ready", async () => {
+    await Promise.all([
+      repository.ready(),
+      scanner.ready(),
+      drive.ready(config.submissionTargetRootId),
+    ]);
+    return { status: "ready" };
+  });
 
   const registerSchema = z
     .object({

@@ -250,6 +250,20 @@ export class FakeDrive {
   constructor() {
     this.uploads = [];
     this.deleted = [];
+    this.readyChecks = [];
+    this.available = true;
+  }
+
+  async ready(rootFolderId) {
+    this.readyChecks.push(rootFolderId);
+    if (!this.available) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_UNAVAILABLE",
+        "Submission storage is temporarily unavailable.",
+      );
+    }
+    return true;
   }
 
   async uploadSubmission(input) {
@@ -277,6 +291,16 @@ export class FakeDrive {
 }
 
 export class FakeScanner {
-  constructor() { this.scans = 0; }
+  constructor() { this.scans = 0; this.available = true; }
+  async ready() {
+    if (!this.available) {
+      throw new ApiError(
+        503,
+        "MALWARE_SCANNER_UNAVAILABLE",
+        "File scanning is temporarily unavailable.",
+      );
+    }
+    return true;
+  }
   async scan() { this.scans += 1; return { clean: true }; }
 }

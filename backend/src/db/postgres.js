@@ -6,7 +6,13 @@ const { Pool } = pg;
 export function createPool(config) {
   return new Pool({
     connectionString: config.databaseUrl,
-    ssl: config.databaseSsl ? { rejectUnauthorized: true } : false,
+    ...(config.databaseSocket ? { host: config.databaseSocket } : {}),
+    // Cloud Run's Cloud SQL Unix socket is already encrypted by the managed
+    // Auth Proxy. PostgreSQL TLS is only appropriate for direct TCP links.
+    ssl:
+      !config.databaseSocket && config.databaseSsl
+        ? { rejectUnauthorized: true }
+        : false,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,

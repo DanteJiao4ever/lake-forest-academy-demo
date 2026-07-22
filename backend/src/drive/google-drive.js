@@ -72,6 +72,30 @@ export class GoogleDriveStore {
     this.folderCache = new Map();
   }
 
+  async ready(rootFolderId) {
+    if (!String(rootFolderId || "").trim()) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_UNAVAILABLE",
+        "Submission storage has not been configured.",
+      );
+    }
+    try {
+      const root = await this.getMetadata(rootFolderId);
+      if (!root || root.trashed || root.mimeType !== folderMime) {
+        throw new Error("The configured submission root is not an active folder.");
+      }
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_UNAVAILABLE",
+        "Submission storage is temporarily unavailable.",
+      );
+    }
+  }
+
   requestOptions(driveId) {
     return {
       supportsAllDrives: true,

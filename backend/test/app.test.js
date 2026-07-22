@@ -87,6 +87,23 @@ describe("Lake Forest Learning API", () => {
     return { user, response, body: response.json(), cookie: cookieFrom(response) };
   }
 
+  test("reports upload readiness only when the database, scanner, and Drive root are available", async () => {
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { status: "ready" });
+    assert.deepEqual(drive.readyChecks, [config.submissionTargetRootId]);
+  });
+
+  test("fails upload readiness closed when the malware scanner is unavailable", async () => {
+    scanner.available = false;
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "MALWARE_SCANNER_UNAVAILABLE");
+  });
+
   test("registers a server-side student with a hashed password and no implicit course access", async () => {
     const { response, body, cookie } = await register();
     assert.equal(response.statusCode, 201);

@@ -2,6 +2,10 @@
   "use strict";
 
   const APP_ROOT = document.querySelector("#app");
+  const API_STATUS = Object.freeze({
+    state: String(window.LFA_API_STATUS?.state || "disabled"),
+    message: String(window.LFA_API_STATUS?.message || "").trim(),
+  });
   const STATE_KEY = "lake-forest-learning-state-v1";
   const SESSION_KEY = "lake-forest-learning-session-v1";
   const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
@@ -2293,6 +2297,12 @@
     );
   }
 
+  function apiAvailabilityMessage(fallback) {
+    return API_STATUS.state === "ready"
+      ? ""
+      : API_STATUS.message || fallback;
+  }
+
   function authenticatedUserFrom(payload) {
     if (!payload || typeof payload !== "object") return null;
     const source =
@@ -4526,7 +4536,7 @@
         ${
           passwordSignInReady
             ? ""
-            : '<p class="auth-setup-note" role="status">Secure password sign-in is awaiting the school API deployment. No browser-only password is accepted.</p>'
+            : `<p class="auth-setup-note ${API_STATUS.state === "unavailable" || API_STATUS.state === "invalid" ? "is-error" : ""}" role="${API_STATUS.state === "invalid" ? "alert" : "status"}">${escapeHtml(apiAvailabilityMessage("Secure password sign-in is awaiting the school API deployment. No browser-only password is accepted."))}</p>`
         }
         ${
           facultyPortal
@@ -4581,7 +4591,7 @@
         ${
           registrationReady
             ? ""
-            : '<p class="auth-setup-note" role="status">Registration will open when the secure school API is deployed.</p>'
+            : `<p class="auth-setup-note ${API_STATUS.state === "unavailable" || API_STATUS.state === "invalid" ? "is-error" : ""}" role="${API_STATUS.state === "invalid" ? "alert" : "status"}">${escapeHtml(apiAvailabilityMessage("Registration will open when the secure school API is deployed."))}</p>`
         }
         ${errorSummary}
         <form id="registration-form" class="registration-form" novalidate>

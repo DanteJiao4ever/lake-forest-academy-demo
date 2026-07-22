@@ -22,8 +22,9 @@ Drive file ID or access token.
    For non-interactive secret-manager deployments, set `LFA_USER_PASSWORD` to
    the injected secret immediately before the command and unset it afterwards.
 
-5. Run `pnpm dev`. Health checks are available at `/health/live` and
-   `/health/ready`.
+5. Run `pnpm dev`. Process and database checks are available at `/health/live`
+   and `/health/ready`; `/health/upload-ready` additionally verifies ClamAV and
+   the configured Drive submission root.
 
 No user or default password is embedded in this repository. Public student
 registration always creates the `student` role. Teacher and administrator roles
@@ -221,16 +222,35 @@ script uses an advisory lock, but a dedicated release job gives clearer failure
 and rollback behavior.
 
 Do not set the production browser configuration to the API host until Cloud Run,
-Cloud SQL, the Drive identity, HTTPS, CORS and both health checks are working.
+Cloud SQL, the Drive identity, ClamAV, HTTPS, CORS and all three health checks
+are working. Configure the browser bootstrap to use `/health/upload-ready` for
+its cutover check.
 Use `COOKIE_NAME=__Host-lfa_session`, `COOKIE_SECURE=true`, and a 32-byte-or-longer
 secret-manager value for `CSRF_SECRET` in the production revision.
+
+The repository workflow `.github/workflows/deploy-backend.yml` is manual-only
+and defaults to validation (`apply_changes=false`). It never creates Cloud SQL,
+Artifact Registry, secrets, IAM identities, or networking. Before an approved
+production run, pre-provision the named resources and set the workflow's
+`GCP_*` production-environment variables. It authenticates with GitHub OIDC/WIF,
+uses separate runtime and migration database secrets/service accounts, runs the
+migration job, deploys a publicly invokable tagged candidate with zero minimum
+and three maximum instances, probes database readiness, upload dependencies and
+browser CORS on that candidate, and only then moves traffic to that exact
+revision. The Cloud SQL connection uses
+`INSTANCE_UNIX_SOCKET=/cloudsql/project:region:instance`; set
+`DATABASE_SSL=false` because the managed Auth Proxy already encrypts it.
+
+On Cloud Run, prefer Application Default Credentials: share only the two
+approved Drive roots with `GCP_RUNTIME_SERVICE_ACCOUNT` and leave both Google
+credential environment variables empty. This avoids a long-lived JSON key.
 
 ## Operational notes
 
 - Apply `migrations/001_initial.sql` through `pnpm migrate`; migration execution
   is serialized with a PostgreSQL advisory lock.
-- Store the service-account JSON and `DATABASE_URL` in the hosting platform's
-  secret manager. Prefer workload identity over a JSON key when available.
+- Store database URLs and `CSRF_SECRET` in Secret Manager. On Cloud Run, use
+  the runtime service identity for Drive instead of a service-account JSON key.
 - Share only the approved curriculum root and
   `Lake Forest Learning - Student Submissions` root with the service account.
   Do not grant domain-wide delegation.

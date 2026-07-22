@@ -15,6 +15,45 @@ export class ClamAvScanner {
     this.timeoutMs = timeoutMs;
   }
 
+  async ready() {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const socket = net.createConnection({ host: this.host, port: this.port });
+        const chunks = [];
+        let settled = false;
+
+        function finish(error, value) {
+          if (settled) return;
+          settled = true;
+          socket.destroy();
+          if (error) reject(error);
+          else resolve(value);
+        }
+
+        socket.setTimeout(this.timeoutMs);
+        socket.on("connect", () => socket.write("zPING\0"));
+        socket.on("data", (chunk) => {
+          chunks.push(chunk);
+          const reply = Buffer.concat(chunks).toString("utf8");
+          if (reply.includes("\0") || reply.includes("\n")) finish(null, reply);
+        });
+        socket.on("end", () => finish(null, Buffer.concat(chunks).toString("utf8")));
+        socket.on("timeout", () => finish(new Error("ClamAV timeout")));
+        socket.on("error", (error) => finish(error));
+      });
+      if (response.replaceAll("\0", "").trim() !== "PONG") {
+        throw new Error("Unexpected ClamAV PING response");
+      }
+      return true;
+    } catch {
+      throw new ApiError(
+        503,
+        "MALWARE_SCANNER_UNAVAILABLE",
+        "File scanning is temporarily unavailable.",
+      );
+    }
+  }
+
   async scan(buffer) {
     try {
       const response = await new Promise((resolve, reject) => {

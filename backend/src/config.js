@@ -17,6 +17,7 @@ const configSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   databaseUrl: z.string().min(1),
+  databaseSocket: z.string(),
   databaseSsl: z.boolean(),
   allowedOrigins: z.array(z.string().url()).min(1),
   cookieName: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
@@ -44,6 +45,7 @@ export function loadConfig(env = process.env) {
     databaseUrl:
       env.DATABASE_URL ||
       (nodeEnv === "test" ? "postgresql://test.invalid/lfa" : ""),
+    databaseSocket: env.INSTANCE_UNIX_SOCKET || "",
     databaseSsl: booleanValue(env.DATABASE_SSL, nodeEnv === "production"),
     allowedOrigins: String(
       env.ALLOWED_ORIGINS ||

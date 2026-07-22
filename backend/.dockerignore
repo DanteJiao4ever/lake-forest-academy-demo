@@ -1,10 +1,9 @@
+.git
+.github
 .env
 .env.*
 !.env.example
-.git
-.gitignore
-coverage
 node_modules
 test
-npm-debug.log*
-pnpm-debug.log*
+coverage
+*.log
