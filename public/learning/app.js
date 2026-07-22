@@ -15,8 +15,8 @@
   const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
   const FILE_STORE_NAME = "submission-files";
   const MAX_SUBMISSION_BYTES = 25 * 1024 * 1024;
-  const ACCESS_EMAIL = "student@example.invalid";
-  const TEACHER_EMAIL = "james.whitmore@example.invalid";
+  const ACCESS_EMAIL = "student@lakeforestacademy.ca";
+  const TEACHER_EMAIL = "james.whitmore@lakeforestacademy.ca";
   const AUTH_CONFIG = {
     loginEndpoint: String(
       window.LFA_AUTH_CONFIG?.loginEndpoint || "",
@@ -97,7 +97,7 @@
       title: "Advanced Functions",
       subject: "Mathematics",
       instructor: "James Whitmore",
-      instructorEmail: "james.whitmore@example.invalid",
+      instructorEmail: "james.whitmore@lakeforestacademy.ca",
       term: "Summer 2026",
       schedule: "Mon, Wed & Fri · 9:00 AM",
       mode: "Teacher-paced",

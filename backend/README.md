@@ -16,7 +16,7 @@ Drive file ID or access token.
    ```powershell
    $secure = Read-Host -AsSecureString
    $env:LFA_USER_PASSWORD = [System.Net.NetworkCredential]::new('', $secure).Password
-   pnpm create-user -- --email james.whitmore@example.invalid --first James --last Whitmore --role teacher --courses SCH4U,ICS4U,SPH4U,MHF4U,MCV4U,BBB4M
+   pnpm create-user -- --email james.whitmore@lakeforestacademy.ca --first James --last Whitmore --role teacher --courses SCH4U,ICS4U,SPH4U,MHF4U,MCV4U,BBB4M
    ```
 
    For non-interactive secret-manager deployments, set `LFA_USER_PASSWORD` to
@@ -156,7 +156,7 @@ ORIGIN=https://lakeforestacademy.ca
 AUTH=$(curl --silent --show-error --fail \
   --cookie-jar /tmp/lfa-cookie \
   -H "Origin: $ORIGIN" -H 'Content-Type: application/json' \
-  -d '{"email":"admin@example.invalid","password":"<read-from-secret-manager>","portal":"faculty"}' \
+  -d '{"email":"admin@lakeforestacademy.ca","password":"<read-from-secret-manager>","portal":"faculty"}' \
   "$API/v1/auth/login")
 CSRF=$(printf '%s' "$AUTH" | jq -r .csrfToken)
 
