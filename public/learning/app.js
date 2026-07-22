@@ -7,6 +7,7 @@
   const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
   const REGISTERED_ACCOUNT_KEY = "lake-forest-learning-registration-v1";
   const GRADING_DRAFTS_KEY = "lake-forest-learning-grading-drafts-v1";
+  const CSRF_TOKEN_KEY = "lake-forest-learning-csrf-v1";
   const WORKSPACE_LOGOUT_SUPPRESS_KEY =
     "lake-forest-learning-workspace-signed-out-v1";
   const DRIVE_MATERIALS_CACHE_KEY =
@@ -15,10 +16,17 @@
   const FILE_STORE_NAME = "submission-files";
   const MAX_SUBMISSION_BYTES = 25 * 1024 * 1024;
   const ACCESS_EMAIL = "student@example.invalid";
-  const ACCESS_PASSWORD = null;
   const TEACHER_EMAIL = "james.whitmore@example.invalid";
-  const TEACHER_PASSWORD = null;
   const AUTH_CONFIG = {
+    loginEndpoint: String(
+      window.LFA_AUTH_CONFIG?.loginEndpoint || "",
+    ).trim(),
+    registrationEndpoint: String(
+      window.LFA_AUTH_CONFIG?.registrationEndpoint || "",
+    ).trim(),
+    enrollmentsEndpoint: String(
+      window.LFA_AUTH_CONFIG?.enrollmentsEndpoint || "",
+    ).trim(),
     googleWorkspaceAuthStart: String(
       window.LFA_AUTH_CONFIG?.googleWorkspaceAuthStart || "",
     ).trim(),
@@ -28,6 +36,9 @@
     workspaceLogoutEndpoint: String(
       window.LFA_AUTH_CONFIG?.workspaceLogoutEndpoint || "",
     ).trim(),
+    allowDeviceAccounts:
+      window.LFA_AUTH_CONFIG?.allowDeviceAccounts === true &&
+      ["localhost", "127.0.0.1"].includes(window.location.hostname),
   };
   const DRIVE_CONFIG = Object.freeze({
     sourceName: String(
@@ -955,12 +966,33 @@
   let gradingDrafts = loadGradingDrafts();
   let submissionsRequestInFlight = false;
   let submissionsEndpointCheckedFor = "";
+  let enrollmentSaveInFlight = false;
   let drawerScrollY = 0;
+  let remoteSessionValidated = !AUTH_CONFIG.workspaceSessionEndpoint;
   const drawerMedia = window.matchMedia("(max-width: 860px)");
   state = loadState();
 
   function normalizeEmail(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function csrfTokenFrom(payload) {
+    return String(
+      payload?.csrfToken ||
+        payload?.data?.csrfToken ||
+        payload?.session?.csrfToken ||
+        "",
+    ).trim();
+  }
+
+  function currentCsrfToken() {
+    return sessionStorage.getItem(CSRF_TOKEN_KEY) || "";
+  }
+
+  function saveCsrfToken(payload) {
+    const token = csrfTokenFrom(payload);
+    if (token) sessionStorage.setItem(CSRF_TOKEN_KEY, token);
+    return token;
   }
 
   function loadGradingDrafts() {
@@ -1071,34 +1103,58 @@
     if (saved === "signed-in") return { email: ACCESS_EMAIL };
     try {
       const session = JSON.parse(saved);
-      return session && typeof session.email === "string"
-        ? { email: normalizeEmail(session.email) }
-        : null;
+      if (!session || typeof session.email !== "string") return null;
+      return {
+        email: normalizeEmail(session.email),
+        role: session.role === "teacher" ? "teacher" : "student",
+        firstName: String(session.firstName || "").trim(),
+        lastName: String(session.lastName || "").trim(),
+        displayName: String(session.displayName || "").trim(),
+        accountType: String(session.accountType || "").trim(),
+      };
     } catch {
       return null;
     }
   }
 
   function currentUser() {
+    if (!remoteSessionValidated) return null;
     const session = readSession();
     if (!session) return null;
     if (session.email === ACCESS_EMAIL) return SCHOOL_ACCOUNT;
     if (session.email === TEACHER_EMAIL) return TEACHER_ACCOUNT;
-    const account = registeredAccount(session.email);
-    if (!account) return null;
+    const account = AUTH_CONFIG.allowDeviceAccounts
+      ? registeredAccount(session.email)
+      : null;
+    if (!account && !session.displayName && !session.firstName) return null;
+    const identity = account || session;
     return {
-      ...account,
-      displayName: `${account.firstName} ${account.lastName}`.trim(),
-      accountType: "personal",
-      role: "student",
+      ...identity,
+      displayName:
+        identity.displayName ||
+        `${identity.firstName || ""} ${identity.lastName || ""}`.trim() ||
+        identity.email,
+      accountType: identity.accountType || "personal",
+      role: identity.role === "teacher" ? "teacher" : "student",
       program: "OSSD · Grade 12",
     };
   }
 
-  function startSession(account) {
+  function startSession(account, { remote = false, csrfToken = "" } = {}) {
+    if (remote) remoteSessionValidated = true;
+    if (csrfToken) sessionStorage.setItem(CSRF_TOKEN_KEY, csrfToken);
     sessionStorage.setItem(
       SESSION_KEY,
-      JSON.stringify({ email: normalizeEmail(account.email) }),
+      JSON.stringify({
+        email: normalizeEmail(account.email),
+        role: account.role === "teacher" ? "teacher" : "student",
+        firstName: String(account.firstName || "").trim(),
+        lastName: String(account.lastName || "").trim(),
+        displayName:
+          String(account.displayName || "").trim() ||
+          `${account.firstName || ""} ${account.lastName || ""}`.trim(),
+        accountType: String(account.accountType || "").trim(),
+      }),
     );
     remoteSubmissionsState = {
       records: [],
@@ -1106,6 +1162,26 @@
       lastLoadedAt: "",
     };
     submissionsEndpointCheckedFor = "";
+  }
+
+  function expireRemoteSession() {
+    const facultySession = isTeacher();
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(CSRF_TOKEN_KEY);
+    remoteSessionValidated = true;
+    remoteSubmissionsState = {
+      records: [],
+      error: "",
+      lastLoadedAt: "",
+    };
+    submissionsEndpointCheckedFor = "";
+    state = initialStateForUser(null);
+    signInNotice = "Your secure session expired. Please sign in again.";
+    const destination = facultySession
+      ? "#/signin/faculty"
+      : "#/signin/student";
+    if (window.location.hash !== destination) window.location.hash = destination;
+    render(true);
   }
 
   function stateStorageKey(user = currentUser()) {
@@ -1630,7 +1706,22 @@
     );
     if (!configured) return "";
     const url = new URL(configured);
-    if (scope) url.searchParams.set("scope", scope);
+    if (scope) {
+      url.searchParams.set("scope", scope);
+      if (!url.searchParams.has("limit")) url.searchParams.set("limit", "100");
+    }
+    return url.toString();
+  }
+
+  function nextPageUrl(currentUrl, payload) {
+    const cursor = scalarLabel(
+      payload?.page?.nextCursor ||
+        payload?.data?.page?.nextCursor ||
+        payload?.nextCursor,
+    );
+    if (!cursor) return "";
+    const url = new URL(currentUrl);
+    url.searchParams.set("cursor", cursor);
     return url.toString();
   }
 
@@ -1713,6 +1804,9 @@
       fallback.receiptId ||
       "";
     return {
+      attemptNumber: Number.isInteger(Number(version.attemptNumber))
+        ? Math.max(1, Number(version.attemptNumber))
+        : null,
       fileName:
         scalarLabel(version.fileName || version.name) ||
         fallback.fileName ||
@@ -1873,6 +1967,9 @@
       numericScore <= 100
         ? numericScore
         : null;
+    const attemptNumber = Number.isInteger(Number(source.attemptNumber))
+      ? Math.max(1, Number(source.attemptNumber))
+      : 1;
     const updatedAt = validTimestamp(
       source.updatedAt || source.gradedAt || source.grade?.updatedAt,
       "",
@@ -1883,6 +1980,7 @@
         ? source.versions
         : [];
     const fallbackVersion = {
+      attemptNumber,
       fileName,
       submittedAt,
       receiptId,
@@ -1913,6 +2011,7 @@
         role: "student",
       },
       assignmentId,
+      attemptNumber,
       courseId: course?.id || courseId || assignment?.courseId || "",
       assignmentMeta: {
         title: scalarLabel(
@@ -1933,6 +2032,7 @@
         id:
           scalarLabel(source.submissionId || source.id) ||
           scalarLabel(source.receiptId),
+        attemptNumber,
         text: scalarLabel(source.note || source.text || source.comment),
         fileName,
         submittedAt,
@@ -1979,7 +2079,15 @@
     if (!url) throw new Error("Submission service is not configured.");
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 45000);
-    const headers = { Accept: "application/json", ...(options.headers || {}) };
+    const method = String(options.method || "GET").toUpperCase();
+    const csrfToken = currentCsrfToken();
+    const headers = {
+      Accept: "application/json",
+      ...(method !== "GET" && csrfToken
+        ? { "X-CSRF-Token": csrfToken }
+        : {}),
+      ...(options.headers || {}),
+    };
     if (
       options.body &&
       !(options.body instanceof FormData) &&
@@ -1994,16 +2102,29 @@
         headers,
         signal: controller.signal,
       });
+      const text = response.status === 204 ? "" : await response.text();
+      let payload = {};
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          if (response.ok) {
+            throw new Error("The submission service returned invalid JSON.");
+          }
+        }
+      }
       if (!response.ok) {
+        if (response.status === 401) expireRemoteSession();
         const error = new Error(
-          `Submission service request failed (${response.status}).`,
+          payload?.error?.message ||
+            payload?.message ||
+            `Submission service request failed (${response.status}).`,
         );
         error.status = response.status;
+        error.code = payload?.error?.code || "";
         throw error;
       }
-      if (response.status === 204) return {};
-      const text = await response.text();
-      return text ? JSON.parse(text) : {};
+      return payload;
     } finally {
       window.clearTimeout(timeout);
     }
@@ -2065,19 +2186,31 @@
     captureVisibleGradingDraft();
     if (!silent) render(false, true);
     try {
-      const payload = await requestSubmissionEndpoint(endpoint);
-      const normalized = normalizeRemoteSubmissions(
-        payload,
-        isTeacher(user) ? null : user,
-      );
-      if (!normalized.found) {
-        throw new Error(
-          "The submission service returned an unsupported response.",
+      let pageUrl = endpoint;
+      let pageCount = 0;
+      let found = false;
+      const loadedRecords = [];
+      while (pageUrl && pageCount < 50) {
+        const payload = await requestSubmissionEndpoint(pageUrl);
+        const normalized = normalizeRemoteSubmissions(
+          payload,
+          isTeacher(user) ? null : user,
         );
+        if (!normalized.found) {
+          throw new Error(
+            "The submission service returned an unsupported response.",
+          );
+        }
+        found = true;
+        loadedRecords.push(...normalized.records);
+        pageUrl = nextPageUrl(pageUrl, payload);
+        pageCount += 1;
       }
+      if (!found) throw new Error("No submission response was returned.");
+      const uniqueRecords = collapseRemoteSubmissionRecords(loadedRecords);
       const records = isTeacher(user)
-        ? normalized.records
-        : normalized.records.filter(
+        ? uniqueRecords
+        : uniqueRecords.filter(
             (record) =>
               !record.student.email ||
               normalizeEmail(record.student.email) ===
@@ -2107,6 +2240,196 @@
           document.querySelector(`#${focusedFieldId}`)?.focus(),
         );
       }
+    }
+  }
+
+  function collapseRemoteSubmissionRecords(records) {
+    const groups = new Map();
+    for (const record of records) {
+      const key = `${studentRecordKey(record.student)}:${record.courseId}:${record.assignmentId}`;
+      const current = groups.get(key);
+      if (!current) {
+        groups.set(key, record);
+        continue;
+      }
+      const recordAttempt = Number(record.attemptNumber || 1);
+      const currentAttempt = Number(current.attemptNumber || 1);
+      const recordTime = new Date(record.submission.submittedAt || 0).getTime();
+      const currentTime = new Date(current.submission.submittedAt || 0).getTime();
+      const latest =
+        recordAttempt > currentAttempt ||
+        (recordAttempt === currentAttempt && recordTime > currentTime)
+          ? record
+          : current;
+      const history = [
+        ...(current.submission.history || []),
+        ...(record.submission.history || []),
+      ];
+      const uniqueHistory = [
+        ...new Map(
+          history.map((version) => [
+            version.receiptId ||
+              `${version.submittedAt}:${version.fileReceiptId}:${version.fileName}`,
+            version,
+          ]),
+        ).values(),
+      ].sort(
+        (a, b) =>
+          new Date(a.submittedAt || 0).getTime() -
+          new Date(b.submittedAt || 0).getTime(),
+      );
+      groups.set(key, {
+        ...latest,
+        submission: { ...latest.submission, history: uniqueHistory },
+      });
+    }
+    return [...groups.values()];
+  }
+
+  function serverAuthReady() {
+    return Boolean(
+      configuredAuthUrl(AUTH_CONFIG.loginEndpoint) &&
+        configuredAuthUrl(AUTH_CONFIG.workspaceSessionEndpoint),
+    );
+  }
+
+  function authenticatedUserFrom(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const source =
+      payload.user || payload.data?.user || payload.data || payload;
+    const authenticated =
+      payload.authenticated ?? payload.data?.authenticated ?? source.authenticated;
+    if (authenticated === false || !source || typeof source !== "object") {
+      return null;
+    }
+    const email = normalizeEmail(source.email || payload.email);
+    const serverRole = String(source.role || payload.role || "").toLowerCase();
+    const role = serverRole === "teacher_admin" ? "teacher" : serverRole;
+    if (!email || !["student", "teacher"].includes(role)) return null;
+    const firstName = String(source.firstName || "").trim();
+    const lastName = String(source.lastName || "").trim();
+    return {
+      id: scalarLabel(source.id || source.userId),
+      email,
+      role,
+      firstName,
+      lastName,
+      displayName:
+        String(source.displayName || source.name || "").trim() ||
+        `${firstName} ${lastName}`.trim() ||
+        email,
+      accountType: role === "teacher" ? "faculty" : "personal",
+    };
+  }
+
+  async function requestAuthEndpoint(endpoint, options = {}) {
+    const url = configuredAuthUrl(endpoint);
+    if (!url) throw new Error("The secure sign-in service is not configured.");
+    const {
+      timeout: timeoutMs = 10000,
+      skipSessionExpiry = false,
+      ...requestOptions
+    } = options;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      Number(timeoutMs),
+    );
+    const method = String(requestOptions.method || "GET").toUpperCase();
+    const csrfToken = currentCsrfToken();
+    const headers = {
+      Accept: "application/json",
+      ...(method !== "GET" && csrfToken
+        ? { "X-CSRF-Token": csrfToken }
+        : {}),
+      ...(requestOptions.headers || {}),
+    };
+    if (requestOptions.body && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+        ...requestOptions,
+        headers,
+        signal: controller.signal,
+      });
+      const text = response.status === 204 ? "" : await response.text();
+      let payload = {};
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = {};
+        }
+      }
+      if (!response.ok) {
+        if (response.status === 401 && !skipSessionExpiry) {
+          expireRemoteSession();
+        }
+        const message =
+          payload?.error?.message ||
+          payload?.message ||
+          (response.status === 401
+            ? "The email or password is incorrect."
+            : `The sign-in service returned ${response.status}.`);
+        const error = new Error(message);
+        error.status = response.status;
+        error.code = payload?.error?.code || "";
+        throw error;
+      }
+      saveCsrfToken(payload);
+      return payload;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  function courseIdsFromCodes(courseCodes) {
+    return [...new Set(courseCodes)]
+      .map((code) => findCourse(String(code || "").toLowerCase())?.id)
+      .filter((id) => id && SELECTABLE_COURSE_IDS.includes(id));
+  }
+
+  function courseCodesFromIds(courseIds) {
+    return [...new Set(courseIds)]
+      .map((id) => findCourse(id)?.code)
+      .filter(Boolean);
+  }
+
+  async function refreshRemoteEnrollments() {
+    const endpoint = configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint);
+    if (!endpoint || !currentUser() || isTeacher()) return false;
+    const payload = await requestAuthEndpoint(endpoint.toString());
+    const courseCodes = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.courseCodes)
+        ? payload.courseCodes
+        : null;
+    if (!courseCodes) {
+      throw new Error("The enrollment service returned an invalid course list.");
+    }
+    state.enrolledCourseIds = courseIdsFromCodes(courseCodes);
+    saveState();
+    return true;
+  }
+
+  async function persistRemoteEnrollments(courseIds) {
+    const endpoint = configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint);
+    if (!endpoint || !currentUser() || isTeacher()) return false;
+    if (enrollmentSaveInFlight) {
+      throw new Error("Your previous course change is still being saved.");
+    }
+    const body = JSON.stringify({ courseCodes: courseCodesFromIds(courseIds) });
+    enrollmentSaveInFlight = true;
+    try {
+      await requestAuthEndpoint(endpoint.toString(), {
+        method: "PUT",
+        body,
+      });
+      return true;
+    } finally {
+      enrollmentSaveInFlight = false;
     }
   }
 
@@ -2195,6 +2518,9 @@
       ) || "";
     const rawUnit =
       scalarLabel(raw.unitName || raw.unitTitle || raw.unit) ||
+      (Number.isInteger(Number(raw.unitNumber))
+        ? `Unit ${Number(raw.unitNumber)}`
+        : "") ||
       pathUnit ||
       "Course Resources";
     const rawCategory =
@@ -2322,19 +2648,31 @@
   async function requestDriveJson(endpoint, options = {}) {
     const url = configuredDriveUrl(endpoint);
     if (!url) throw new Error("Drive endpoint is not configured.");
+    const { timeoutMs = 8000, ...fetchOptions } = options;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      Number(timeoutMs) || 8000,
+    );
+    const method = String(fetchOptions.method || "GET").toUpperCase();
+    const csrfToken = currentCsrfToken();
+    const headers = {
+      Accept: "application/json",
+      ...(fetchOptions.body ? { "Content-Type": "application/json" } : {}),
+      ...(method !== "GET" && csrfToken
+        ? { "X-CSRF-Token": csrfToken }
+        : {}),
+      ...(fetchOptions.headers || {}),
+    };
     try {
       const response = await fetch(url, {
         credentials: "include",
-        headers: {
-          Accept: "application/json",
-          ...(options.body ? { "Content-Type": "application/json" } : {}),
-        },
-        ...options,
+        ...fetchOptions,
+        headers,
         signal: controller.signal,
       });
       if (!response.ok) {
+        if (response.status === 401) expireRemoteSession();
         throw new Error(`Drive request failed (${response.status}).`);
       }
       return await response.json();
@@ -2354,15 +2692,35 @@
     driveEndpointChecked = true;
     if (!silent && isTeacher()) render();
     try {
-      const payload = await requestDriveJson(DRIVE_CONFIG.materialsEndpoint);
-      const normalized = normalizeDrivePayload(payload);
-      if (!normalized.found) {
-        throw new Error("The materials endpoint returned an unsupported response.");
+      const firstUrl = new URL(
+        configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint),
+      );
+      if (!firstUrl.searchParams.has("limit")) {
+        firstUrl.searchParams.set("limit", "100");
+      }
+      let pageUrl = firstUrl.toString();
+      let pageCount = 0;
+      let lastSyncedAt = "";
+      const records = [];
+      while (pageUrl && pageCount < 50) {
+        const payload = await requestDriveJson(pageUrl);
+        const normalized = normalizeDrivePayload(payload);
+        if (!normalized.found) {
+          throw new Error(
+            "The materials endpoint returned an unsupported response.",
+          );
+        }
+        records.push(...normalized.records);
+        lastSyncedAt = normalized.lastSyncedAt || lastSyncedAt;
+        pageUrl = nextPageUrl(pageUrl, payload);
+        pageCount += 1;
       }
       driveMaterialsState = {
-        records: normalized.records,
+        records: [
+          ...new Map(records.map((record) => [record.id, record])).values(),
+        ],
         lastSyncedAt:
-          normalized.lastSyncedAt || driveMaterialsState.lastSyncedAt,
+          lastSyncedAt || driveMaterialsState.lastSyncedAt,
         lastLoadedAt: new Date().toISOString(),
         error: "",
       };
@@ -2401,7 +2759,9 @@
     try {
       const payload = await requestDriveJson(DRIVE_CONFIG.syncEndpoint, {
         method: "POST",
+        headers: { "Idempotency-Key": requestIdFor("drive-sync") },
         body: JSON.stringify({ mode: "incremental" }),
+        timeoutMs: 120000,
       });
       const normalized = normalizeDrivePayload(payload);
       const syncStatus = scalarLabel(
@@ -2444,7 +2804,7 @@
     } catch (error) {
       driveMaterialsState.error =
         error?.name === "AbortError"
-          ? "The Drive sync did not respond within 8 seconds."
+          ? "The Drive sync did not respond within two minutes."
           : error?.message || "Drive sync could not be completed.";
       showToast(driveMaterialsState.error);
     } finally {
@@ -2465,55 +2825,68 @@
   }
 
   async function restoreWorkspaceSession() {
-    if (
-      readSession() ||
-      sessionStorage.getItem(WORKSPACE_LOGOUT_SUPPRESS_KEY) === "1"
-    ) {
+    if (sessionStorage.getItem(WORKSPACE_LOGOUT_SUPPRESS_KEY) === "1") {
+      remoteSessionValidated = true;
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(CSRF_TOKEN_KEY);
       return false;
     }
     const endpoint = configuredAuthUrl(AUTH_CONFIG.workspaceSessionEndpoint);
-    if (!endpoint) return false;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    if (!endpoint) {
+      remoteSessionValidated = true;
+      return false;
+    }
     try {
-      const response = await fetch(endpoint, {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
+      const session = await requestAuthEndpoint(endpoint.toString(), {
+        timeout: 5000,
       });
-      if (!response.ok) return false;
-      const session = await response.json();
-      const validTeacher =
-        session?.authenticated === true &&
-        session?.role === "teacher" &&
-        normalizeEmail(session?.email) === TEACHER_EMAIL;
-      if (!validTeacher) return false;
+      const account = authenticatedUserFrom(session);
+      if (!account) {
+        remoteSessionValidated = true;
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        return false;
+      }
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
-      startSession(TEACHER_ACCOUNT);
-      state = loadState(TEACHER_ACCOUNT);
+      startSession(account, { remote: true });
+      state = loadState(account);
+      if (account.role === "student") {
+        try {
+          await refreshRemoteEnrollments();
+        } catch {
+          // Keep the last device cache if enrollment sync is temporarily offline.
+        }
+      }
       return true;
     } catch {
+      remoteSessionValidated = true;
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(CSRF_TOKEN_KEY);
       return false;
-    } finally {
-      window.clearTimeout(timeout);
     }
   }
 
   async function closeWorkspaceSession() {
     const endpoint = configuredAuthUrl(AUTH_CONFIG.workspaceLogoutEndpoint);
-    if (!endpoint) return;
+    if (!endpoint) return true;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5000);
     try {
-      await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: "POST",
         credentials: "include",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(currentCsrfToken()
+            ? { "X-CSRF-Token": currentCsrfToken() }
+            : {}),
+        },
         keepalive: true,
         signal: controller.signal,
       });
+      return response.ok || response.status === 401;
     } catch {
-      // Local sign-out still completes when the optional Workspace backend is offline.
+      return false;
     } finally {
       window.clearTimeout(timeout);
     }
@@ -3895,6 +4268,7 @@
       ? [...record.history].reverse()
       : [
           {
+            attemptNumber: record.submission.attemptNumber,
             fileName: record.submission.fileName,
             submittedAt: record.submission.submittedAt,
             receiptId: record.submission.receiptId,
@@ -3932,6 +4306,11 @@
             <div class="section-heading"><div><p class="eyebrow">Files & Versions</p><h2>Submission History</h2></div></div>
             <div class="teacher-records">
               ${history.map((version, index) => {
+                const versionNumber = Number.isInteger(
+                  Number(version.attemptNumber),
+                )
+                  ? Number(version.attemptNumber)
+                  : history.length - index;
                 const fileReceiptId =
                   version.fileReceiptId ||
                   (index === 0 ? record.submission.fileReceiptId : "");
@@ -3950,7 +4329,7 @@
                     <span>${icon("file", 22)}</span>
                     <div>
                       <strong>${escapeHtml(fileName)}</strong>
-                      <p>Version ${history.length - index} · ${formatDate(version.submittedAt, true)}</p>
+                      <p>Version ${versionNumber} · ${formatDate(version.submittedAt, true)}</p>
                       <small>${escapeHtml(version.receiptId || "")}${version.fileSize ? ` · ${formatFileSize(version.fileSize)}` : ""}</small>
                     </div>
                     ${fileUrl
@@ -3962,7 +4341,7 @@
                 `;
               }).join("")}
             </div>
-            <p class="login-help"><strong>File Availability</strong>Files uploaded in this browser can be downloaded here. Earlier sample records display metadata only until central storage is connected.</p>
+            <p class="login-help"><strong>File Availability</strong>${submissionsEndpointUrl() ? "Submitted files are opened through the secure school service. Records without an attached file show metadata only." : "Files saved in this browser can be downloaded here. Records created on another device may show metadata only."}</p>
           </article>
         </div>
         <aside>
@@ -4098,6 +4477,8 @@
       : email || signInPrefill;
     const message = notice || signInNotice;
     const workspaceReady = Boolean(googleWorkspaceAuthUrl());
+    const passwordSignInReady =
+      serverAuthReady() || AUTH_CONFIG.allowDeviceAccounts;
     const portalSwitcher = `
       <nav class="portal-switcher" aria-label="Choose a sign-in portal">
         <a class="portal-switch-link ${facultyPortal ? "" : "is-active"}" href="#/signin/student" ${facultyPortal ? "" : 'aria-current="page"'}>Student Sign In</a>
@@ -4109,12 +4490,12 @@
       `
         ${portalSwitcher}
         <p class="eyebrow">${facultyPortal ? "Faculty Portal" : "Student Portal"}</p>
-        <h1>Welcome Back</h1>
-        <p class="login-intro">${
-          facultyPortal
-            ? "James Whitmore can continue with his Lake Forest Academy Google Workspace account or use the assigned faculty credentials."
-            : "Sign in with your school account or a personal email account created on this device."
-        }</p>
+          <h1>Welcome Back</h1>
+          <p class="login-intro">${
+            facultyPortal
+              ? "James Whitmore can continue with his Lake Forest Academy Google Workspace account or use his assigned faculty credentials."
+              : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
+          }</p>
         ${message ? `<p class="form-success" role="status">${escapeHtml(message)}</p>` : ""}
         ${
           facultyPortal
@@ -4127,7 +4508,7 @@
                 ${
                   workspaceReady
                     ? "Secure Workspace authorization is connected."
-                    : "Workspace authorization will activate after the school OAuth client and backend callback are connected. Use the assigned faculty credentials for now."
+                    : "Workspace authorization will activate after the school OAuth client and secure callback are connected."
                 }
               </p>
               <div class="auth-divider"><span>or use faculty credentials</span></div>
@@ -4140,8 +4521,13 @@
           <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
           ${passwordInput("password", "Password", "current-password")}
           ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
-          <button class="button button-primary login-submit" type="submit">${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
+          <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
         </form>
+        ${
+          passwordSignInReady
+            ? ""
+            : '<p class="auth-setup-note" role="status">Secure password sign-in is awaiting the school API deployment. No browser-only password is accepted.</p>'
+        }
         ${
           facultyPortal
             ? `
@@ -4149,14 +4535,14 @@
                 <p><strong>Need your school mailbox?</strong>Open the Google Workspace Gmail page in a new tab.</p>
                 <a class="button button-secondary full-width" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">Open Workspace Gmail</a>
               </div>
-              <p class="login-help"><strong>Faculty Access</strong>This entry is currently assigned to James Whitmore. Additional faculty accounts can be added after central authentication is connected.</p>
+              <p class="login-help"><strong>Faculty Access</strong>This entry is assigned to James Whitmore. Additional faculty accounts are provisioned by school administrators.</p>
             `
             : `
               <div class="auth-switch">
                 <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
                 <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
               </div>
-              <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can continue to use their existing credentials.</p>
+              <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can use the credentials issued by the school.</p>
             `
         }
       `,
@@ -4170,6 +4556,13 @@
   }
 
   function registrationView(values = {}, errors = {}) {
+    const serverRegistrationReady = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.registrationEndpoint),
+    );
+    const deviceRegistrationReady =
+      !serverRegistrationReady && AUTH_CONFIG.allowDeviceAccounts;
+    const registrationReady =
+      serverRegistrationReady || deviceRegistrationReady;
     const errorMessages = Object.values(errors);
     const errorSummary = errorMessages.length
       ? `
@@ -4184,7 +4577,12 @@
       `
         <p class="eyebrow">Personal Email Access</p>
         <h1>Create Your Account</h1>
-        <p class="login-intro">Use any personal email address to create a Lake Forest Learning student profile on this device.</p>
+        <p class="login-intro">Use any personal email address to create a Lake Forest Learning student profile${deviceRegistrationReady ? " on this development device" : ""}.</p>
+        ${
+          registrationReady
+            ? ""
+            : '<p class="auth-setup-note" role="status">Registration will open when the secure school API is deployed.</p>'
+        }
         ${errorSummary}
         <form id="registration-form" class="registration-form" novalidate>
           <div class="register-name-grid">
@@ -4219,14 +4617,18 @@
             ${passwordInput("confirmPassword", "Confirm Password", "new-password", errors.confirmPassword ? "confirmPassword-error" : "")}
             ${fieldError(errors, "confirmPassword")}
           </div>
-          <label class="consent-row" for="deviceConsent">
-            <input id="deviceConsent" name="deviceConsent" type="checkbox" value="yes" ${errors.deviceConsent ? 'aria-invalid="true" aria-describedby="deviceConsent-error"' : ""} />
-            <span>I understand this account is currently saved only on this device.</span>
-          </label>
-          ${fieldError(errors, "deviceConsent")}
-          <button class="button button-primary login-submit" type="submit">Create Account ${icon("arrow", 17)}</button>
+          ${
+            deviceRegistrationReady
+              ? `<label class="consent-row" for="deviceConsent">
+                  <input id="deviceConsent" name="deviceConsent" type="checkbox" value="yes" ${errors.deviceConsent ? 'aria-invalid="true" aria-describedby="deviceConsent-error"' : ""} />
+                  <span>I understand this development account is saved only on this device.</span>
+                </label>
+                ${fieldError(errors, "deviceConsent")}`
+              : ""
+          }
+          <button class="button button-primary login-submit" type="submit" ${registrationReady ? "" : 'disabled aria-disabled="true"'}>Create Account ${icon("arrow", 17)}</button>
         </form>
-        <p class="auth-privacy-note"><strong>Your privacy matters.</strong>Your name, email and a protected password record stay in this browser. Do not register on a shared or public device.</p>
+        <p class="auth-privacy-note"><strong>Your privacy matters.</strong>${deviceRegistrationReady ? "Your name, email and protected password record stay in this development browser." : "Your password is sent only to the secure school API and is never stored in this webpage."}</p>
         <p class="auth-return">Already have an account? <a href="#/signin/student">Return to Student Sign In</a></p>
       `,
     );
@@ -4254,10 +4656,10 @@
           <dl>
             <div><dt>Student</dt><dd>${escapeHtml(account.displayName)}</dd></div>
             <div><dt>Email</dt><dd>${escapeHtml(account.email)}</dd></div>
-            <div><dt>Account Storage</dt><dd>This browser</dd></div>
+            <div><dt>Account Storage</dt><dd>${AUTH_CONFIG.allowDeviceAccounts && !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) ? "Development browser" : "Secure school account"}</dd></div>
           </dl>
           <button class="button button-primary full-width" type="button" data-action="continue-to-signin">Continue to Sign In ${icon("arrow", 17)}</button>
-          <p class="auth-privacy-note"><strong>Remember:</strong>Use this same browser and device when signing in with this account.</p>
+          <p class="auth-privacy-note"><strong>Next step:</strong>Sign in with the personal email and password you just registered.</p>
         </div>
       `,
     );
@@ -4423,6 +4825,9 @@
   function courseSelectionView() {
     const enrolled = studentCourses();
     const credits = selectedCreditCount();
+    const remoteEnrollmentEnabled = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint),
+    );
     return `
       ${pageHeading(
         "Grade 12 Course Planning",
@@ -4441,7 +4846,7 @@
       <section class="selection-toolbar" aria-label="Selected course plan">
         <div class="selection-toolbar-summary">
           <span class="selection-toolbar-count">${enrolled.length}</span>
-          <span><strong>${plural(enrolled.length, "course")} selected</strong><small>${credits.toFixed(1)} planned OSSD ${credits === 1 ? "credit" : "credits"} · saved on this device</small></span>
+          <span><strong>${plural(enrolled.length, "course")} selected</strong><small>${credits.toFixed(1)} planned OSSD ${credits === 1 ? "credit" : "credits"} · ${remoteEnrollmentEnabled ? "saved to your account" : "saved on this device"}</small></span>
         </div>
         <div class="selection-chips">
           ${
@@ -4529,7 +4934,7 @@
           })
           .join("")}
       </section>
-      <p class="selection-storage-note">Course choices are saved to this account in the current browser until the central student-record database is connected.</p>
+      <p class="selection-storage-note">${remoteEnrollmentEnabled ? "Course choices are saved to your account and will be available the next time you sign in." : "Course choices are saved only in this browser until the enrolment service is connected."}</p>
     `;
   }
 
@@ -5284,10 +5689,16 @@
             : -1;
     const lifecycle = [
       [
-        deliveredToLotus ? "Submitted" : "Saved on This Device",
+        deliveredToLotus
+          ? "Submitted"
+          : remoteSubmissionEnabled
+            ? "Ready to Submit"
+            : "Saved on This Device",
         deliveredToLotus
           ? "Your work and submission receipt are recorded."
-          : "This draft remains in this browser until the Lotus submission service is connected.",
+          : remoteSubmissionEnabled
+            ? "Attach your completed work and submit it securely to your teacher."
+            : "This draft remains in this browser until the Lotus submission service is connected.",
       ],
       ["Under Review", "Your instructor is reviewing the submission."],
       ["Feedback Available", "Comments and rubric results are ready."],
@@ -5415,12 +5826,19 @@
                         .slice()
                         .reverse()
                         .map(
-                          (record, index) => `
+                          (record, index) => {
+                            const versionNumber = Number.isInteger(
+                              Number(record.attemptNumber),
+                            )
+                              ? Number(record.attemptNumber)
+                              : submission.history.length - index;
+                            return `
                             <div>
-                              <span>${submission.history.length - index}</span>
-                              <p><strong>Version ${submission.history.length - index}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
+                              <span>${versionNumber}</span>
+                              <p><strong>Version ${versionNumber}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
                             </div>
-                          `,
+                          `;
+                          },
                         )
                         .join("")}
                     </div>
@@ -5854,16 +6272,40 @@
       const portal = form.get("portal") === "faculty" ? "faculty" : "student";
       let account = null;
       let accepted = false;
-      if (portal === "faculty") {
-        if (email === TEACHER_EMAIL) {
-          account = TEACHER_ACCOUNT;
-          accepted = password === TEACHER_PASSWORD;
+      let remoteLogin = false;
+      if (serverAuthReady()) {
+        const submitButton = event.target.querySelector('[type="submit"]');
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = "Signing In…";
         }
-      } else {
-        if (email === ACCESS_EMAIL) {
-          account = SCHOOL_ACCOUNT;
-          accepted = password === ACCESS_PASSWORD;
-        } else if (email !== TEACHER_EMAIL) {
+        try {
+          const payload = await requestAuthEndpoint(AUTH_CONFIG.loginEndpoint, {
+            method: "POST",
+            skipSessionExpiry: true,
+            body: JSON.stringify({ email, password, portal }),
+          });
+          account = authenticatedUserFrom(payload);
+          accepted = Boolean(
+            account &&
+              account.role === (portal === "faculty" ? "teacher" : "student") &&
+              (portal !== "faculty" || account.email === TEACHER_EMAIL),
+          );
+          remoteLogin = accepted;
+        } catch (error) {
+          loginView({
+            error:
+              error?.name === "AbortError"
+                ? "The sign-in service did not respond. Please try again."
+                : error?.message || "Secure sign-in is temporarily unavailable.",
+            email,
+            portal,
+          });
+          document.querySelector(email ? "#password" : "#email")?.focus();
+          return;
+        }
+      } else if (AUTH_CONFIG.allowDeviceAccounts && portal === "student") {
+        if (email !== TEACHER_EMAIL) {
           account = registeredAccount(email);
           try {
             accepted = Boolean(
@@ -5875,9 +6317,14 @@
         }
       }
       if (!accepted || !account) {
+        if (serverAuthReady() && account) {
+          await closeWorkspaceSession();
+        }
         loginView({
           error:
-            portal === "faculty"
+            !serverAuthReady() && !AUTH_CONFIG.allowDeviceAccounts
+              ? "Secure sign-in is not available until the school API is deployed."
+              : portal === "faculty"
               ? "The faculty email or password is incorrect. Please try again."
               : "The student email or password is incorrect. Please try again.",
           email,
@@ -5886,8 +6333,18 @@
         document.querySelector(email ? "#password" : "#email")?.focus();
         return;
       }
-      startSession(account);
+      sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      startSession(account, { remote: remoteLogin });
       state = loadState(currentUser());
+      let enrollmentRefreshError = "";
+      if (remoteLogin && account.role === "student") {
+        try {
+          await refreshRemoteEnrollments();
+        } catch (error) {
+          enrollmentRefreshError =
+            error?.message || "Your course selections could not be refreshed.";
+        }
+      }
       signInNotice = "";
       signInPrefill = "";
       sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
@@ -5895,7 +6352,11 @@
         ? "#/teacher/dashboard"
         : "#/dashboard";
       render(true);
-      showToast(`Welcome back, ${currentUser()?.firstName || "student"}.`);
+      showToast(
+        enrollmentRefreshError ||
+          `Welcome back, ${currentUser()?.firstName || "student"}.`,
+        { tone: enrollmentRefreshError ? "error" : "success" },
+      );
       return;
     }
 
@@ -5921,7 +6382,11 @@
       } else if (values.email.endsWith("@lakeforestacademy.ca")) {
         errors.email =
           "School email accounts are issued by Lake Forest Academy. Sign in with your school credentials or use a personal address.";
-      } else if (registeredAccount(values.email)) {
+      } else if (
+        AUTH_CONFIG.allowDeviceAccounts &&
+        !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) &&
+        registeredAccount(values.email)
+      ) {
         errors.email =
           "We could not create an account with this email. Try signing in or use another address.";
       }
@@ -5931,7 +6396,11 @@
       if (!confirmation || confirmation !== password) {
         errors.confirmPassword = "Enter the same password again.";
       }
-      if (form.get("deviceConsent") !== "yes") {
+      if (
+        AUTH_CONFIG.allowDeviceAccounts &&
+        !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) &&
+        form.get("deviceConsent") !== "yes"
+      ) {
         errors.deviceConsent =
           "Confirm that you understand this account is saved on this device.";
       }
@@ -5947,34 +6416,80 @@
         submitButton.textContent = "Creating Account…";
       }
       try {
-        const salt = createPasswordSalt();
-        const passwordHash = await derivePasswordHash(password, salt);
-        const account = {
-          firstName: values.firstName,
-          lastName: values.lastName,
-          email: values.email,
-          passwordHash,
-          salt,
-          createdAt: new Date().toISOString(),
-        };
-        const accounts = loadAccounts();
-        accounts[values.email] = account;
-        saveAccounts(accounts);
-        startSession(account);
+        const registrationEndpoint = configuredAuthUrl(
+          AUTH_CONFIG.registrationEndpoint,
+        );
+        let account;
+        let remoteRegistration = false;
+        if (registrationEndpoint) {
+          const payload = await requestAuthEndpoint(
+            registrationEndpoint.toString(),
+            {
+              method: "POST",
+              skipSessionExpiry: true,
+              body: JSON.stringify({
+                firstName: values.firstName,
+                lastName: values.lastName,
+                email: values.email,
+                password,
+              }),
+            },
+          );
+          account = authenticatedUserFrom(payload);
+          if (!account || account.role !== "student") {
+            throw new Error("The registration service returned an invalid account.");
+          }
+          remoteRegistration = true;
+        } else if (AUTH_CONFIG.allowDeviceAccounts) {
+          const salt = createPasswordSalt();
+          const passwordHash = await derivePasswordHash(password, salt);
+          account = {
+            firstName: values.firstName,
+            lastName: values.lastName,
+            displayName: `${values.firstName} ${values.lastName}`.trim(),
+            email: values.email,
+            role: "student",
+            passwordHash,
+            salt,
+            createdAt: new Date().toISOString(),
+          };
+          const accounts = loadAccounts();
+          accounts[values.email] = account;
+          saveAccounts(accounts);
+        } else {
+          throw new Error(
+            "Registration is not available until the secure school API is deployed.",
+          );
+        }
+        sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+        startSession(account, { remote: remoteRegistration });
         state = loadState(currentUser());
+        let enrollmentSyncError = "";
+        if (remoteRegistration) {
+          try {
+            await persistRemoteEnrollments(state.enrolledCourseIds || []);
+          } catch (error) {
+            enrollmentSyncError =
+              error?.message || "Your empty course plan could not be saved.";
+          }
+        }
         sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
         signInPrefill = "";
         signInNotice = "";
         window.location.hash = "#/course-selection";
         render(true);
         showToast(
-          `Welcome, ${account.firstName}. Choose your courses to build your learning plan.`,
-          { tone: "success" },
+          enrollmentSyncError ||
+            `Welcome, ${account.firstName}. Choose your courses to build your learning plan.`,
+          { tone: enrollmentSyncError ? "error" : "success" },
         );
-      } catch {
+      } catch (error) {
         registrationView(values, {
           form:
-            "We could not securely create the account in this browser. Please update your browser or try another device.",
+            error?.name === "AbortError"
+              ? "The registration service did not respond. Please try again."
+              : error?.message ||
+                "We could not securely create this account. Please try again.",
         });
         document.querySelector("#registration-errors")?.focus();
       }
@@ -6107,53 +6622,40 @@
               publish: true,
             }),
           });
-          const normalizedPayload = normalizeRemoteSubmissions(
-            payload,
-            record.student,
-          );
           const responseSource =
             payload?.data?.submission ||
             payload?.submission ||
             payload?.data ||
             payload;
-          const returned =
-            normalizedPayload.records[0] ||
-            normalizeRemoteSubmission(responseSource, 0, record.student);
+          const returnedScore = Number(responseSource?.score);
+          const returnedVersion = Number(responseSource?.version);
           upsertRemoteSubmission({
-            id: returned?.id || record.id,
-            student: returned?.student || record.student,
+            id: record.id,
+            student: record.student,
             assignmentId,
-            courseId: returned?.courseId || record.course.id,
+            courseId: record.course.id,
             submission: {
               ...record.submission,
-              ...(returned?.submission || {}),
-              id:
-                returned?.submission.id ||
-                record.submission.id ||
-                submissionId ||
-                record.id,
-              score,
-              feedback,
+              id: record.submission.id || submissionId || record.id,
+              score: Number.isFinite(returnedScore) ? returnedScore : score,
+              feedback:
+                typeof responseSource?.feedback === "string"
+                  ? responseSource.feedback
+                  : feedback,
               gradeEtag:
-                returned?.submission.gradeEtag ||
                 scalarLabel(responseSource?.etag) ||
                 record.submission.gradeEtag ||
                 "",
               gradeVersion:
-                returned?.submission.gradeVersion ??
-                (Number.isInteger(Number(responseSource?.version))
-                  ? Number(responseSource.version)
-                  : record.submission.gradeVersion ?? null),
+                Number.isInteger(returnedVersion)
+                  ? returnedVersion
+                  : record.submission.gradeVersion ?? null,
               status: "graded",
-              gradedAt:
-                returned?.submission.gradedAt ||
-                validTimestamp(responseSource?.gradedAt, gradedAt),
-              updatedAt:
-                returned?.submission.updatedAt ||
-                validTimestamp(
-                  responseSource?.publishedAt || responseSource?.gradedAt,
-                  gradedAt,
-                ),
+              gradedAt: validTimestamp(responseSource?.gradedAt, gradedAt),
+              updatedAt: validTimestamp(
+                responseSource?.publishedAt || responseSource?.gradedAt,
+                gradedAt,
+              ),
             },
           });
           remoteSubmissionsState.error = "";
@@ -6241,7 +6743,11 @@
         const unitNumber =
           Number.parseInt(String(assignment?.unit || "").match(/\d+/)?.[0], 10) ||
           "";
-        const attemptNumber = (existing?.history?.length || 0) + 1;
+        const attemptNumber =
+          Math.max(
+            Number(existing?.attemptNumber || 0),
+            existing?.history?.length || 0,
+          ) + 1;
         const upload = new FormData();
         upload.set("assignmentId", id);
         upload.set("courseCode", course?.code || "");
@@ -6516,7 +7022,17 @@
       target.closest(".toast")?.remove();
     } else if (action === "toast-action") {
       if (target.dataset.toastAction === "undo-enrollment" && lastEnrollmentChange) {
+        const currentCourseIds = [...enrolledCourseIdsFor()];
         state.enrolledCourseIds = [...lastEnrollmentChange.enrolledCourseIds];
+        try {
+          await persistRemoteEnrollments(state.enrolledCourseIds);
+        } catch (error) {
+          state.enrolledCourseIds = currentCourseIds;
+          showToast(error?.message || "The course plan could not be restored.", {
+            tone: "error",
+          });
+          return;
+        }
         saveState();
         lastEnrollmentChange = null;
         render(false, true);
@@ -6675,11 +7191,22 @@
     } else if (action === "logout") {
       const facultySession = isTeacher();
       target.disabled = true;
-      if (facultySession) {
+      if (configuredAuthUrl(AUTH_CONFIG.workspaceLogoutEndpoint)) {
         sessionStorage.setItem(WORKSPACE_LOGOUT_SUPPRESS_KEY, "1");
-        await closeWorkspaceSession();
+        const signedOut = await closeWorkspaceSession();
+        if (!signedOut) {
+          sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+          target.disabled = false;
+          showToast(
+            "Secure sign-out could not be confirmed. Check your connection and try again.",
+            { tone: "error", persistent: true },
+          );
+          return;
+        }
       }
       sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(CSRF_TOKEN_KEY);
+      remoteSessionValidated = true;
       state = initialStateForUser(null);
       remoteSubmissionsState = {
         records: [],
@@ -6710,6 +7237,15 @@
       [...prerequisiteIds, course.id].forEach((id) => {
         state.guideChecks[id] = state.guideChecks[id] || [];
       });
+      try {
+        await persistRemoteEnrollments(state.enrolledCourseIds);
+      } catch (error) {
+        state.enrolledCourseIds = previousCourseIds;
+        showToast(error?.message || "These courses could not be added.", {
+          tone: "error",
+        });
+        return;
+      }
       lastEnrollmentChange = {
         enrolledCourseIds: previousCourseIds,
         courseId: course.id,
@@ -6769,6 +7305,15 @@
         ];
         state.guideChecks = state.guideChecks || {};
         state.guideChecks[course.id] = state.guideChecks[course.id] || [];
+      }
+      try {
+        await persistRemoteEnrollments(state.enrolledCourseIds);
+      } catch (error) {
+        state.enrolledCourseIds = previousCourseIds;
+        showToast(error?.message || "Your course selection could not be saved.", {
+          tone: "error",
+        });
+        return;
       }
       lastEnrollmentChange = {
         enrolledCourseIds: previousCourseIds,
