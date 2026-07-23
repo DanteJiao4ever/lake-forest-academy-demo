@@ -142,7 +142,7 @@ jobs:
             DATABASE_SSL=false
             DATABASE_POOL_MAX=5
             INSTANCE_UNIX_SOCKET=/cloudsql/${{ env.SQL_INSTANCE }}
-            ALLOWED_ORIGINS="https://lakeforestacademy.ca,https://www.lakeforestacademy.ca"
+            ALLOWED_ORIGINS=https://lakeforestacademy.ca\,https://www.lakeforestacademy.ca
             COOKIE_NAME=__Host-lfa_session
             COOKIE_SECURE=true
             CLAMAV_HOST=${{ env.CLAMAV_HOST }}
