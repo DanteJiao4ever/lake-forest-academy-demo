@@ -196,7 +196,7 @@ jobs:
               --output "$body" \
               "$CANDIDATE_URL$path"
             jq -e '.status == "ready"' "$body" >/dev/null
-            grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca\r?$' "$headers"
+            grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca[[:space:]]*$' "$headers"
           }
           probe "/health/ready" "core-ready"
           probe "/health/upload-ready" "upload-ready"
