@@ -158,7 +158,7 @@ jobs:
             --subnet=${{ env.VPC_SUBNET }}
             --vpc-egress=private-ranges-only
             --ingress=all
-            --allow-unauthenticated
+            --no-invoker-iam-check
             --min=0
             --max=3
             --concurrency=20
