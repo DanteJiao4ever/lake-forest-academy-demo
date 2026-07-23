@@ -4,20 +4,42 @@ import { ApiError } from "../lib/errors.js";
 const { Pool } = pg;
 
 export function createPool(config) {
+  // node-postgres reparses connectionString when it creates each client, so a
+  // URL host would otherwise override the Cloud SQL Unix socket.
+  const connection = config.databaseSocket
+    ? socketConnectionOptions(config.databaseUrl, config.databaseSocket)
+    : { connectionString: config.databaseUrl };
   return new Pool({
-    connectionString: config.databaseUrl,
-    ...(config.databaseSocket ? { host: config.databaseSocket } : {}),
+    ...connection,
     // Cloud Run's Cloud SQL Unix socket is already encrypted by the managed
     // Auth Proxy. PostgreSQL TLS is only appropriate for direct TCP links.
     ssl:
       !config.databaseSocket && config.databaseSsl
         ? { rejectUnauthorized: true }
         : false,
-    max: 10,
+    max: config.databasePoolMax,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
     application_name: "lake-forest-learning-api",
   });
+}
+
+function socketConnectionOptions(connectionString, socket) {
+  const parsed = new URL(connectionString);
+  if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
+    throw new Error("DATABASE_URL must use the postgres or postgresql protocol.");
+  }
+  const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+  if (!parsed.username || !database) {
+    throw new Error("DATABASE_URL must include a database user and database name.");
+  }
+  return {
+    user: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    database,
+    host: socket,
+    port: parsed.port ? Number.parseInt(parsed.port, 10) : 5432,
+  };
 }
 
 function databaseError(error) {

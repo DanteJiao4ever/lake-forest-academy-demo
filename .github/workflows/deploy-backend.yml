@@ -58,6 +58,8 @@ jobs:
       DB_MIGRATION_SECRET: ${{ vars.GCP_DB_MIGRATION_SECRET }}
       CSRF_SECRET: ${{ vars.GCP_CSRF_SECRET }}
       CLAMAV_HOST: ${{ vars.GCP_CLAMAV_HOST }}
+      VPC_NETWORK: ${{ vars.GCP_VPC_NETWORK }}
+      VPC_SUBNET: ${{ vars.GCP_VPC_SUBNET }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       CANDIDATE_TAG: candidate-${{ github.run_id }}
@@ -67,7 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CLAMAV_HOST WIF_PROVIDER DEPLOY_SA; do
+          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
             test -n "${!name:-}" || { echo "Missing production variable: ${name}" >&2; exit 1; }
           done
       - id: auth
@@ -107,11 +109,15 @@ jobs:
           env_vars: |-
             NODE_ENV=production
             DATABASE_SSL=false
+            DATABASE_POOL_MAX=5
             INSTANCE_UNIX_SOCKET=/cloudsql/${{ env.SQL_INSTANCE }}
           secrets: DATABASE_URL=${{ env.DB_MIGRATION_SECRET }}:latest,CSRF_SECRET=${{ env.CSRF_SECRET }}:latest
           flags: >-
             --service-account=${{ env.MIGRATION_SA }}
             --set-cloudsql-instances=${{ env.SQL_INSTANCE }}
+            --network=${{ env.VPC_NETWORK }}
+            --subnet=${{ env.VPC_SUBNET }}
+            --vpc-egress=private-ranges-only
             --command=node
             "--args=scripts/migrate.js"
             --tasks=1
@@ -134,6 +140,7 @@ jobs:
             NODE_ENV=production
             HOST=0.0.0.0
             DATABASE_SSL=false
+            DATABASE_POOL_MAX=5
             INSTANCE_UNIX_SOCKET=/cloudsql/${{ env.SQL_INSTANCE }}
             ALLOWED_ORIGINS="https://lakeforestacademy.ca,https://www.lakeforestacademy.ca"
             COOKIE_NAME=__Host-lfa_session
@@ -147,6 +154,9 @@ jobs:
             --service-account=${{ env.RUNTIME_SA }}
             --set-cloudsql-instances=${{ env.SQL_INSTANCE }}
             --execution-environment=gen2
+            --network=${{ env.VPC_NETWORK }}
+            --subnet=${{ env.VPC_SUBNET }}
+            --vpc-egress=private-ranges-only
             --ingress=all
             --allow-unauthenticated
             --min=0
@@ -209,5 +219,12 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             "$public_url/health/upload-ready" \
             | jq -e '.status == "ready"' >/dev/null
+      - name: Remove the temporary candidate URL
+        if: ${{ always() && steps.candidate.outputs.revision != '' }}
+        run: >-
+          gcloud run services update-traffic "$SERVICE"
+          --project "$PROJECT_ID"
+          --region "$REGION"
+          --remove-tags "$CANDIDATE_TAG"
       - name: Deployment summary
         run: echo "Learning API candidate passed core, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"

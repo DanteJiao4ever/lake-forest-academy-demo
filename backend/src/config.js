@@ -19,6 +19,7 @@ const configSchema = z.object({
   databaseUrl: z.string().min(1),
   databaseSocket: z.string(),
   databaseSsl: z.boolean(),
+  databasePoolMax: z.number().int().min(1).max(20),
   allowedOrigins: z.array(z.string().url()).min(1),
   cookieName: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   cookieSecure: z.boolean(),
@@ -47,6 +48,7 @@ export function loadConfig(env = process.env) {
       (nodeEnv === "test" ? "postgresql://test.invalid/lfa" : ""),
     databaseSocket: env.INSTANCE_UNIX_SOCKET || "",
     databaseSsl: booleanValue(env.DATABASE_SSL, nodeEnv === "production"),
+    databasePoolMax: integerValue(env.DATABASE_POOL_MAX, nodeEnv === "production" ? 5 : 10),
     allowedOrigins: String(
       env.ALLOWED_ORIGINS ||
         "https://lakeforestacademy.ca,https://www.lakeforestacademy.ca,http://localhost:5173,http://127.0.0.1:5173",
