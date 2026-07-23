@@ -30,6 +30,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Build
+        env:
+          LFA_API_ORIGIN: ${{ vars.LFA_API_ORIGIN }}
+          LFA_API_HEALTH_PATH: ${{ vars.LFA_API_HEALTH_PATH }}
+          LFA_API_HEALTH_TIMEOUT_MS: ${{ vars.LFA_API_HEALTH_TIMEOUT_MS }}
+          LFA_GOOGLE_AUTH_START: ${{ vars.LFA_GOOGLE_AUTH_START }}
+          LFA_DRIVE_SYNC_PATH: ${{ vars.LFA_DRIVE_SYNC_PATH }}
         run: npm run build
       - name: Configure Pages
         uses: actions/configure-pages@v5

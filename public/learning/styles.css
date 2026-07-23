@@ -227,6 +227,35 @@ textarea:focus-visible {
 
 /* Login */
 
+.bootstrap-state {
+  min-height: 100svh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  background: var(--paper);
+  color: var(--muted);
+  padding: 32px;
+  text-align: center;
+}
+
+.bootstrap-state img {
+  width: min(320px, 72vw);
+}
+
+.bootstrap-state-error h1 {
+  margin: 0;
+  color: var(--forest);
+}
+
+.noscript-message {
+  margin: 0;
+  background: #fbebe8;
+  color: #72251f;
+  padding: 14px;
+  text-align: center;
+}
+
 .login-page {
   min-height: 100svh;
   display: grid;
@@ -6259,6 +6288,12 @@ details.module[open] .module-toggle svg,
     bottom: 16px;
     left: 16px;
   }
+}
+
+.auth-setup-note.is-error {
+  border-color: #e6bbb6;
+  background: #fff0ee;
+  color: #8c2f25;
 }
 
 /* Faculty review workflow */

@@ -5,7 +5,7 @@
   const START_DATE = "2026-09-01";
   const COMPLETION_DATE = "2027-06-30";
   const INSTRUCTOR = "James Whitmore";
-  const INSTRUCTOR_EMAIL = "james.whitmore@example.invalid";
+  const INSTRUCTOR_EMAIL = "james.whitmore@lakeforestacademy.ca";
 
   const createCourse = ({
     id,
