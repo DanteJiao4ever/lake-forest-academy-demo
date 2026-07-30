@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "catalog:generate": "node scripts/generate-platform-catalog.mjs",
+    "catalog:check": "node scripts/generate-platform-catalog.mjs --check && node --test scripts/generate-platform-catalog.test.mjs",
+    "learning:check": "node --check public/learning/bootstrap.js && node --check public/learning/course-catalog.js && node --check public/learning/platform-sequences.js && node --check public/learning/app.js && node --test scripts/learning-frontend.test.mjs",
+    "build": "node scripts/generate-platform-catalog.mjs --check && node --test scripts/generate-platform-catalog.test.mjs && node --check public/learning/bootstrap.js && node --check public/learning/course-catalog.js && node --check public/learning/platform-sequences.js && node --check public/learning/app.js && node --test scripts/learning-frontend.test.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

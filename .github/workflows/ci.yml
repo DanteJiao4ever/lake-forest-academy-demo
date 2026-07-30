@@ -27,6 +27,20 @@ jobs:
   backend:
     name: Test learning API
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: lfa_learning
+          POSTGRES_USER: lfa_migrator
+          POSTGRES_PASSWORD: ci-migrator-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lfa_migrator -d lfa_learning"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -41,6 +55,28 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Prepare least-privileged runtime role
+        env:
+          PGPASSWORD: ci-migrator-password
+        run: >-
+          psql --host 127.0.0.1 --username lfa_migrator --dbname lfa_learning
+          --set ON_ERROR_STOP=1
+          --command "CREATE ROLE lfa_api LOGIN INHERIT PASSWORD 'ci-runtime-password'"
+      - name: Apply catalog migrations twice
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
+          DATABASE_SSL: "false"
+        run: |
+          pnpm migrate
+          pnpm migrate
+      - name: Verify runtime catalog access
+        env:
+          PGPASSWORD: ci-runtime-password
+        run: >-
+          psql --host 127.0.0.1 --username lfa_api --dbname lfa_learning
+          --set ON_ERROR_STOP=1
+          --command "SELECT count(*) FROM course_modules; SELECT count(*) FROM gradebook_items;"
       - run: pnpm check
       - run: pnpm test
       - run: docker build --tag lfa-learning-api:${GITHUB_SHA} .

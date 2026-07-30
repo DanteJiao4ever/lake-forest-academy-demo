@@ -239,6 +239,173 @@ describe("Lake Forest Learning API", () => {
     assert.equal(changed.json().error.code, "IDEMPOTENCY_KEY_REUSED");
   });
 
+  test("blocks a locked catalog assignment, then uses its authoritative OSSD unit after override", async () => {
+    const registered = await register();
+    const student = repository.users[0];
+    await repository.replaceEnrollments(student.id, ["MHF4U"]);
+    const fields = {
+      courseCode: "MHF4U",
+      // The platform module is 2, while the canonical OSSD assignment unit is 1.
+      unitNumber: 2,
+      assignmentId: "mhf4u-m02-assignment",
+      assignmentTitle: "Exponential and Logarithmic Model Audit",
+      attemptNumber: 1,
+      note: "Authenticated modelling report",
+      integrityConfirmed: "true",
+    };
+    const file = {
+      name: "model-audit.pdf",
+      type: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+    };
+    const lockedForm = multipartPayload(fields, file);
+    const locked = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "catalog-locked-submit-01",
+        ...lockedForm.headers,
+      },
+      payload: lockedForm.payload,
+    });
+    assert.equal(locked.statusCode, 409);
+    assert.equal(locked.json().error.code, "MODULE_LOCKED");
+    assert.equal(drive.uploads.length, 0);
+
+    const faculty = await addFaculty();
+    const override = await app.inject({
+      method: "POST",
+      url: `/v1/teacher/students/${student.publicId}/modules/mhf4u-m02/unlock-overrides`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+      },
+      payload: { reason: "Approved prerequisite equivalency" },
+    });
+    assert.equal(override.statusCode, 201, override.body);
+
+    const unlockedForm = multipartPayload(fields, file);
+    const unlocked = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "catalog-unlocked-submit-1",
+        ...unlockedForm.headers,
+      },
+      payload: unlockedForm.payload,
+    });
+    assert.equal(unlocked.statusCode, 201, unlocked.body);
+    assert.equal(unlocked.json().data.unitNumber, 1);
+    assert.equal(repository.submissions[0].unitNumber, 1);
+    assert.deepEqual(drive.uploads[0].pathSegments, [
+      "MHF4U",
+      student.publicId,
+      "Unit 1",
+      "mhf4u-m02-assignment",
+      "Attempt 1",
+    ]);
+  });
+
+  test("rejects supervised uploads and enforces each student submission mode", async () => {
+    const registered = await register();
+    await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
+    const pdf = {
+      name: "response.pdf",
+      type: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+    };
+    const base = {
+      courseCode: "MHF4U",
+      unitNumber: 11,
+      assignmentTitle: "Assessment",
+      attemptNumber: 1,
+      integrityConfirmed: "true",
+    };
+
+    const supervisedForm = multipartPayload({
+      ...base,
+      assignmentId: "mhf4u-m11-assignment",
+      note: "Attempted take-home exam",
+    }, pdf);
+    const supervised = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "supervised-upload-denied",
+        ...supervisedForm.headers,
+      },
+      payload: supervisedForm.payload,
+    });
+    assert.equal(supervised.statusCode, 422);
+    assert.equal(supervised.json().error.code, "SUBMISSION_MODE_NOT_ALLOWED");
+
+    for (const [id, mode] of [
+      ["file-only", "file"],
+      ["project-only", "project"],
+      ["text-only", "text"],
+    ]) {
+      repository.assignments.set(id, {
+        id,
+        courseCode: "MHF4U",
+        moduleId: null,
+        unitNumber: 1,
+        title: id,
+        maxAttempts: 1,
+        submissionMode: mode,
+        status: "active",
+      });
+    }
+
+    for (const id of ["file-only", "project-only"]) {
+      const form = multipartPayload({ ...base, assignmentId: id, note: "Note without file" });
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/submissions",
+        headers: {
+          origin,
+          cookie: registered.cookie,
+          "x-csrf-token": registered.body.csrfToken,
+          "idempotency-key": `${id}-requires-file`,
+          ...form.headers,
+        },
+        payload: form.payload,
+      });
+      assert.equal(response.statusCode, 422);
+      assert.equal(response.json().error.code, "SUBMISSION_FILE_REQUIRED");
+    }
+
+    const textWithFile = multipartPayload({
+      ...base,
+      assignmentId: "text-only",
+      note: "Written response",
+    }, pdf);
+    const rejectedAttachment = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "text-mode-no-attachment",
+        ...textWithFile.headers,
+      },
+      payload: textWithFile.payload,
+    });
+    assert.equal(rejectedAttachment.statusCode, 422);
+    assert.equal(rejectedAttachment.json().error.code, "SUBMISSION_FILE_NOT_ALLOWED");
+    assert.equal(drive.uploads.length, 0);
+  });
+
   test("rejects a client-supplied attempt number that skips server history", async () => {
     const registered = await register();
     await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
