@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import FormData from "form-data";
 import { createApp } from "../src/app.js";
@@ -86,6 +86,286 @@ describe("Lake Forest Learning API", () => {
     });
     return { user, response, body: response.json(), cookie: cookieFrom(response) };
   }
+
+  async function registerEnrolledStudent(email) {
+    const registered = await register(email);
+    const user = repository.users.at(-1);
+    await repository.replaceEnrollments(user.id, ["MHF4U"]);
+    return {
+      ...registered,
+      user,
+      csrf: registered.body.csrfToken,
+    };
+  }
+
+  test("requires evidence for zero-weight activity completion and records non-empty evidence", async () => {
+    const student = await registerEnrolledStudent("evidence-policy@example.invalid");
+    const endpoint = "/v1/me/progress/activities/mhf4u-m00-activity";
+    const headers = {
+      origin,
+      cookie: student.cookie,
+      "x-csrf-token": student.csrf,
+    };
+
+    const empty = await app.inject({
+      method: "PUT",
+      url: endpoint,
+      headers,
+      payload: { status: "completed", evidence: {} },
+    });
+    assert.equal(empty.statusCode, 422, empty.body);
+    assert.equal(empty.json().error.code, "ACTIVITY_EVIDENCE_REQUIRED");
+    assert.equal(
+      repository.activityCompletions.has(
+        `${student.user.id}:mhf4u-m00-activity`,
+      ),
+      false,
+    );
+
+    const completed = await app.inject({
+      method: "PUT",
+      url: endpoint,
+      headers,
+      payload: {
+        status: "completed",
+        evidence: { acknowledgement: true },
+      },
+    });
+    assert.equal(completed.statusCode, 200, completed.body);
+    assert.deepEqual(completed.json().data.evidence, {
+      acknowledgement: true,
+    });
+  });
+
+  test("keeps completed activity evidence immutable after it unlocks module progression", async () => {
+    const student = await registerEnrolledStudent("immutable-evidence@example.invalid");
+    const activityEndpoint = "/v1/me/progress/activities/mhf4u-m00-activity";
+    const moduleEndpoint = "/v1/me/progress/modules/mhf4u-m00";
+    const headers = {
+      origin,
+      cookie: student.cookie,
+      "x-csrf-token": student.csrf,
+    };
+    const originalEvidence = { acknowledgement: true, source: "orientation" };
+
+    const completedActivity = await app.inject({
+      method: "PUT",
+      url: activityEndpoint,
+      headers,
+      payload: { status: "completed", evidence: originalEvidence },
+    });
+    assert.equal(completedActivity.statusCode, 200, completedActivity.body);
+    const originalCompletedAt = completedActivity.json().data.completedAt;
+
+    const completedModule = await app.inject({
+      method: "PUT",
+      url: moduleEndpoint,
+      headers,
+      payload: { status: "completed" },
+    });
+    assert.equal(completedModule.statusCode, 200, completedModule.body);
+
+    const exactRetry = await app.inject({
+      method: "PUT",
+      url: activityEndpoint,
+      headers,
+      payload: { status: "completed", evidence: originalEvidence },
+    });
+    assert.equal(exactRetry.statusCode, 200, exactRetry.body);
+    assert.equal(exactRetry.json().data.completedAt, originalCompletedAt);
+
+    for (const payload of [
+      { status: "started", evidence: {} },
+      { status: "completed", evidence: { acknowledgement: true, source: "replacement" } },
+    ]) {
+      const changed = await app.inject({
+        method: "PUT",
+        url: activityEndpoint,
+        headers,
+        payload,
+      });
+      assert.equal(changed.statusCode, 409, changed.body);
+      assert.equal(changed.json().error.code, "ACTIVITY_COMPLETION_LOCKED");
+    }
+
+    assert.deepEqual(
+      repository.activityCompletions.get(
+        `${student.user.id}:mhf4u-m00-activity`,
+      ),
+      {
+        activityId: "mhf4u-m00-activity",
+        status: "completed",
+        evidence: originalEvidence,
+        completedAt: originalCompletedAt,
+      },
+    );
+    const progress = await repository.listStudentProgress(student.user.id, "MHF4U");
+    assert.equal(progress.find((item) => item.moduleId === "mhf4u-m01")?.status, "available");
+  });
+
+  test("fails closed when an activity has an unknown unlock criteria version", async () => {
+    const student = await registerEnrolledStudent("invalid-policy@example.invalid");
+    repository.modules[0].unlockCriteria = {
+      version: 999,
+      scope: "next_module",
+      operator: "all",
+      conditions: [
+        { type: "source_module_completed" },
+        { type: "required_activity_completed" },
+        { type: "required_activity_evidence_present" },
+      ],
+    };
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/activities/mhf4u-m00-activity",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+      },
+      payload: {
+        status: "completed",
+        evidence: { acknowledgement: true },
+      },
+    });
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.equal(response.json().error.code, "UNLOCK_POLICY_INVALID");
+    assert.equal(
+      repository.activityCompletions.has(
+        `${student.user.id}:mhf4u-m00-activity`,
+      ),
+      false,
+    );
+  });
+
+  test("allows a published zero score to satisfy weighted activity completion without a threshold", async () => {
+    const student = await registerEnrolledStudent("zero-score@example.invalid");
+    const teacher = await addFaculty();
+
+    const override = await app.inject({
+      method: "POST",
+      url: `/v1/teacher/students/${student.user.publicId}/modules/mhf4u-m02/unlock-overrides`,
+      headers: {
+        origin,
+        cookie: teacher.cookie,
+        "x-csrf-token": teacher.body.csrfToken,
+      },
+      payload: { reason: "Documented accelerated progression for API testing" },
+    });
+    assert.equal(override.statusCode, 201, override.body);
+
+    const submission = await repository.createSubmission({
+      id: randomUUID(),
+      studentUserId: student.user.id,
+      studentId: student.user.publicId,
+      studentName: student.user.displayName,
+      studentEmail: student.user.email,
+      studentFirstName: student.user.firstName,
+      studentLastName: student.user.lastName,
+      courseCode: "MHF4U",
+      unitNumber: 1,
+      assignmentId: "mhf4u-m02-assignment",
+      assignmentTitle: "Exponential and Logarithmic Model Audit",
+      attemptNumber: 1,
+      note: "Submitted work",
+      idempotencyKey: "zero-score-submission",
+      requestFingerprint: "0".repeat(64),
+    }, []);
+
+    const grade = await app.inject({
+      method: "PUT",
+      url: `/v1/grades/${submission.id}`,
+      headers: {
+        origin,
+        cookie: teacher.cookie,
+        "x-csrf-token": teacher.body.csrfToken,
+        "idempotency-key": "zero-score-published-grade",
+        "if-match": '"grade-v0"',
+      },
+      payload: {
+        submissionId: submission.id,
+        score: 0,
+        feedback: "Published evidence without a pass threshold.",
+        publish: true,
+      },
+    });
+    assert.equal(grade.statusCode, 200, grade.body);
+    assert.equal(grade.json().data.score, 0);
+    assert.ok(grade.json().data.publishedAt);
+
+    const completed = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/activities/mhf4u-m02-activity",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+      },
+      payload: { status: "completed" },
+    });
+    assert.equal(completed.statusCode, 200, completed.body);
+    assert.equal(completed.json().data.status, "completed");
+  });
+
+  test("keeps teacher-only module fields out of student responses while exposing them to faculty", async () => {
+    const student = await registerEnrolledStudent("module-privacy@example.invalid");
+    const teacher = await addFaculty();
+    repository.modules.find((module) => module.id === "mhf4u-m02").activity.components = [{
+      id: "private-component",
+      title: "Authenticated conference",
+      processCheckpoints: ["Staff-only checkpoint"],
+    }];
+
+    const studentResponse = await app.inject({
+      method: "GET",
+      url: "/v1/courses/MHF4U/modules",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(studentResponse.statusCode, 200, studentResponse.body);
+    for (const module of studentResponse.json().data) {
+      assert.equal(Object.hasOwn(module, "teacherPresence"), false);
+      assert.equal(Object.hasOwn(module, "evidenceToRetain"), false);
+      assert.equal(
+        Object.hasOwn(module.activity, "processCheckpoints"),
+        false,
+      );
+      assert.equal(
+        Object.hasOwn(module.activity, "authenticationEvidence"),
+        false,
+      );
+      for (const component of module.activity.components || []) {
+        assert.equal(Object.hasOwn(component, "processCheckpoints"), false);
+      }
+    }
+
+    const teacherResponse = await app.inject({
+      method: "GET",
+      url: "/v1/courses/MHF4U/modules",
+      headers: { origin, cookie: teacher.cookie },
+    });
+    assert.equal(teacherResponse.statusCode, 200, teacherResponse.body);
+    for (const module of teacherResponse.json().data) {
+      assert.equal(Object.hasOwn(module, "teacherPresence"), true);
+      assert.equal(Object.hasOwn(module, "evidenceToRetain"), true);
+      assert.equal(
+        Object.hasOwn(module.activity, "processCheckpoints"),
+        true,
+      );
+      assert.equal(
+        Object.hasOwn(module.activity, "authenticationEvidence"),
+        true,
+      );
+    }
+    assert.deepEqual(
+      teacherResponse
+        .json()
+        .data.find((module) => module.id === "mhf4u-m02")
+        .activity.components[0].processCheckpoints,
+      ["Staff-only checkpoint"],
+    );
+  });
 
   test("reports upload readiness only when the database, scanner, and Drive root are available", async () => {
     const response = await app.inject({ method: "GET", url: "/health/upload-ready" });

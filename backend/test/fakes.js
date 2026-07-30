@@ -1,6 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
+import { isDeepStrictEqual } from "node:util";
 import { ApiError } from "../src/lib/errors.js";
+import { evaluateUnlockPolicy, policyRequires } from "../src/lib/unlock-policy.js";
+
+function unlockCriteria(weightPercent, moduleNumber) {
+  return {
+    version: 1,
+    scope: moduleNumber === 11 ? "course_completion" : "next_module",
+    operator: "all",
+    derivation: "platform_policy_not_natural_language_parser",
+    conditions: [
+      { type: "source_module_completed" },
+      { type: "required_activity_completed" },
+      Number(weightPercent) > 0
+        ? { type: "all_gradebook_components_published" }
+        : { type: "required_activity_evidence_present" },
+    ],
+  };
+}
 
 export class FakeRepository {
   constructor() {
@@ -44,7 +62,7 @@ export class FakeRepository {
         activity: { id: "mhf4u-m02-activity", type: "coursework", title: "Function Assessment", weightPercent: 10, sequence: [], processCheckpoints: [], authenticationEvidence: [], components: [], isRequired: true },
       },
       {
-        id: "mhf4u-m11", courseCode: "MHF4U", moduleNumber: 11, unitNumber: 11,
+        id: "mhf4u-m11", courseCode: "MHF4U", moduleNumber: 11, unitNumber: null,
         title: "Final Evaluation", unitTitle: "Final Evaluation", estimatedCreditHours: 10,
         lessons: [], resources: [],
         activity: { id: "mhf4u-m11-activity", type: "final_evaluation", title: "Written Examination", weightPercent: 25, sequence: [], processCheckpoints: [], authenticationEvidence: [], components: [], isRequired: true },
@@ -61,10 +79,10 @@ export class FakeRepository {
       { id: "mhf4u-oral-defence", courseCode: "MHF4U", moduleActivityId: null, category: "final_evaluation", componentKey: "oral-defence", title: "Authenticated Oral Defence", weightPercent: 5, maxScore: 100, submissionMode: "oral_defence", assignmentId: null, position: 4 },
     ];
     this.assignments = new Map([
-      ["a1", { id: "a1", courseCode: "MHF4U", moduleId: null, moduleNumber: null, unitNumber: 2, title: "Quadratic Models Investigation", instructions: "", rubric: [], weightPercent: null, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
-      ["mhf4u-m02-assignment", { id: "mhf4u-m02-assignment", courseCode: "MHF4U", moduleId: "mhf4u-m02", moduleNumber: 2, unitNumber: 1, title: "Exponential and Logarithmic Model Audit", instructions: "Authenticated modelling report", rubric: [], weightPercent: 10, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
-      ["mhf4u-m11-assignment", { id: "mhf4u-m11-assignment", courseCode: "MHF4U", moduleId: "mhf4u-m11", moduleNumber: 11, unitNumber: 11, title: "MHF4U Mandatory Written Examination", instructions: "Supervised examination", rubric: [], weightPercent: 25, submissionMode: "supervised", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
-      ["legacy-a1", { id: "legacy-a1", courseCode: "MHF4U", moduleId: null, moduleNumber: null, unitNumber: 1, title: "Legacy assignment", instructions: "", rubric: [], weightPercent: null, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
+      ["a1", { id: "a1", courseCode: "MHF4U", moduleId: null, moduleNumber: null, unitNumber: 2, sectionKind: "unit", title: "Quadratic Models Investigation", instructions: "", rubric: [], weightPercent: null, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
+      ["mhf4u-m02-assignment", { id: "mhf4u-m02-assignment", courseCode: "MHF4U", moduleId: "mhf4u-m02", moduleNumber: 2, unitNumber: 1, sectionKind: "unit", title: "Exponential and Logarithmic Model Audit", instructions: "Authenticated modelling report", rubric: [], weightPercent: 10, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
+      ["mhf4u-m11-assignment", { id: "mhf4u-m11-assignment", courseCode: "MHF4U", moduleId: "mhf4u-m11", moduleNumber: 11, unitNumber: 11, sectionKind: "final_evaluation", title: "MHF4U Mandatory Written Examination", instructions: "Supervised examination", rubric: [], weightPercent: 25, submissionMode: "supervised", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
+      ["legacy-a1", { id: "legacy-a1", courseCode: "MHF4U", moduleId: null, moduleNumber: null, unitNumber: 1, sectionKind: "unit", title: "Legacy assignment", instructions: "", rubric: [], weightPercent: null, submissionMode: "text_or_file", availableFrom: null, dueAt: null, availableUntil: null, maxAttempts: 99, status: "active" }],
     ]);
     this.target = {
       id: randomUUID(),
@@ -171,6 +189,8 @@ export class FakeRepository {
     return {
       courses: 6, modules: 72, lessons: 120, resources: 198, activities: 72,
       gradebook_items: 44, assessment_components: 38,
+      valid_unlock_policies: 72, final_evaluation_assignments: 8,
+      unit_assignments: 30,
       invalid_course_hours: 0, invalid_course_weights: 0,
     };
   }
@@ -198,19 +218,53 @@ export class FakeRepository {
   async getActivity(activityId) {
     const module = this.modules.find((item) => item.activity?.id === activityId);
     return module
-      ? { id: activityId, moduleId: module.id, courseCode: module.courseCode, moduleNumber: module.moduleNumber, status: "published" }
+      ? {
+          id: activityId,
+          moduleId: module.id,
+          courseCode: module.courseCode,
+          moduleNumber: module.moduleNumber,
+          completionCriteria: module.unlockCriteria || unlockCriteria(
+            module.activity.weightPercent,
+            module.moduleNumber,
+          ),
+          status: "published",
+        }
       : null;
   }
 
   async listCourseModules(courseCode, { includeStaff = false } = {}) {
     return this.modules
       .filter((item) => item.courseCode === courseCode)
-      .map((item) => ({
-        ...item,
-        learningFocus: [], coreReadingOrder: [], guidedPractice: "", lowStakesCheck: "",
-        feedbackAndUnlock: "", workloadLabel: "", teacherPresence: "", evidenceToRetain: "",
-        resources: item.resources.filter((resource) => includeStaff || resource.audience === "student"),
-      }));
+      .map((item) => {
+        const {
+          processCheckpoints,
+          authenticationEvidence,
+          ...studentActivity
+        } = item.activity || {};
+        const studentComponents = (studentActivity.components || []).map(
+          ({ processCheckpoints: _processCheckpoints, ...component }) => component,
+        );
+        return {
+          ...item,
+          learningFocus: [], coreReadingOrder: [], guidedPractice: "", lowStakesCheck: "",
+          feedbackAndUnlock: "Complete the required activity before continuing.",
+          unlockRule: {
+            ruleText: "Complete the required activity before continuing.",
+            criteria: item.unlockCriteria || unlockCriteria(
+              item.activity?.weightPercent,
+              item.moduleNumber,
+            ),
+            teacherOverrideAllowed: true,
+            overrideReasonRequired: true,
+          },
+          workloadLabel: "",
+          ...(includeStaff ? { teacherPresence: "", evidenceToRetain: "" } : {}),
+          resources: item.resources.filter((resource) => includeStaff || resource.audience === "student"),
+          activity: includeStaff
+            ? { ...item.activity }
+            : { ...studentActivity, components: studentComponents },
+        };
+      });
   }
 
   async listCourseAssignments(courseCode, { includeInactive = false } = {}) {
@@ -252,8 +306,37 @@ export class FakeRepository {
       throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
     }
     const completion = this.activityCompletions.get(`${studentUserId}:${module.activity.id}`);
-    if (status === "completed" && !["completed", "waived"].includes(completion?.status)) {
-      throw new ApiError(409, "ACTIVITY_COMPLETION_REQUIRED", "Complete the required module activity before closing this module.");
+    if (status === "completed") {
+      const activityCompleted = ["completed", "waived"].includes(completion?.status);
+      const policy = evaluateUnlockPolicy(
+        module.unlockCriteria || unlockCriteria(
+          module.activity.weightPercent,
+          module.moduleNumber,
+        ),
+        {
+          source_module_completed: true,
+          required_activity_completed: activityCompleted,
+          required_activity_evidence_present: Boolean(
+            completion?.evidence && Object.keys(completion.evidence).length,
+          ),
+          all_gradebook_components_published: activityCompleted,
+        },
+      );
+      if (!policy.valid) {
+        throw new ApiError(
+          503,
+          "UNLOCK_POLICY_INVALID",
+          "The course unlock policy is unavailable. No completion was recorded.",
+        );
+      }
+      if (!policy.satisfied) {
+        throw new ApiError(
+          409,
+          "UNLOCK_CRITERIA_UNMET",
+          "Complete the required module evidence before closing this module.",
+          { unmet: policy.unmet },
+        );
+      }
     }
     const now = new Date().toISOString();
     const saved = { moduleId, status, startedAt: existing?.startedAt || now, completedAt: status === "completed" ? now : null };
@@ -264,7 +347,44 @@ export class FakeRepository {
   async upsertStudentActivityCompletion(studentUserId, activityId, status, evidence = {}) {
     const activity = await this.getActivity(activityId);
     if (!activity) throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
+    const completionKey = `${studentUserId}:${activityId}`;
+    const existing = this.activityCompletions.get(completionKey);
+    if (
+      ["completed", "waived"].includes(existing?.status) &&
+      (status !== existing.status || !isDeepStrictEqual(evidence, existing.evidence))
+    ) {
+      throw new ApiError(
+        409,
+        "ACTIVITY_COMPLETION_LOCKED",
+        "Completed activity evidence is locked and cannot be changed by a student.",
+      );
+    }
+    if (existing && ["completed", "waived"].includes(existing.status)) return existing;
     const module = this.modules.find((item) => item.id === activity.moduleId);
+    const policy = evaluateUnlockPolicy(activity.completionCriteria, {
+      source_module_completed: true,
+      required_activity_completed: true,
+      required_activity_evidence_present: true,
+      all_gradebook_components_published: true,
+    });
+    if (!policy.valid) {
+      throw new ApiError(
+        503,
+        "UNLOCK_POLICY_INVALID",
+        "The course unlock policy is unavailable. No completion was recorded.",
+      );
+    }
+    if (
+      status === "completed" &&
+      policyRequires(activity.completionCriteria, "required_activity_evidence_present") &&
+      Object.keys(evidence).length === 0
+    ) {
+      throw new ApiError(
+        422,
+        "ACTIVITY_EVIDENCE_REQUIRED",
+        "Record the required activity evidence before completing this module.",
+      );
+    }
     if (status === "completed" && Number(module.activity.weightPercent) > 0) {
       const items = this.gradebookItems.filter((item) => item.moduleActivityId === activityId);
       const allItemsGraded = items.length > 0 && items.every((item) => {
@@ -290,7 +410,7 @@ export class FakeRepository {
       }
     }
     const saved = { activityId, status, evidence, completedAt: status === "completed" ? new Date().toISOString() : null };
-    this.activityCompletions.set(`${studentUserId}:${activityId}`, saved);
+    this.activityCompletions.set(completionKey, saved);
     return saved;
   }
 

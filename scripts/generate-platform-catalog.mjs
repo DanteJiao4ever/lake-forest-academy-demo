@@ -20,6 +20,12 @@ const defaultSourceDirectory = path.join(repositoryRoot, "backend", "catalog", "
 const defaultJsonOutput = path.join(repositoryRoot, "backend", "catalog", "lfa-course-catalog.json");
 const defaultJavaScriptOutput = path.join(repositoryRoot, "public", "learning", "platform-sequences.js");
 const defaultSqlOutput = path.join(repositoryRoot, "backend", "migrations", "004_lotus_grade12_catalog_v1.sql");
+const defaultGuardsSqlOutput = path.join(
+  repositoryRoot,
+  "backend",
+  "migrations",
+  "005_platform_catalog_guards_v1.sql",
+);
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const asString = (value) => (typeof value === "string" ? value : "");
@@ -32,6 +38,15 @@ const pad2 = (value) => String(value).padStart(2, "0");
 const lowerId = (value) => value.toLowerCase();
 const jsonText = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+
+function requireHttpsUrl(value, label) {
+  const raw = requireString(value, label);
+  const url = new URL(raw);
+  assert.equal(url.protocol, "https:", `${label} must use HTTPS`);
+  assert.equal(url.username, "", `${label} must not contain credentials`);
+  assert.equal(url.password, "", `${label} must not contain credentials`);
+  return raw;
+}
 
 function requireString(value, label) {
   assert.equal(typeof value, "string", `${label} must be a string`);
@@ -128,7 +143,7 @@ function normalizeModule(courseCode, sourceModule, finalComponents) {
     key: `${key}-RESOURCE-${pad2(index + 1)}`,
     title: requireString(resource.title, `${key} resource ${index + 1} title`),
     provider: asString(resource.provider),
-    url: requireString(resource.url, `${key} resource ${index + 1} URL`),
+    url: requireHttpsUrl(resource.url, `${key} resource ${index + 1} URL`),
     assignedUse: asString(resource.assigned_use),
     order: index + 1,
   }));
@@ -336,7 +351,21 @@ export function validateCatalog(catalog) {
 }
 
 export function renderJavaScript(catalog) {
-  const payload = JSON.stringify(catalog, null, 2);
+  const publicCatalog = JSON.parse(JSON.stringify(catalog));
+  for (const course of publicCatalog.courses) {
+    delete course.sourceComponents;
+    delete course.finalEvaluationComponents;
+    for (const module of course.modules) {
+      delete module.teacherPresence;
+      delete module.evidenceToRetain;
+      delete module.assessment.processCheckpoints;
+      delete module.assessment.authenticationEvidence;
+      for (const component of module.assessment.components) {
+        delete component.processCheckpoints;
+      }
+    }
+  }
+  const payload = JSON.stringify(publicCatalog, null, 2);
   return `// Deterministic Lotus Academy Grade 12 platform catalog.\n(function loadLfaPlatformCatalog(global) {\n  \"use strict\";\n  const catalog = ${payload};\n  catalog.coursesByCode = Object.fromEntries(catalog.courses.map((course) => [course.code, course]));\n  global.LFA_PLATFORM_CATALOG = catalog;\n  global.LFA_PLATFORM_SEQUENCES = catalog;\n})(window);\n`;
 }
 
@@ -357,6 +386,119 @@ function insertStatement(table, columns, rows, conflictClause) {
   assert.ok(rows.length, `${table} seed rows must not be empty`);
   const values = rows.map((row) => `  (${row.join(", ")})`).join(",\n");
   return `INSERT INTO ${table} (${columns.join(", ")}) VALUES\n${values}\n${conflictClause};\n`;
+}
+
+function unlockCriteriaFor(module) {
+  return {
+    version: 1,
+    scope: module.number === 11 ? "course_completion" : "next_module",
+    operator: "all",
+    derivation: "platform_policy_not_natural_language_parser",
+    conditions: [
+      { type: "source_module_completed" },
+      { type: "required_activity_completed" },
+      Number(module.assessment.weightPercent) > 0
+        ? { type: "all_gradebook_components_published" }
+        : { type: "required_activity_evidence_present" },
+    ],
+  };
+}
+
+export function renderGuardsSql(catalog) {
+  validateCatalog(catalog);
+  const assignmentRows = [];
+  const criteriaRows = [];
+  for (const course of catalog.courses) {
+    for (const module of course.modules) {
+      criteriaRows.push([
+        sqlString(lowerId(module.key)),
+        sqlJson(unlockCriteriaFor(module)),
+      ]);
+      for (const component of module.assessment.components) {
+        assignmentRows.push([
+          sqlString(lowerId(component.assignmentKey)),
+          sqlString(module.number === 11 ? "final_evaluation" : "unit"),
+        ]);
+      }
+    }
+  }
+  const assignmentValues = assignmentRows
+    .map((row) => `    (${row.join(", ")})`)
+    .join(",\n");
+  const criteriaValues = criteriaRows
+    .map((row) => `    (${row.join(", ")})`)
+    .join(",\n");
+  return `-- Additive guards for unlock policy, public resources, and final-evaluation filing.
+-- Generated from the lfa.course-import.v1 catalog; do not edit by hand.
+
+ALTER TABLE assignments
+  ADD COLUMN section_kind text NOT NULL DEFAULT 'unit';
+
+ALTER TABLE assignments
+  ADD CONSTRAINT assignments_section_kind_valid
+  CHECK (section_kind IN ('unit', 'final_evaluation'));
+
+ALTER TABLE course_modules
+  ADD COLUMN unlock_criteria jsonb;
+
+UPDATE course_modules
+   SET unlock_criteria = '{"version":1,"scope":"next_module","operator":"all","derivation":"platform_policy_not_natural_language_parser","conditions":[{"type":"source_module_completed"},{"type":"required_activity_completed"},{"type":"required_activity_evidence_present"}]}'::jsonb
+ WHERE unlock_criteria IS NULL;
+
+UPDATE course_modules AS module
+   SET unlock_criteria = source.criteria
+  FROM (VALUES
+${criteriaValues}
+  ) AS source(id, criteria)
+ WHERE module.id = source.id;
+
+ALTER TABLE course_modules
+  ALTER COLUMN unlock_criteria SET NOT NULL,
+  ALTER COLUMN unlock_criteria SET DEFAULT '{"version":1,"scope":"next_module","operator":"all","derivation":"platform_policy_not_natural_language_parser","conditions":[{"type":"source_module_completed"},{"type":"required_activity_completed"},{"type":"required_activity_evidence_present"}]}'::jsonb;
+
+ALTER TABLE course_modules
+  ADD CONSTRAINT course_modules_unlock_criteria_valid CHECK (
+    jsonb_typeof(unlock_criteria) = 'object'
+    AND unlock_criteria->>'version' = '1'
+    AND unlock_criteria->>'operator' = 'all'
+    AND unlock_criteria->>'scope' IN ('next_module', 'course_completion')
+    AND jsonb_typeof(unlock_criteria->'conditions') = 'array'
+    AND jsonb_array_length(unlock_criteria->'conditions') >= 3
+  );
+
+UPDATE assignments AS assignment
+   SET section_kind = source.section_kind
+  FROM (VALUES
+${assignmentValues}
+  ) AS source(id, section_kind)
+ WHERE assignment.id = source.id;
+
+ALTER TABLE module_resources
+  ADD CONSTRAINT module_resources_external_https CHECK (
+    resource_kind <> 'external_url'
+    OR external_url ~ '^https://[^[:space:]]+$'
+  );
+
+COMMENT ON COLUMN assignments.unit_number IS
+  'Legacy storage key. Use section_kind to distinguish Final Evaluation from numbered curriculum units.';
+COMMENT ON COLUMN student_submissions.unit_number IS
+  'Legacy storage key copied from assignments. Resolve the public section through assignment_id.';
+COMMENT ON COLUMN course_modules.unlock_criteria IS
+  'Machine-enforced platform policy. feedback_and_unlock remains the authoritative natural-language rule.';
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM assignments a JOIN course_modules m ON m.id = a.module_id WHERE a.section_kind = 'final_evaluation' AND m.module_number = 11 AND m.unit_number IS NULL) <> 8 THEN
+    RAISE EXCEPTION 'Catalog guard assertion failed: expected 8 final-evaluation assignments';
+  END IF;
+  IF (SELECT count(*) FROM assignments a JOIN course_modules m ON m.id = a.module_id WHERE a.section_kind = 'unit' AND m.module_number BETWEEN 1 AND 10 AND a.unit_number = m.unit_number) <> 30 THEN
+    RAISE EXCEPTION 'Catalog guard assertion failed: expected 30 numbered-unit assignments';
+  END IF;
+  IF (SELECT count(*) FROM course_modules WHERE unlock_criteria->>'version' = '1' AND btrim(feedback_and_unlock) <> '') <> 72 THEN
+    RAISE EXCEPTION 'Catalog guard assertion failed: expected 72 preserved rules with versioned criteria';
+  END IF;
+END $$;
+`;
 }
 
 export function renderSql(catalog, contentHash = sha256(jsonText(catalog))) {
@@ -502,6 +644,7 @@ export function buildArtifactsFromCatalog(catalog) {
     json: catalogJson,
     javascript: renderJavaScript(catalog),
     sql: renderSql(catalog, sha256(catalogJson)),
+    guardsSql: renderGuardsSql(catalog),
   };
 }
 
@@ -512,6 +655,7 @@ function parseArguments(argv) {
     jsonOutput: defaultJsonOutput,
     javascriptOutput: defaultJavaScriptOutput,
     sqlOutput: defaultSqlOutput,
+    guardsSqlOutput: defaultGuardsSqlOutput,
     check: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -524,6 +668,7 @@ function parseArguments(argv) {
     else if (argument === "--json-output") options.jsonOutput = path.resolve(argv[++index]);
     else if (argument === "--js-output") options.javascriptOutput = path.resolve(argv[++index]);
     else if (argument === "--sql-output") options.sqlOutput = path.resolve(argv[++index]);
+    else if (argument === "--guards-sql-output") options.guardsSqlOutput = path.resolve(argv[++index]);
     else if (argument === "--help" || argument === "-h") options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
@@ -540,6 +685,7 @@ function usage() {
     "  backend/catalog/lfa-course-catalog.json",
     "  public/learning/platform-sequences.js",
     "  backend/migrations/004_lotus_grade12_catalog_v1.sql",
+    "  backend/migrations/005_platform_catalog_guards_v1.sql",
   ].join("\n");
 }
 
@@ -569,6 +715,7 @@ export function run(argv = process.argv.slice(2)) {
   writeOrCheck(options.jsonOutput, artifacts.json, options.check);
   writeOrCheck(options.javascriptOutput, artifacts.javascript, options.check);
   writeOrCheck(options.sqlOutput, artifacts.sql, options.check);
+  writeOrCheck(options.guardsSqlOutput, artifacts.guardsSql, options.check);
   process.stdout.write(
     `${options.check ? "Verified" : "Generated"} ${artifacts.catalog.totals.courses} courses, `
       + `${artifacts.catalog.totals.modules} modules, ${artifacts.catalog.totals.lessons} lessons, `

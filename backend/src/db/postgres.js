@@ -1,5 +1,6 @@
 import pg from "pg";
 import { ApiError } from "../lib/errors.js";
+import { evaluateUnlockPolicy } from "../lib/unlock-policy.js";
 
 const { Pool } = pg;
 const PLATFORM_COURSE_CODES = Object.freeze([
@@ -77,6 +78,7 @@ function mapUser(row) {
 
 function mapSubmission(row) {
   if (!row) return null;
+  const sectionKind = row.section_kind || "unit";
   return {
     id: row.id,
     studentUserId: row.student_user_id,
@@ -87,6 +89,11 @@ function mapSubmission(row) {
     studentLastName: row.student_last_name || "",
     courseCode: row.course_code,
     unitNumber: row.unit_number,
+    curriculumUnitNumber:
+      sectionKind === "final_evaluation"
+        ? null
+        : (row.curriculum_unit_number ?? row.unit_number),
+    sectionKind,
     assignmentId: row.assignment_id,
     assignmentTitle: row.assignment_title,
     attemptNumber: row.attempt_number,
@@ -106,6 +113,9 @@ function mapSubmission(row) {
 
 const submissionSelect = `
   SELECT s.*,
+         a.section_kind,
+         CASE WHEN a.section_kind = 'final_evaluation' THEN NULL ELSE a.unit_number END
+           AS curriculum_unit_number,
          u.email AS student_email,
          u.first_name AS student_first_name,
          u.last_name AS student_last_name,
@@ -113,6 +123,7 @@ const submissionSelect = `
          grade.item AS grade
     FROM student_submissions s
     JOIN app_users u ON u.id = s.student_user_id
+    LEFT JOIN assignments a ON a.id = s.assignment_id
     LEFT JOIN LATERAL (
       SELECT json_agg(json_build_object(
         'id', f.id,
@@ -425,10 +436,28 @@ export class PostgresRepository {
           WHERE cm.course_code = ANY($1::text[]) AND ma.status = 'published') AS activities,
          (SELECT count(*)::int FROM gradebook_items
            WHERE course_code = ANY($1::text[]) AND status = 'published') AS gradebook_items,
-         (SELECT count(*)::int FROM assessment_components ac
-           JOIN module_activities ma ON ma.id = ac.module_activity_id
-           JOIN course_modules cm ON cm.id = ma.module_id
-          WHERE cm.course_code = ANY($1::text[])) AS assessment_components,
+          (SELECT count(*)::int FROM assessment_components ac
+            JOIN module_activities ma ON ma.id = ac.module_activity_id
+            JOIN course_modules cm ON cm.id = ma.module_id
+           WHERE cm.course_code = ANY($1::text[])) AS assessment_components,
+          (SELECT count(*)::int FROM course_modules
+            WHERE course_code = ANY($1::text[])
+              AND btrim(feedback_and_unlock) <> ''
+              AND unlock_criteria->>'version' = '1'
+              AND unlock_criteria->>'operator' = 'all'
+              AND unlock_criteria->>'scope' IN ('next_module', 'course_completion')
+              AND jsonb_typeof(unlock_criteria->'conditions') = 'array') AS valid_unlock_policies,
+          (SELECT count(*)::int FROM assignments a
+            JOIN course_modules cm ON cm.id = a.module_id
+           WHERE a.course_code = ANY($1::text[])
+             AND a.section_kind = 'final_evaluation'
+             AND cm.module_number = 11 AND cm.unit_number IS NULL) AS final_evaluation_assignments,
+          (SELECT count(*)::int FROM assignments a
+            JOIN course_modules cm ON cm.id = a.module_id
+           WHERE a.course_code = ANY($1::text[])
+             AND a.section_kind = 'unit'
+             AND cm.module_number BETWEEN 1 AND 10
+             AND a.unit_number = cm.unit_number) AS unit_assignments,
          (SELECT count(*)::int
             FROM (
               SELECT course_code
@@ -495,7 +524,8 @@ export class PostgresRepository {
 
   async getActivity(activityId) {
     const result = await this.pool.query(
-      `SELECT ma.id, ma.module_id, ma.status, cm.course_code, cm.module_number
+      `SELECT ma.id, ma.module_id, ma.status, ma.sequence,
+              cm.course_code, cm.module_number, cm.unlock_criteria
          FROM module_activities ma
          JOIN course_modules cm ON cm.id = ma.module_id
         WHERE ma.id = $1 LIMIT 1`,
@@ -508,6 +538,8 @@ export class PostgresRepository {
           moduleId: row.module_id,
           courseCode: row.course_code,
           moduleNumber: row.module_number,
+          sequence: row.sequence,
+          completionCriteria: row.unlock_criteria,
           status: row.status,
         }
       : null;
@@ -590,7 +622,9 @@ export class PostgresRepository {
         type: row.component_type,
         weightPercent: Number(row.weight_percent),
         timeMinutes: row.time_minutes,
-        processCheckpoints: row.process_checkpoints,
+        ...(includeStaff
+          ? { processCheckpoints: row.process_checkpoints }
+          : {}),
       });
     }
     const activities = new Map();
@@ -603,8 +637,12 @@ export class PostgresRepository {
         sequence: row.sequence,
         evidenceFile: row.evidence_file,
         taskType: row.task_type,
-        processCheckpoints: row.process_checkpoints,
-        authenticationEvidence: row.authentication_evidence,
+        ...(includeStaff
+          ? {
+              processCheckpoints: row.process_checkpoints,
+              authenticationEvidence: row.authentication_evidence,
+            }
+          : {}),
         timeMinutes: row.time_minutes,
         isRequired: row.is_required,
         components: components.get(row.id) || [],
@@ -622,10 +660,20 @@ export class PostgresRepository {
       guidedPractice: row.guided_practice,
       lowStakesCheck: row.low_stakes_check,
       feedbackAndUnlock: row.feedback_and_unlock,
+      unlockRule: {
+        ruleText: row.feedback_and_unlock,
+        criteria: row.unlock_criteria,
+        teacherOverrideAllowed: true,
+        overrideReasonRequired: true,
+      },
       estimatedCreditHours: Number(row.estimated_credit_hours),
       workloadLabel: row.workload_label,
-      teacherPresence: row.teacher_presence,
-      evidenceToRetain: row.evidence_to_retain,
+      ...(includeStaff
+        ? {
+            teacherPresence: row.teacher_presence,
+            evidenceToRetain: row.evidence_to_retain,
+          }
+        : {}),
       lessons: lessons.get(row.id) || [],
       resources: resources.get(row.id) || [],
       activity: activities.get(row.id) || null,
@@ -647,6 +695,13 @@ export class PostgresRepository {
       moduleId: row.module_id,
       moduleNumber: row.module_number,
       unitNumber: row.unit_number,
+      curriculumUnitNumber:
+        row.section_kind === "final_evaluation" ? null : row.unit_number,
+      sectionKind: row.section_kind || "unit",
+      sectionLabel:
+        row.section_kind === "final_evaluation"
+          ? "Final Evaluation"
+          : `Unit ${row.unit_number}`,
       title: row.title,
       instructions: row.instructions,
       rubric: row.rubric,
@@ -710,11 +765,12 @@ export class PostgresRepository {
     try {
       await client.query("BEGIN");
       const available = await client.query(
-        `SELECT cm.id, cm.course_code, cm.module_number,
+        `SELECT cm.id, cm.course_code, cm.module_number, cm.unlock_criteria,
                 current.status AS current_status,
                 previous.status AS previous_status,
                 required_activity.id AS required_activity_id,
                 activity_completion.status AS activity_completion_status,
+                activity_completion.evidence AS activity_completion_evidence,
                 EXISTS (
                   SELECT 1 FROM module_unlock_overrides u
                    WHERE u.student_user_id = $1 AND u.module_id = cm.id AND u.active = true
@@ -745,6 +801,39 @@ export class PostgresRepository {
         module.previous_status === "completed" ||
         ["in_progress", "completed"].includes(module.current_status);
       if (!canStart) throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
+      if (status === "completed") {
+        const activityCompleted = ["completed", "waived"].includes(
+          module.activity_completion_status,
+        );
+        const policy = evaluateUnlockPolicy(module.unlock_criteria, {
+          source_module_completed: true,
+          required_activity_completed:
+            !module.required_activity_id || activityCompleted,
+          required_activity_evidence_present: Boolean(
+            module.activity_completion_evidence &&
+              Object.keys(module.activity_completion_evidence).length,
+          ),
+          // A weighted activity cannot reach completed through this API until
+          // every component has a published result (enforced transactionally
+          // in upsertStudentActivityCompletion).
+          all_gradebook_components_published: activityCompleted,
+        });
+        if (!policy.valid) {
+          throw new ApiError(
+            503,
+            "UNLOCK_POLICY_INVALID",
+            "The course unlock policy is unavailable. No completion was recorded.",
+          );
+        }
+        if (!policy.satisfied) {
+          throw new ApiError(
+            409,
+            "UNLOCK_CRITERIA_UNMET",
+            "Complete the required module evidence before closing this module.",
+            { unmet: policy.unmet },
+          );
+        }
+      }
       if (
         status === "completed" &&
         module.required_activity_id &&
@@ -840,18 +929,36 @@ export class PostgresRepository {
         );
       }
       const result = await client.query(
-        `INSERT INTO student_activity_completions
+        `INSERT INTO student_activity_completions AS existing
           (student_user_id, activity_id, status, evidence, completed_at)
          VALUES ($1, $2, $3, $4::jsonb,
                  CASE WHEN $3 IN ('completed', 'waived') THEN now() ELSE NULL END)
          ON CONFLICT (student_user_id, activity_id) DO UPDATE SET
            status = EXCLUDED.status,
            evidence = EXCLUDED.evidence,
-           completed_at = EXCLUDED.completed_at,
-           updated_at = now()
+           completed_at = CASE
+             WHEN existing.status IN ('completed', 'waived') THEN existing.completed_at
+             ELSE EXCLUDED.completed_at
+           END,
+           updated_at = CASE
+             WHEN existing.status IN ('completed', 'waived') THEN existing.updated_at
+             ELSE now()
+           END
+         WHERE existing.status NOT IN ('completed', 'waived')
+            OR (
+              existing.status = EXCLUDED.status
+              AND existing.evidence = EXCLUDED.evidence
+            )
          RETURNING *`,
         [studentUserId, activityId, status, JSON.stringify(evidence)],
       );
+      if (!result.rowCount) {
+        throw new ApiError(
+          409,
+          "ACTIVITY_COMPLETION_LOCKED",
+          "Completed activity evidence is locked and cannot be changed by a student.",
+        );
+      }
       await client.query("COMMIT");
       const row = result.rows[0];
       return {
@@ -1250,6 +1357,9 @@ export class PostgresRepository {
       courseCode: row.course_code,
       moduleId: row.module_id,
       unitNumber: row.unit_number,
+      curriculumUnitNumber:
+        row.section_kind === "final_evaluation" ? null : row.unit_number,
+      sectionKind: row.section_kind || "unit",
       title: row.title,
       maxAttempts: row.max_attempts,
       submissionMode: row.submission_mode,
@@ -1347,6 +1457,8 @@ export class PostgresRepository {
       return {
         ...mapSubmission({
           ...inserted.rows[0],
+          section_kind: input.sectionKind,
+          curriculum_unit_number: input.curriculumUnitNumber,
           student_email: input.studentEmail,
           student_first_name: input.studentFirstName,
           student_last_name: input.studentLastName,

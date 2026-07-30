@@ -12,11 +12,40 @@ import { csrfTokenFor, opaqueToken, publicId, safeTextEqual, sha256, stableFinge
 import { assertStrongPassword, hashPassword, normalizeEmail, verifyPassword } from "./lib/passwords.js";
 import { assignmentIdSchema, courseCodeSchema, emailSchema, nameSchema, parse, uuidSchema } from "./lib/validation.js";
 import { validateUploadedFile } from "./lib/file-validation.js";
+import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { MaterialSyncService } from "./services/material-sync.js";
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const categories = ["Lessons", "Resources", "Assignments", "Assessments"];
 const launchCourseCodes = ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
+
+function assertActivityCompletionPolicy(activity, status, evidence) {
+  const policy = activity?.completionCriteria;
+  const policyCheck = evaluateUnlockPolicy(policy, {
+    source_module_completed: true,
+    required_activity_completed: true,
+    required_activity_evidence_present: true,
+    all_gradebook_components_published: true,
+  });
+  if (!policyCheck.valid) {
+    throw new ApiError(
+      503,
+      "UNLOCK_POLICY_INVALID",
+      "The course unlock policy is unavailable. No completion was recorded.",
+    );
+  }
+  if (
+    status === "completed" &&
+    policyRequires(policy, "required_activity_evidence_present") &&
+    (!evidence || Object.keys(evidence).length === 0)
+  ) {
+    throw new ApiError(
+      422,
+      "ACTIVITY_EVIDENCE_REQUIRED",
+      "Record the required activity evidence before completing this module.",
+    );
+  }
+}
 
 function authResponse(user, csrfToken) {
   const publicUser = {
@@ -123,6 +152,15 @@ function collapseSubmissions(records, includeStudentInKey = true) {
 }
 
 function serializeSubmission(record, { includeStudent = false, historyRecords = [record] } = {}) {
+  const sectionKind = record.sectionKind || "unit";
+  const curriculumUnitNumber =
+    sectionKind === "final_evaluation"
+      ? null
+      : (record.curriculumUnitNumber ?? record.unitNumber);
+  const sectionLabel =
+    sectionKind === "final_evaluation"
+      ? "Final Evaluation"
+      : `Unit ${curriculumUnitNumber}`;
   return {
     id: record.id,
     submissionId: record.id,
@@ -144,7 +182,10 @@ function serializeSubmission(record, { includeStudent = false, historyRecords = 
       : {}),
     courseCode: record.courseCode,
     unitNumber: record.unitNumber,
-    unit: `Unit ${record.unitNumber}`,
+    curriculumUnitNumber,
+    sectionKind,
+    sectionLabel,
+    unit: sectionLabel,
     assignmentId: record.assignmentId,
     assignmentTitle: record.assignmentTitle,
     attemptNumber: record.attemptNumber,
@@ -188,11 +229,30 @@ function groupTeacherSubmissions(records) {
       });
     }
     const student = course.students.get(record.studentId);
-    if (!student.units.has(record.unitNumber)) {
-      student.units.set(record.unitNumber, { unitNumber: record.unitNumber, submissions: [] });
+    const recordSectionKind = record.sectionKind || "unit";
+    const sectionKey =
+      recordSectionKind === "final_evaluation"
+        ? "final_evaluation"
+        : `unit:${record.curriculumUnitNumber ?? record.unitNumber}`;
+    if (!student.units.has(sectionKey)) {
+      const sectionKind = recordSectionKind;
+      const curriculumUnitNumber =
+        sectionKind === "final_evaluation"
+          ? null
+          : (record.curriculumUnitNumber ?? record.unitNumber);
+      student.units.set(sectionKey, {
+        unitNumber: record.unitNumber,
+        curriculumUnitNumber,
+        sectionKind,
+        sectionLabel:
+          sectionKind === "final_evaluation"
+            ? "Final Evaluation"
+            : `Unit ${curriculumUnitNumber}`,
+        submissions: [],
+      });
     }
     student.units
-      .get(record.unitNumber)
+      .get(sectionKey)
       .submissions.push(
         serializeSubmission(record, {
           includeStudent: false,
@@ -204,7 +264,17 @@ function groupTeacherSubmissions(records) {
     courseCode: course.courseCode,
     students: [...course.students.values()].map((student) => ({
       ...student,
-      units: [...student.units.values()],
+      units: [...student.units.values()].sort((left, right) => {
+        if (
+          left.sectionKind === "final_evaluation" &&
+          right.sectionKind === "final_evaluation"
+        ) {
+          return 0;
+        }
+        if (left.sectionKind === "final_evaluation") return 1;
+        if (right.sectionKind === "final_evaluation") return -1;
+        return Number(left.curriculumUnitNumber) - Number(right.curriculumUnitNumber);
+      }),
     })),
   }));
 }
@@ -408,6 +478,9 @@ export async function createApp({ config, repository, drive, scanner, logger = f
       activities: 72,
       gradebook_items: 44,
       assessment_components: 38,
+      valid_unlock_policies: 72,
+      final_evaluation_assignments: 8,
+      unit_assignments: 30,
     };
     const ready = Object.entries(expected).every(
       ([key, value]) => Number(counts[key]) === value,
@@ -665,6 +738,7 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
       }
       await requireCourseAccess(request.auth.user, activity.courseCode);
+      assertActivityCompletionPolicy(activity, body.status, body.evidence);
       const progress = await repository.listStudentProgress(request.auth.user.id, activity.courseCode);
       if (progress.find((item) => item.moduleId === activity.moduleId)?.status === "locked") {
         throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
@@ -727,6 +801,7 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
       }
       await requireCourseAccess(request.auth.user, activity.courseCode);
+      assertActivityCompletionPolicy(activity, body.status, body.evidence);
       const progress = await repository.listStudentProgress(request.auth.user.id, activity.courseCode);
       if (progress.find((item) => item.moduleId === activity.moduleId)?.status === "locked") {
         throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
@@ -1077,7 +1152,9 @@ export async function createApp({ config, repository, drive, scanner, logger = f
           const pathSegments = [
             assignment.courseCode,
             request.auth.user.publicId,
-            `Unit ${assignment.unitNumber}`,
+            assignment.sectionKind === "final_evaluation"
+              ? "Final Evaluation"
+              : `Unit ${assignment.curriculumUnitNumber ?? assignment.unitNumber}`,
             metadata.assignmentId,
             `Attempt ${metadata.attemptNumber}`,
           ];
@@ -1111,6 +1188,8 @@ export async function createApp({ config, repository, drive, scanner, logger = f
             studentLastName: request.auth.user.lastName,
             courseCode: assignment.courseCode,
             unitNumber: assignment.unitNumber,
+            curriculumUnitNumber: assignment.curriculumUnitNumber,
+            sectionKind: assignment.sectionKind,
             assignmentId: metadata.assignmentId,
             assignmentTitle: assignment.title,
             attemptNumber: metadata.attemptNumber,

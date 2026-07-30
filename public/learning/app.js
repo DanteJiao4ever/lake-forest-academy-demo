@@ -570,11 +570,71 @@
       : "Self-paced";
   }
 
+  function normalizePlatformAssessment(assessment = {}) {
+    const components = Array.isArray(assessment?.components)
+      ? assessment.components
+      : [];
+    const sequence = Array.isArray(assessment?.sequence)
+      ? assessment.sequence
+      : [];
+    return {
+      ...assessment,
+      key: String(assessment?.key || assessment?.id || ""),
+      type: String(
+        assessment?.type ||
+          assessment?.activityType ||
+          assessment?.activity_type ||
+          "",
+      ),
+      title: String(assessment?.title || ""),
+      weightPercent: Number(
+        assessment?.weightPercent ??
+          assessment?.courseGradeWeightPercent ??
+          assessment?.course_grade_weight_percent ??
+          0,
+      ),
+      evidenceFile:
+        assessment?.evidenceFile ?? assessment?.evidence_file ?? null,
+      sequence,
+      taskType: assessment?.taskType ?? assessment?.task_type ?? null,
+      timeMinutes:
+        assessment?.timeMinutes ?? assessment?.time_minutes ?? null,
+      required:
+        assessment?.required ??
+        assessment?.isRequired ??
+        assessment?.is_required ??
+        false,
+      processCheckpoints:
+        assessment?.processCheckpoints ??
+        assessment?.process_checkpoints ??
+        null,
+      authenticationEvidence:
+        assessment?.authenticationEvidence ??
+        assessment?.authentication_evidence ??
+        null,
+      components: components.map((component, index) => ({
+        ...component,
+        key: String(component?.key || component?.id || `component-${index + 1}`),
+        title: String(component?.title || `Part ${index + 1}`),
+        type: String(component?.type || component?.componentType || ""),
+        weightPercent: Number(
+          component?.weightPercent ?? component?.weight_percent ?? 0,
+        ),
+        timeMinutes:
+          component?.timeMinutes ?? component?.time_minutes ?? null,
+        processCheckpoints:
+          component?.processCheckpoints ??
+          component?.process_checkpoints ??
+          null,
+      })),
+    };
+  }
+
   function normalizePlatformModule(module, courseCode) {
     const number = Number(module?.number ?? module?.moduleNumber);
     const moduleNumber = Number.isFinite(number) ? number : 0;
     const moduleKey =
-      String(module?.key || "").trim() ||
+      String(module?.key || module?.moduleKey || "").trim() ||
       `${courseCode}-M${String(moduleNumber).padStart(2, "0")}`;
     const rawLessons = Array.isArray(module?.lessons)
       ? module.lessons
@@ -596,10 +656,14 @@
         : module?.learning_focus || [],
       readingSteps: Array.isArray(module?.readingSteps)
         ? module.readingSteps
-        : module?.core_reading_order || [],
+        : Array.isArray(module?.coreReadingOrder)
+          ? module.coreReadingOrder
+          : module?.core_reading_order || [],
       selfStudyResources: Array.isArray(module?.selfStudyResources)
         ? module.selfStudyResources
-        : module?.self_study_resources || [],
+        : Array.isArray(module?.resources)
+          ? module.resources
+          : module?.self_study_resources || [],
       guidedPractice: String(
         module?.guidedPractice || module?.guided_practice || "",
       ),
@@ -636,6 +700,9 @@
         overrideReasonRequired:
           module?.unlockRule?.overrideReasonRequired !== false,
       },
+      assessment: normalizePlatformAssessment(
+        module?.assessment || module?.activity || {},
+      ),
       lessons: rawLessons.map((lesson, index) => ({
         ...lesson,
         id: String(lesson?.id || lesson?.key || `${moduleKey}-L${index + 1}`),
@@ -939,10 +1006,19 @@
             courseId: course.id,
             moduleKey: item.moduleKey || module?.key || "",
             moduleNumber: module?.number ?? item.moduleNumber ?? null,
+            sectionKind:
+              module?.number === 11 ? "final_evaluation" : "unit",
+            sectionLabel:
+              module?.number === 11
+                ? "Final Evaluation"
+                : module?.unitTitle || `Unit ${module?.unitNumber}`,
+            curriculumUnitNumber: module?.unitNumber ?? null,
             unitNumber: module?.unitNumber ?? null,
             unit:
               module?.number == null
                 ? "Coursewide"
+                : module.number === 11
+                  ? "Final Evaluation"
                 : `Module ${String(module.number).padStart(2, "0")}`,
             unitTitle: module?.title || item.category || "Course Gradebook",
             title: String(item.title || assessment.title || "Assessed Evidence"),
@@ -1825,8 +1901,16 @@
             SELECTABLE_COURSE_IDS.includes(matchedCourse.id)
               ? matchedCourse
               : null;
-          const assignment =
-            matchedAssignment || {
+          const assignment = matchedAssignment
+            ? {
+                ...matchedAssignment,
+                unit:
+                  remote.assignmentMeta?.unit || matchedAssignment.unit,
+                unitTitle:
+                  remote.assignmentMeta?.unitTitle ||
+                  matchedAssignment.unitTitle,
+              }
+            : {
               id: remote.assignmentId,
               courseId: remote.courseId || "unmapped",
               title:
@@ -2012,6 +2096,60 @@
     }
   }
 
+  function safeExternalHttpsUrl(value) {
+    if (!value) return "";
+    try {
+      const url = new URL(String(value));
+      if (
+        url.protocol !== "https:" ||
+        url.username ||
+        url.password
+      ) {
+        return "";
+      }
+      return url.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  function safeCourseDriveLinks(drive = {}) {
+    return {
+      coursebookUrl: safeExternalHttpsUrl(drive.coursebookUrl),
+      assessmentUrl: safeExternalHttpsUrl(drive.assessmentUrl),
+      curriculumMapUrl: safeExternalHttpsUrl(drive.curriculumMapUrl),
+      studentMaterialsFolderUrl: safeExternalHttpsUrl(
+        drive.studentMaterialsFolderUrl,
+      ),
+    };
+  }
+
+  function safeProtectedResourceUrl(value) {
+    if (!value) return "";
+    const configuredBase = configuredDriveUrl(
+      PLATFORM_API_CONFIG.coursesEndpoint || DRIVE_CONFIG.materialsEndpoint,
+    );
+    if (!configuredBase) return "";
+    try {
+      const base = new URL(configuredBase);
+      const url = new URL(String(value), base);
+      const localDevelopment =
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1"].includes(url.hostname);
+      if (
+        url.origin !== base.origin ||
+        (url.protocol !== "https:" && !localDevelopment) ||
+        url.username ||
+        url.password
+      ) {
+        return "";
+      }
+      return url.toString();
+    } catch {
+      return "";
+    }
+  }
+
   function submissionsEndpointUrl(scope = "") {
     const configured = configuredDriveUrl(
       SUBMISSION_CONFIG.submissionsEndpoint,
@@ -2063,8 +2201,23 @@
               ...submission,
               courseCode:
                 submission.courseCode || item.courseCode || item.courseId,
+              sectionKind:
+                submission.sectionKind || unit.sectionKind || "unit",
+              sectionLabel:
+                submission.sectionLabel || unit.sectionLabel || "",
+              unit:
+                submission.unit ||
+                submission.sectionLabel ||
+                unit.sectionLabel ||
+                (unit.sectionKind === "final_evaluation"
+                  ? "Final Evaluation"
+                  : ""),
               unitNumber:
                 submission.unitNumber ?? unit.unitNumber ?? unit.number,
+              curriculumUnitNumber:
+                submission.curriculumUnitNumber ??
+                unit.curriculumUnitNumber ??
+                null,
               student: {
                 ...student,
                 id: student.studentId || student.id,
@@ -2664,10 +2817,37 @@
       assignment.submissionMode =
         record.submissionMode || assignment.submissionMode;
       assignment.status = record.status || assignment.status;
+      const matchedModule =
+        findPlatformModule(course, record.moduleKey) ||
+        findPlatformModule(course, record.moduleNumber) ||
+        findPlatformModule(course, record.moduleId);
+      assignment.moduleKey =
+        matchedModule?.key || assignment.moduleKey || record.moduleKey;
+      assignment.sectionKind =
+        record.sectionKind || assignment.sectionKind || "unit";
+      assignment.sectionLabel =
+        record.sectionLabel ||
+        (assignment.sectionKind === "final_evaluation"
+          ? "Final Evaluation"
+          : assignment.sectionLabel);
+      assignment.curriculumUnitNumber =
+        record.curriculumUnitNumber != null &&
+        Number.isInteger(Number(record.curriculumUnitNumber))
+          ? Number(record.curriculumUnitNumber)
+          : null;
       assignment.unitNumber =
-        record.unitNumber != null && Number.isInteger(Number(record.unitNumber))
-        ? Number(record.unitNumber)
-        : assignment.unitNumber;
+        assignment.sectionKind === "final_evaluation"
+          ? null
+          : assignment.curriculumUnitNumber ??
+            (record.unitNumber != null &&
+            Number.isInteger(Number(record.unitNumber))
+              ? Number(record.unitNumber)
+              : assignment.unitNumber);
+      assignment.unit =
+        assignment.sectionLabel ||
+        (assignment.unitNumber != null
+          ? `Unit ${assignment.unitNumber}`
+          : assignment.unit);
       assignment.moduleNumber =
         record.moduleNumber != null && Number.isInteger(Number(record.moduleNumber))
         ? Number(record.moduleNumber)
@@ -3548,15 +3728,40 @@
 
   function findPlatformModule(course, identifier) {
     if (!course?.platformModules?.length) return null;
-    const decoded = safeDecode(String(identifier ?? ""));
-    const numeric = Number(decoded);
+    const decoded = safeDecode(String(identifier ?? "")).trim();
+    if (!decoded) return null;
+    const numeric = /^(?:0|[1-9]\d*)$/.test(decoded)
+      ? Number(decoded)
+      : null;
     return (
       course.platformModules.find(
         (module) =>
           module.key === decoded ||
-          (Number.isFinite(numeric) && module.number === numeric),
+          (numeric != null && module.number === numeric),
       ) || null
     );
+  }
+
+  function platformModuleRoute(course, module, teacher = false) {
+    const prefix = teacher ? "teacher/course" : "course";
+    return `${prefix}/${course.id}/module/${encodeURIComponent(module.key)}`;
+  }
+
+  function platformModuleForLesson(lesson) {
+    return findPlatformModule(
+      lesson?.course,
+      lesson?.platformModuleKey ?? lesson?.platformModuleNumber,
+    );
+  }
+
+  function platformModuleForAssignment(assignment) {
+    const course = findCourse(assignment?.courseId);
+    return course
+      ? findPlatformModule(
+          course,
+          assignment?.moduleKey ?? assignment?.moduleNumber,
+        )
+      : null;
   }
 
   function platformAssignmentsForModule(course, module) {
@@ -3580,6 +3785,35 @@
     );
   }
 
+  function teacherDisplayModule(course, module, remoteModule) {
+    if (!remoteModule) return module;
+    return normalizePlatformModule(
+      {
+        ...module,
+        ...remoteModule,
+        key: module.key,
+        number: module.number,
+        readingSteps:
+          remoteModule.coreReadingOrder ||
+          remoteModule.readingSteps ||
+          module.readingSteps,
+        selfStudyResources:
+          remoteModule.resources || module.selfStudyResources,
+        assessment: remoteModule.activity
+          ? {
+              ...module.assessment,
+              ...remoteModule.activity,
+            }
+          : module.assessment,
+        unlockRule: {
+          ...module.unlockRule,
+          ...(remoteModule.unlockRule || {}),
+        },
+      },
+      course.code,
+    );
+  }
+
   function studentModuleProgress(course, module) {
     if (!course || !module) return null;
     const records = platformRuntime.studentProgress[course.code];
@@ -3587,8 +3821,12 @@
     return (
       records.find(
         (record) =>
-          record.moduleId === module.id ||
-          record.moduleKey === module.key ||
+          (Boolean(record.moduleId) &&
+            Boolean(module.id) &&
+            record.moduleId === module.id) ||
+          (Boolean(record.moduleKey) &&
+            Boolean(module.key) &&
+            record.moduleKey === module.key) ||
           Number(record.moduleNumber) === module.number,
       ) || null
     );
@@ -3598,13 +3836,38 @@
     return Array.isArray(platformRuntime.studentProgress[course?.code]);
   }
 
+  function officialProgressConfigured(course) {
+    return Boolean(
+      course &&
+        studentProgressEndpoint(course) &&
+        courseModulesEndpoint(course),
+    );
+  }
+
   function moduleIsUnlocked(course, module) {
     if (module.number === 0) return true;
-    if (!officialProgressConnected(course)) return true;
+    if (!officialProgressConnected(course)) {
+      return !officialProgressConfigured(course);
+    }
     const current = studentModuleProgress(course, module);
     if (current?.override?.active) return true;
+    if (current?.status === "locked") return false;
+    if (["available", "in_progress", "completed"].includes(current?.status)) {
+      return true;
+    }
     const previous = findPlatformModule(course, module.number - 1);
     return studentModuleProgress(course, previous)?.status === "completed";
+  }
+
+  function lessonIsUnlocked(lesson) {
+    const module = platformModuleForLesson(lesson);
+    return !module || moduleIsUnlocked(lesson.course, module);
+  }
+
+  function assignmentIsUnlocked(assignment) {
+    const course = findCourse(assignment?.courseId);
+    const module = platformModuleForAssignment(assignment);
+    return !course || !module || moduleIsUnlocked(course, module);
   }
 
   function moduleStatus(course, module) {
@@ -3911,6 +4174,7 @@
 
   function calendarEvents() {
     const dueDates = studentAssignments()
+      .filter(assignmentIsUnlocked)
       .filter((assignment) => Boolean(assignment.due))
       .map((assignment) => {
       const course = findCourse(assignment.courseId);
@@ -3945,6 +4209,7 @@
   function unreadFeedback() {
     return studentAssignments().filter(
       (assignment) =>
+        assignmentIsUnlocked(assignment) &&
         assignmentFeedback(assignment) &&
         !state.feedbackRead.includes(assignment.id),
     );
@@ -3952,7 +4217,7 @@
 
   function smartActions() {
     const actions = [];
-    studentAssignments().forEach((assignment) => {
+    studentAssignments().filter(assignmentIsUnlocked).forEach((assignment) => {
       const status = assignmentStatus(assignment);
       if (!["overdue", "late", "due"].includes(status.key)) return;
       const course = findCourse(assignment.courseId);
@@ -3998,7 +4263,9 @@
     });
     studentCourses().forEach((course) => {
       const lesson = course.lessons.find(
-        (item) => !state.completed.includes(item.id),
+        (item) =>
+          !state.completed.includes(item.id) &&
+          lessonIsUnlocked({ ...item, course }),
       );
       if (!lesson) return;
       actions.push({
@@ -4016,6 +4283,9 @@
   }
 
   function assignmentStatus(assignment) {
+    if (!assignmentIsUnlocked(assignment)) {
+      return { key: "locked", label: "Locked", className: "warning" };
+    }
     const score = assignmentScore(assignment);
     if (score != null) {
       return { key: "graded", label: `Graded · ${score}%`, className: "success" };
@@ -4918,7 +5188,7 @@
 
   function teacherCourseView(course) {
     const syllabus = course.syllabus || { units: [], drive: {} };
-    const drive = syllabus.drive || {};
+    const drive = safeCourseDriveLinks(syllabus.drive);
     const records = teacherSubmissionRecords().filter(
       (record) => record.course.id === course.id,
     );
@@ -4962,7 +5232,7 @@
               ${(course.platformModules || [])
                 .map(
                   (module) => `
-                    <a href="#/teacher/course/${course.id}/module/${module.number}"><span>${String(module.number).padStart(2, "0")}</span><div><small>${escapeHtml(module.unitTitle || "Course Sequence")}</small><strong>${escapeHtml(module.title)}</strong></div><b>${module.estimatedCreditHours || 0}h</b>${icon("arrow", 15)}</a>
+                    <a href="#/${platformModuleRoute(course, module, true)}"><span>${String(module.number).padStart(2, "0")}</span><div><small>${escapeHtml(module.unitTitle || "Course Sequence")}</small><strong>${escapeHtml(module.title)}</strong></div><b>${module.estimatedCreditHours || 0}h</b>${icon("arrow", 15)}</a>
                   `,
                 )
                 .join("")}
@@ -5037,12 +5307,14 @@
   }
 
   function teacherModuleView(course, module) {
-    const assessment = module.assessment || {};
     const assignments = platformAssignmentsForModule(course, module);
     const roster = Array.isArray(platformRuntime.teacherRosters[course.code])
       ? platformRuntime.teacherRosters[course.code]
       : [];
     const remoteModule = remotePlatformModule(course, module);
+    const displayModule = teacherDisplayModule(course, module, remoteModule);
+    const assessment = displayModule.assessment || {};
+    module = displayModule;
     const unlockReady = Boolean(
       remoteModule?.id &&
         roster.length &&
@@ -5996,7 +6268,7 @@
             <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
           </div>
           <div class="course-hero-actions">
-            <a class="button button-gold" href="#/course/${course.id}/module/${nextModule.number}">${icon("arrow", 17)} ${nextModule.number === 0 ? "Start Course" : `Continue Module ${nextModule.number}`}</a>
+            <a class="button button-gold" href="#/${platformModuleRoute(course, nextModule)}">${icon("arrow", 17)} ${nextModule.number === 0 ? "Start Course" : `Continue Module ${nextModule.number}`}</a>
             <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
           </div>
         </div>
@@ -6014,7 +6286,7 @@
               const status = moduleStatus(course, module);
               const assignments = platformAssignmentsForModule(course, module);
               return `
-                <a class="platform-module-row ${status.key === "locked" ? "is-locked" : ""}" href="#/course/${course.id}/module/${module.number}">
+                <a class="platform-module-row ${status.key === "locked" ? "is-locked" : ""}" href="#/${platformModuleRoute(course, module)}">
                   <span class="platform-module-number">${String(module.number).padStart(2, "0")}</span>
                   <span class="platform-module-copy">
                     <span class="module-row-meta">${escapeHtml(module.unitTitle || (module.number === 0 ? "Course Orientation" : module.number === 11 ? "Final Evaluation" : `Unit ${module.unitNumber}`))}</span>
@@ -6071,6 +6343,21 @@
       .filter(Boolean);
   }
 
+  function moduleResourceMarkup(resource) {
+    const href =
+      safeExternalHttpsUrl(resource?.url) ||
+      safeProtectedResourceUrl(resource?.openUrl);
+    const content = `
+      <span class="course-code">${escapeHtml(resource?.provider || "Learning Resource")}</span>
+      <strong>${escapeHtml(resource?.title || "Learning Resource")}</strong>
+      <p>${escapeHtml(resource?.assignedUse || resource?.assigned_use || "Complete the assigned bounded task.")}</p>
+      <span class="text-link">${href ? `Open Resource ${icon("arrow", 14)}` : "Secure link unavailable"}</span>
+    `;
+    return href
+      ? `<a class="module-resource-card" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${content}</a>`
+      : `<article class="module-resource-card" aria-disabled="true">${content}</article>`;
+  }
+
   function studentModuleView(course, module) {
     const status = moduleStatus(course, module);
     const remoteModule = remotePlatformModule(course, module);
@@ -6095,7 +6382,7 @@
         <div class="module-detail-main">
           <section class="panel module-content-section"><header class="panel-header"><div><h2>Learning Focus</h2><p>${escapeHtml(module.workloadLabel)}</p></div></header><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
           <section class="panel module-content-section"><header class="panel-header"><div><h2>Required Reading Order</h2><p>Complete each step in sequence</p></div></header><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${module.lessons.length ? `<div class="module-lesson-links">${module.lessons.map((lesson) => `<a class="resource-link" href="#/lesson/${lesson.id}"><span>${icon("book", 18)}</span><span><strong>${escapeHtml(lesson.title)}</strong><small>Core lesson ${lesson.order}</small></span>${icon("arrow", 16)}</a>`).join("")}</div>` : ""}</section>
-          <section class="panel module-content-section"><header class="panel-header"><div><h2>Self-Study Resources</h2><p>Use after the required core reading</p></div></header>${module.selfStudyResources.length ? `<div class="module-resource-grid">${module.selfStudyResources.map((resource) => `<a class="module-resource-card" href="${escapeHtml(resource.url || resource.openUrl || "#")}" target="_blank" rel="noopener noreferrer"><span class="course-code">${escapeHtml(resource.provider || "Learning Resource")}</span><strong>${escapeHtml(resource.title)}</strong><p>${escapeHtml(resource.assignedUse || resource.assigned_use || "Complete the assigned bounded task.")}</p><span class="text-link">Open Resource ${icon("arrow", 14)}</span></a>`).join("")}</div>` : '<div class="empty-state compact"><p>No external resource is required in this module.</p></div>'}</section>
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Self-Study Resources</h2><p>Use after the required core reading</p></div></header>${module.selfStudyResources.length ? `<div class="module-resource-grid">${module.selfStudyResources.map(moduleResourceMarkup).join("")}</div>` : '<div class="empty-state compact"><p>No external resource is required in this module.</p></div>'}</section>
           <section class="module-activity-grid">
             <article class="panel module-content-section"><h2>Guided Practice</h2><p>${escapeHtml(module.guidedPractice)}</p></article>
             <article class="panel module-content-section"><h2>Low-Stakes Check</h2><p>${escapeHtml(module.lowStakesCheck)}</p></article>
@@ -6104,7 +6391,7 @@
         </div>
         <aside>
           <section class="panel"><header class="panel-header"><h3>Feedback & Unlock</h3></header><div class="panel-content"><p>${escapeHtml(module.feedbackAndUnlock)}</p><div class="platform-connection-note ${officialProgressConnected(course) ? "is-connected" : ""}"><span>${officialProgressConnected(course) ? "Official record connected" : "Official progress unavailable"}</span></div>${officialProgressConnected(course) ? `<button class="button button-primary full-width" type="button" data-action="set-module-complete" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}" data-activity-id="${escapeHtml(remoteModule?.activity?.id || "")}" ${!remoteModule?.id || (status.key !== "completed" && !remoteModule?.activity?.id) ? "disabled" : ""}>${status.key === "completed" ? "Reopen Module" : `${icon("check", 16)} Mark Module Complete`}</button>` : '<p class="teacher-security-note"><strong>Preview only.</strong> Browser activity is not treated as the school’s official progress record.</p>'}</div></section>
-          <section class="panel"><header class="panel-header"><h3>Module Evidence</h3></header><div class="panel-content"><p><strong>Estimated credit time</strong><br>${module.estimatedCreditHours || 0} hours</p><p><strong>What to retain</strong><br>${escapeHtml(module.evidenceToRetain)}</p></div></section>
+          <section class="panel"><header class="panel-header"><h3>Module Evidence</h3></header><div class="panel-content"><p><strong>Estimated credit time</strong><br>${module.estimatedCreditHours || 0} hours</p></div></section>
         </aside>
       </section>`;
   }
@@ -6229,7 +6516,7 @@
           moduleStatus(course, module).key !== "completed",
       ) || course.platformModules?.[0];
     const requirement = enrollmentRequirement(course);
-    const drive = syllabus.drive || {};
+    const drive = safeCourseDriveLinks(syllabus.drive);
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="${selected ? "courses" : "course-selection"}">${selected ? "My Courses" : "Course Selection"}</button><span>/</span>
@@ -6256,7 +6543,7 @@
         </div>
         ${
           selected
-            ? `<a class="button button-primary" href="#/course/${course.id}${nextModule ? `/module/${nextModule.number}` : ""}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
+            ? `<a class="button button-primary" href="${nextModule ? `#/${platformModuleRoute(course, nextModule)}` : `#/course/${course.id}`}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
             : !requirement.met && requirement.missing.includes("mhf4u")
               ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
               : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
@@ -6291,7 +6578,7 @@
                         <p>${escapeHtml(module.learningFocus[0] || `Review the learning goals, evidence requirements and assessment for ${module.title}.`)}</p>
                         ${
                           selected
-                            ? `<a class="button button-secondary" href="#/course/${course.id}/module/${module.number}">Open Module ${icon("arrow", 15)}</a>`
+                            ? `<a class="button button-secondary" href="#/${platformModuleRoute(course, module)}">Open Module ${icon("arrow", 15)}</a>`
                             : `<span class="syllabus-unit-lock">${icon("book", 16)} Add this course to open the module learning path.</span>`
                         }
                       </div>
@@ -6356,7 +6643,7 @@
               }
               ${
                 selected
-                  ? `<a class="button button-primary full-width" href="#/course/${course.id}${nextModule ? `/module/${nextModule.number}` : ""}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
+                  ? `<a class="button button-primary full-width" href="${nextModule ? `#/${platformModuleRoute(course, nextModule)}` : `#/course/${course.id}`}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
                   : !requirement.met && requirement.missing.includes("mhf4u")
                     ? `<button class="button button-primary full-width" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
                     : `<button class="button button-primary full-width" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
@@ -6387,7 +6674,11 @@
     const courseLessons = lesson.course.lessons;
     const index = courseLessons.findIndex((item) => item.id === lesson.id);
     const previous = courseLessons[index - 1];
-    const next = courseLessons[index + 1];
+    const nextCandidate = courseLessons[index + 1];
+    const next =
+      nextCandidate && lessonIsUnlocked({ ...nextCandidate, course: lesson.course })
+        ? nextCandidate
+        : null;
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="courses">My Courses</button><span>/</span>
@@ -6510,13 +6801,18 @@
             .map((assignment) => {
               const course = findCourse(assignment.courseId);
               const status = assignmentStatus(assignment);
+              const locked = status.key === "locked";
+              const rowTag = locked ? "article" : "a";
+              const rowTarget = locked
+                ? ' aria-disabled="true"'
+                : ` href="#/assignment/${assignment.id}"`;
               return `
-                <a class="deadline-row" href="#/assignment/${assignment.id}">
+                <${rowTag} class="deadline-row ${locked ? "is-locked" : ""}"${rowTarget}>
                   <span class="deadline-date"><strong>${assignment.due ? formatDate(assignment.due).split(",")[0] : "TBD"}</strong><small>${assignment.due ? formatTime(assignment.due) : "Offering schedule"}</small></span>
                   <span><p class="course-code">${course.code}</p><h3>${escapeHtml(assignment.title)}</h3><p>${assignment.due ? `Available until ${assignmentAvailabilityLabel(assignment)}` : "Schedule set separately for the active course offering"}</p></span>
                   <span class="badge ${status.className}">${status.label}</span>
-                  ${icon("arrow", 17)}
-                </a>
+                  ${icon(locked ? "clock" : "arrow", 17)}
+                </${rowTag}>
               `;
             })
             .join("")}
@@ -6652,8 +6948,13 @@
                 .map((assignment) => {
                   const course = findCourse(assignment.courseId);
                   const status = assignmentStatus(assignment);
+                  const cardTag = status.key === "locked" ? "article" : "a";
+                  const cardHref =
+                    status.key === "locked"
+                      ? ' aria-disabled="true"'
+                      : ` href="#/assignment/${assignment.id}"`;
                   return `
-                    <a class="assignment-card" href="#/assignment/${assignment.id}">
+                    <${cardTag} class="assignment-card ${status.key === "locked" ? "is-locked" : ""}"${cardHref}>
                       <span class="task-dot ${status.key === "overdue" ? "overdue" : ""}"></span>
                       <span>
                         <p class="course-code">${course.code} · ${course.title}</p>
@@ -6661,8 +6962,8 @@
                         <p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p>
                       </span>
                       <span class="badge ${status.className}">${status.label}</span>
-                      ${icon("arrow", 18)}
-                    </a>
+                      ${icon(status.key === "locked" ? "clock" : "arrow", 18)}
+                    </${cardTag}>
                   `;
                 })
                 .join("")
@@ -6682,6 +6983,9 @@
       Boolean(submission?.driveFileId || submission?.fileUrl);
     const submissionManagedByTeacher =
       assignment.teacherRecorded || assignment.submissionMode === "supervised";
+    const requiresSubmissionFile = ["file", "project"].includes(
+      assignment.submissionMode,
+    );
     const showSubmissionForm =
       !submissionManagedByTeacher &&
       (!submission || replacingSubmissionId === assignment.id);
@@ -6867,9 +7171,9 @@
                       }
                       <label for="submission-note">Submission Note</label>
                       <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(submission?.text || "")}</textarea>
-                      <label for="submission-file">Attach a File</label>
-                      <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" aria-describedby="submission-file-help" />
-                      <p class="field-help" id="submission-file-help">PDF, Word, PowerPoint or Excel · maximum 25 MB</p>
+                      <label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
+                      <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
+                      <p class="field-help" id="submission-file-help">PDF, Word, PowerPoint or Excel · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
                       <div class="file-preview" id="submission-file-preview" hidden>
                         <span>${icon("file", 18)}</span>
                         <span><strong data-file-name></strong><small data-file-meta></small></span>
@@ -7033,6 +7337,16 @@
     `;
   }
 
+  function teacherNotFoundView() {
+    return `
+      <div class="teacher-empty">
+        <h1>Page Not Found</h1>
+        <p>The faculty page you requested is unavailable.</p>
+        <a class="button button-primary" href="#/teacher/courses">Return to Course Management</a>
+      </div>
+    `;
+  }
+
   function focusMain() {
     const main = document.querySelector("#main-content");
     if (main) {
@@ -7100,15 +7414,20 @@
       view = teacherMaterialsView();
     } else if (teacherRoute[1] === "course") {
       const course = findCourse(teacherRoute[2]);
+      const moduleRequested = teacherRoute[3] === "module";
       const module =
-        course && teacherRoute[3] === "module"
+        course && moduleRequested
           ? findPlatformModule(course, teacherRoute[4])
           : null;
-      view = course
-        ? module
-          ? teacherModuleView(course, module)
-          : teacherCourseView(course)
-        : teacherCoursesView();
+      view = !course
+        ? teacherNotFoundView()
+        : moduleRequested
+          ? module
+            ? teacherModuleView(course, module)
+            : teacherNotFoundView()
+          : teacherRoute.length === 3
+            ? teacherCourseView(course)
+            : teacherNotFoundView();
     } else if (teacherRoute[1] === "submission") {
       view = teacherSubmissionDetailView(
         safeDecode(teacherRoute[2] || ""),
@@ -7195,18 +7514,18 @@
     else if (route[0] === "calendar") view = calendarView();
     else if (route[0] === "course") {
       const course = findCourse(route[1]);
-      view = course
-        ? isCourseEnrolled(course.id)
-          ? route[2] === "module"
-            ? studentModuleView(
-                course,
-                findPlatformModule(course, route[3]) || course.platformModules?.[0],
-              )
-            : courseView(course)
-          : SELECTABLE_COURSE_IDS.includes(course.id)
-            ? courseAccessView(course)
-            : notFoundView()
-        : notFoundView();
+      if (!course) {
+        view = notFoundView();
+      } else if (!isCourseEnrolled(course.id)) {
+        view = SELECTABLE_COURSE_IDS.includes(course.id)
+          ? courseAccessView(course)
+          : notFoundView();
+      } else if (route[2] === "module") {
+        const module = findPlatformModule(course, route[3]);
+        view = module ? studentModuleView(course, module) : notFoundView();
+      } else {
+        view = route.length === 2 ? courseView(course) : notFoundView();
+      }
     } else if (route[0] === "guide" || route[0] === "syllabus") {
       const course = findCourse(route[1]);
       view =
@@ -7215,9 +7534,12 @@
           : notFoundView();
     } else if (route[0] === "lesson") {
       const lesson = findLesson(route[1]);
+      const module = platformModuleForLesson(lesson);
       view = lesson
         ? isCourseEnrolled(lesson.course.id)
-          ? lessonView(lesson)
+          ? module && !moduleIsUnlocked(lesson.course, module)
+            ? studentModuleView(lesson.course, module)
+            : lessonView(lesson)
           : SELECTABLE_COURSE_IDS.includes(lesson.course.id)
             ? courseAccessView(lesson.course)
             : notFoundView()
@@ -7226,9 +7548,12 @@
     else if (route[0] === "assignment") {
       const assignment = findAssignment(route[1]);
       const course = assignment ? findCourse(assignment.courseId) : null;
+      const module = platformModuleForAssignment(assignment);
       view = assignment
         ? course && isCourseEnrolled(course.id)
-          ? assignmentView(assignment)
+          ? module && !moduleIsUnlocked(course, module)
+            ? studentModuleView(course, module)
+            : assignmentView(assignment)
           : course && SELECTABLE_COURSE_IDS.includes(course.id)
             ? courseAccessView(course)
             : notFoundView()
@@ -7240,10 +7565,15 @@
     APP_ROOT.innerHTML = shell(view);
     if (route[0] === "course") {
       ensureStudentPlatformData(findCourse(route[1]));
+    } else if (route[0] === "lesson") {
+      const lesson = findLesson(route[1]);
+      ensureStudentPlatformData(lesson?.course);
     } else if (route[0] === "assignment") {
       const assignment = findAssignment(route[1]);
       ensureStudentPlatformData(findCourse(assignment?.courseId));
-    } else if (["dashboard", "assignments", "progress"].includes(route[0])) {
+    } else if (
+      ["dashboard", "assignments", "calendar", "progress"].includes(route[0])
+    ) {
       studentCourses().forEach(ensureStudentPlatformData);
     }
     if (
@@ -7890,6 +8220,7 @@
       setFormAlert(event.target);
       const form = new FormData(event.target);
       const file = form.get("file");
+      const assignment = findAssignment(id);
       const existing = submissionForAssignment(id);
       const text = String(form.get("note") || "").trim();
       const newFileName = file instanceof File && file.name ? file.name : "";
@@ -7898,6 +8229,17 @@
         setFormAlert(
           event.target,
           `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
+      if (
+        ["file", "project"].includes(assignment?.submissionMode) &&
+        !newFileName
+      ) {
+        setFormAlert(
+          event.target,
+          "Choose a new file for this assignment before continuing.",
         );
         document.querySelector("#submission-file")?.focus();
         return;
@@ -7922,11 +8264,9 @@
       const receiptId = receiptIdFor(id, submittedAt);
       const remoteEndpoint = submissionsEndpointUrl();
       if (remoteEndpoint) {
-        const assignment = findAssignment(id);
         const course = assignment ? findCourse(assignment.courseId) : null;
         const user = currentUser();
-        const unitNumber =
-          assignment?.unitNumber == null ? "" : Number(assignment.unitNumber);
+        const unitNumber = Number(assignment?.unitNumber);
         const attemptNumber =
           Math.max(
             Number(existing?.attemptNumber || 0),
@@ -7935,7 +8275,13 @@
         const upload = new FormData();
         upload.set("assignmentId", id);
         upload.set("courseCode", course?.code || "");
-        upload.set("unitNumber", String(unitNumber));
+        if (
+          Number.isInteger(unitNumber) &&
+          unitNumber >= 1 &&
+          unitNumber <= 999
+        ) {
+          upload.set("unitNumber", String(unitNumber));
+        }
         upload.set("assignmentTitle", assignment?.title || "");
         upload.set("attemptNumber", String(attemptNumber));
         upload.set("note", text);
