@@ -42,6 +42,14 @@ function courseCodeFromFolder(name) {
   return launchCourseCodes.find((code) => new RegExp(`(^|[^A-Z0-9])${code}([^A-Z0-9]|$)`).test(upper)) || "";
 }
 
+function isStaffOnlyMaterialPath(parts) {
+  return parts.some((part) =>
+    /(?:^|[^a-z0-9])(?:administration|staff[_ -]?only|teacher[_ -]?guide|answer[_ -]?key)(?:[^a-z0-9]|$)/i.test(
+      String(part || ""),
+    ),
+  );
+}
+
 function escapeQuery(value) {
   return String(value).replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 }
@@ -175,11 +183,11 @@ export class GoogleDriveStore {
         const children = await this.listChildren(current.id, source.drive_id);
         for (const item of children) {
           const itemPath = [...current.path, item.name];
+          if (isStaffOnlyMaterialPath(itemPath)) {
+            skippedCount += 1;
+            continue;
+          }
           if (item.mimeType === folderMime) {
-            if (/^(administration|staff[_ -]?only)$/i.test(item.name)) {
-              skippedCount += 1;
-              continue;
-            }
             queue.push({ id: item.id, path: itemPath });
             continue;
           }
@@ -201,11 +209,13 @@ export class GoogleDriveStore {
           const pathText = itemPath.join("/");
           const unitMatch = pathText.match(/(?:^|[/ _-])Unit[ _-]*0*([1-9]\d{0,2})(?:\b|[/ _-])/i);
           const unitNumber = unitMatch ? Number(unitMatch[1]) : 1;
-          const category = /assessment|evaluation/i.test(pathText)
-            ? "Assessments"
-            : /reading[_ -]?library|resources?/i.test(pathText)
-              ? "Resources"
-              : "Lessons";
+          const category = /assessment[_ -]?reading[_ -]?library|evidence[_ -]?file|platform[_ -]?delivery|reading[_ -]?library|resources?/i.test(pathText)
+            ? "Resources"
+            : /assignments?|submission[_ -]?task/i.test(pathText)
+              ? "Assignments"
+              : /assessment|evaluation/i.test(pathText)
+                ? "Assessments"
+                : "Lessons";
           records.push({
             driveFileId: item.id,
             parentFolderId: current.id,

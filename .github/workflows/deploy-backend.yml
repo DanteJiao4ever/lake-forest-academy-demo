@@ -196,9 +196,10 @@ jobs:
               --output "$body" \
               "$CANDIDATE_URL$path"
             jq -e '.status == "ready"' "$body" >/dev/null
-            grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca[[:space:]]*$' "$headers"
+            grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca\r?$' "$headers"
           }
           probe "/health/ready" "core-ready"
+          probe "/health/catalog-ready" "catalog-ready"
           probe "/health/upload-ready" "upload-ready"
       - name: Promote the verified candidate revision
         env:
@@ -217,6 +218,11 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 10 --max-time 30 \
+            "$public_url/health/catalog-ready" \
+            | jq -e '.status == "ready"' >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
             "$public_url/health/upload-ready" \
             | jq -e '.status == "ready"' >/dev/null
       - name: Remove the temporary candidate URL
@@ -227,4 +233,4 @@ jobs:
           --region "$REGION"
           --remove-tags "$CANDIDATE_TAG"
       - name: Deployment summary
-        run: echo "Learning API candidate passed core, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Learning API candidate passed core, course-catalog, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"

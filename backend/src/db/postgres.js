@@ -2,6 +2,14 @@ import pg from "pg";
 import { ApiError } from "../lib/errors.js";
 
 const { Pool } = pg;
+const PLATFORM_COURSE_CODES = Object.freeze([
+  "SCH4U",
+  "ICS4U",
+  "SPH4U",
+  "MHF4U",
+  "MCV4U",
+  "BBB4M",
+]);
 
 export function createPool(config) {
   // node-postgres reparses connectionString when it creates each client, so a
@@ -399,6 +407,837 @@ export class PostgresRepository {
     return result.rows.map((row) => row.course_code);
   }
 
+  async catalogReady() {
+    const result = await this.pool.query(
+      `SELECT
+         (SELECT count(*)::int FROM courses
+           WHERE code = ANY($1::text[]) AND status = 'active') AS courses,
+         (SELECT count(*)::int FROM course_modules
+           WHERE course_code = ANY($1::text[]) AND status = 'published') AS modules,
+         (SELECT count(*)::int FROM module_lessons ml
+           JOIN course_modules cm ON cm.id = ml.module_id
+          WHERE cm.course_code = ANY($1::text[]) AND ml.status = 'published') AS lessons,
+         (SELECT count(*)::int FROM module_resources mr
+           JOIN course_modules cm ON cm.id = mr.module_id
+          WHERE cm.course_code = ANY($1::text[]) AND mr.status = 'published') AS resources,
+         (SELECT count(*)::int FROM module_activities ma
+           JOIN course_modules cm ON cm.id = ma.module_id
+          WHERE cm.course_code = ANY($1::text[]) AND ma.status = 'published') AS activities,
+         (SELECT count(*)::int FROM gradebook_items
+           WHERE course_code = ANY($1::text[]) AND status = 'published') AS gradebook_items,
+         (SELECT count(*)::int FROM assessment_components ac
+           JOIN module_activities ma ON ma.id = ac.module_activity_id
+           JOIN course_modules cm ON cm.id = ma.module_id
+          WHERE cm.course_code = ANY($1::text[])) AS assessment_components,
+         (SELECT count(*)::int
+            FROM (
+              SELECT course_code
+               FROM course_modules
+               WHERE course_code = ANY($1::text[]) AND status = 'published'
+               GROUP BY course_code
+              HAVING count(*) <> 12 OR sum(estimated_credit_hours) <> 110
+            ) invalid_hours) AS invalid_course_hours,
+         (SELECT count(*)::int
+            FROM (
+              SELECT course_code
+                FROM gradebook_items
+               WHERE course_code = ANY($1::text[]) AND status = 'published'
+               GROUP BY course_code
+              HAVING sum(weight_percent) <> 100
+            ) invalid_weights) AS invalid_course_weights`,
+      [PLATFORM_COURSE_CODES],
+    );
+    return result.rows[0];
+  }
+
+  async listCoursesForUser(user) {
+    const allowed = await this.listAccessibleCourseCodes(user);
+    const result = await this.pool.query(
+      `SELECT c.code, c.title, c.status,
+              count(cm.id) FILTER (WHERE cm.status = 'published')::int AS module_count,
+              COALESCE(sum(cm.estimated_credit_hours)
+                FILTER (WHERE cm.status = 'published'), 0)::numeric AS planned_hours
+         FROM courses c
+         LEFT JOIN course_modules cm ON cm.course_code = c.code
+        WHERE c.code = ANY($1::text[]) AND c.status = 'active'
+        GROUP BY c.code, c.title, c.status
+        ORDER BY c.code`,
+      [allowed],
+    );
+    return result.rows.map((row) => ({
+      code: row.code,
+      title: row.title,
+      status: row.status,
+      moduleCount: Number(row.module_count),
+      plannedHours: Number(row.planned_hours),
+    }));
+  }
+
+  async getModule(moduleId) {
+    const result = await this.pool.query(
+      `SELECT id, course_code, module_number, unit_number, title, unit_title, status
+         FROM course_modules WHERE id = $1 LIMIT 1`,
+      [moduleId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          id: row.id,
+          courseCode: row.course_code,
+          moduleNumber: row.module_number,
+          unitNumber: row.unit_number,
+          title: row.title,
+          unitTitle: row.unit_title,
+          status: row.status,
+        }
+      : null;
+  }
+
+  async getActivity(activityId) {
+    const result = await this.pool.query(
+      `SELECT ma.id, ma.module_id, ma.status, cm.course_code, cm.module_number
+         FROM module_activities ma
+         JOIN course_modules cm ON cm.id = ma.module_id
+        WHERE ma.id = $1 LIMIT 1`,
+      [activityId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          id: row.id,
+          moduleId: row.module_id,
+          courseCode: row.course_code,
+          moduleNumber: row.module_number,
+          status: row.status,
+        }
+      : null;
+  }
+
+  async listCourseModules(courseCode, { includeStaff = false } = {}) {
+    const modulesResult = await this.pool.query(
+      `SELECT * FROM course_modules
+        WHERE course_code = $1 AND status = 'published'
+        ORDER BY module_number`,
+      [courseCode],
+    );
+    if (!modulesResult.rowCount) return [];
+    const moduleIds = modulesResult.rows.map((row) => row.id);
+    const [lessonsResult, resourcesResult, activitiesResult, componentsResult] =
+      await Promise.all([
+        this.pool.query(
+          `SELECT id, module_id, position, title
+             FROM module_lessons
+            WHERE module_id = ANY($1::text[]) AND status = 'published'
+            ORDER BY module_id, position`,
+          [moduleIds],
+        ),
+        this.pool.query(
+          `SELECT r.id, r.module_id, r.position, r.title, r.provider,
+                  r.resource_kind, r.external_url, r.drive_material_id,
+                  r.assigned_use, r.audience
+             FROM module_resources r
+             LEFT JOIN drive_materials dm ON dm.id = r.drive_material_id
+            WHERE r.module_id = ANY($1::text[])
+              AND r.status = 'published'
+              AND ($2::boolean OR r.audience = 'student')
+              AND (r.drive_material_id IS NULL OR (dm.is_active = true AND ($2::boolean OR dm.audience = 'student')))
+            ORDER BY r.module_id, r.position`,
+          [moduleIds, includeStaff],
+        ),
+        this.pool.query(
+          `SELECT * FROM module_activities
+            WHERE module_id = ANY($1::text[]) AND status = 'published'
+            ORDER BY module_id`,
+          [moduleIds],
+        ),
+        this.pool.query(
+          `SELECT ac.*
+             FROM assessment_components ac
+             JOIN module_activities ma ON ma.id = ac.module_activity_id
+            WHERE ma.module_id = ANY($1::text[])
+            ORDER BY ac.module_activity_id, ac.position`,
+          [moduleIds],
+        ),
+      ]);
+    const lessons = new Map();
+    for (const row of lessonsResult.rows) {
+      if (!lessons.has(row.module_id)) lessons.set(row.module_id, []);
+      lessons.get(row.module_id).push({ id: row.id, position: row.position, title: row.title });
+    }
+    const resources = new Map();
+    for (const row of resourcesResult.rows) {
+      if (!resources.has(row.module_id)) resources.set(row.module_id, []);
+      resources.get(row.module_id).push({
+        id: row.id,
+        position: row.position,
+        title: row.title,
+        provider: row.provider,
+        kind: row.resource_kind,
+        url: row.external_url || null,
+        openUrl: row.drive_material_id ? `/v1/materials/${row.drive_material_id}/open` : null,
+        assignedUse: row.assigned_use,
+        audience: row.audience,
+      });
+    }
+    const components = new Map();
+    for (const row of componentsResult.rows) {
+      if (!components.has(row.module_activity_id)) components.set(row.module_activity_id, []);
+      components.get(row.module_activity_id).push({
+        id: row.id,
+        gradebookItemId: row.gradebook_item_id,
+        position: row.position,
+        title: row.title,
+        type: row.component_type,
+        weightPercent: Number(row.weight_percent),
+        timeMinutes: row.time_minutes,
+        processCheckpoints: row.process_checkpoints,
+      });
+    }
+    const activities = new Map();
+    for (const row of activitiesResult.rows) {
+      activities.set(row.module_id, {
+        id: row.id,
+        type: row.activity_type,
+        title: row.title,
+        weightPercent: Number(row.course_grade_weight_percent),
+        sequence: row.sequence,
+        evidenceFile: row.evidence_file,
+        taskType: row.task_type,
+        processCheckpoints: row.process_checkpoints,
+        authenticationEvidence: row.authentication_evidence,
+        timeMinutes: row.time_minutes,
+        isRequired: row.is_required,
+        components: components.get(row.id) || [],
+      });
+    }
+    return modulesResult.rows.map((row) => ({
+      id: row.id,
+      courseCode: row.course_code,
+      moduleNumber: row.module_number,
+      unitNumber: row.unit_number,
+      title: row.title,
+      unitTitle: row.unit_title,
+      learningFocus: row.learning_focus,
+      coreReadingOrder: row.core_reading_order,
+      guidedPractice: row.guided_practice,
+      lowStakesCheck: row.low_stakes_check,
+      feedbackAndUnlock: row.feedback_and_unlock,
+      estimatedCreditHours: Number(row.estimated_credit_hours),
+      workloadLabel: row.workload_label,
+      teacherPresence: row.teacher_presence,
+      evidenceToRetain: row.evidence_to_retain,
+      lessons: lessons.get(row.id) || [],
+      resources: resources.get(row.id) || [],
+      activity: activities.get(row.id) || null,
+    }));
+  }
+
+  async listCourseAssignments(courseCode, { includeInactive = false } = {}) {
+    const result = await this.pool.query(
+      `SELECT a.*, cm.module_number
+       FROM assignments a
+         JOIN course_modules cm ON cm.id = a.module_id
+        WHERE a.course_code = $1 AND ($2::boolean OR a.status = 'active')
+        ORDER BY COALESCE(cm.module_number, a.unit_number), a.id`,
+      [courseCode, includeInactive],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      courseCode: row.course_code,
+      moduleId: row.module_id,
+      moduleNumber: row.module_number,
+      unitNumber: row.unit_number,
+      title: row.title,
+      instructions: row.instructions,
+      rubric: row.rubric,
+      weightPercent: row.weight_percent == null ? null : Number(row.weight_percent),
+      submissionMode: row.submission_mode,
+      availableFrom: row.available_from,
+      dueAt: row.due_at,
+      availableUntil: row.available_until,
+      maxAttempts: row.max_attempts,
+      status: row.status,
+    }));
+  }
+
+  async listStudentProgress(studentUserId, courseCode) {
+    const result = await this.pool.query(
+      `SELECT cm.id, cm.module_number, p.status AS recorded_status,
+              p.started_at, p.completed_at,
+              previous.status AS previous_status,
+              override.id AS override_id, override.reason AS override_reason,
+              override.expires_at AS override_expires_at
+         FROM course_modules cm
+         LEFT JOIN student_module_progress p
+           ON p.module_id = cm.id AND p.student_user_id = $1
+         LEFT JOIN course_modules previous_module
+           ON previous_module.course_code = cm.course_code
+          AND previous_module.module_number = cm.module_number - 1
+         LEFT JOIN student_module_progress previous
+           ON previous.module_id = previous_module.id AND previous.student_user_id = $1
+         LEFT JOIN LATERAL (
+           SELECT id, reason, expires_at
+             FROM module_unlock_overrides u
+            WHERE u.student_user_id = $1 AND u.module_id = cm.id AND u.active = true
+              AND (u.expires_at IS NULL OR u.expires_at > now())
+            ORDER BY u.created_at DESC LIMIT 1
+         ) override ON true
+        WHERE cm.course_code = $2 AND cm.status = 'published'
+        ORDER BY cm.module_number`,
+      [studentUserId, courseCode],
+    );
+    return result.rows.map((row) => {
+      const status = row.recorded_status ||
+        (row.module_number === 0 || row.override_id || row.previous_status === "completed"
+          ? "available"
+          : "locked");
+      return {
+        courseCode,
+        moduleId: row.id,
+        moduleNumber: row.module_number,
+        status,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        override: row.override_id
+          ? { active: true, reason: row.override_reason, expiresAt: row.override_expires_at }
+          : null,
+      };
+    });
+  }
+
+  async upsertStudentModuleProgress(studentUserId, moduleId, status) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const available = await client.query(
+        `SELECT cm.id, cm.course_code, cm.module_number,
+                current.status AS current_status,
+                previous.status AS previous_status,
+                required_activity.id AS required_activity_id,
+                activity_completion.status AS activity_completion_status,
+                EXISTS (
+                  SELECT 1 FROM module_unlock_overrides u
+                   WHERE u.student_user_id = $1 AND u.module_id = cm.id AND u.active = true
+                     AND (u.expires_at IS NULL OR u.expires_at > now())
+                ) AS overridden
+           FROM course_modules cm
+           LEFT JOIN student_module_progress current
+             ON current.student_user_id = $1 AND current.module_id = cm.id
+           LEFT JOIN course_modules previous_module
+             ON previous_module.course_code = cm.course_code
+            AND previous_module.module_number = cm.module_number - 1
+           LEFT JOIN student_module_progress previous
+             ON previous.student_user_id = $1 AND previous.module_id = previous_module.id
+           LEFT JOIN module_activities required_activity
+             ON required_activity.module_id = cm.id
+            AND required_activity.status = 'published'
+            AND required_activity.is_required = true
+           LEFT JOIN student_activity_completions activity_completion
+             ON activity_completion.student_user_id = $1
+            AND activity_completion.activity_id = required_activity.id
+          WHERE cm.id = $2 AND cm.status = 'published'
+          FOR UPDATE OF cm`,
+        [studentUserId, moduleId],
+      );
+      const module = available.rows[0];
+      if (!module) throw new ApiError(404, "MODULE_NOT_FOUND", "The course module was not found.");
+      const canStart = module.module_number === 0 || module.overridden ||
+        module.previous_status === "completed" ||
+        ["in_progress", "completed"].includes(module.current_status);
+      if (!canStart) throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
+      if (
+        status === "completed" &&
+        module.required_activity_id &&
+        !["completed", "waived"].includes(module.activity_completion_status)
+      ) {
+        throw new ApiError(
+          409,
+          "ACTIVITY_COMPLETION_REQUIRED",
+          "Complete the required module activity before closing this module.",
+        );
+      }
+      const saved = await client.query(
+        `INSERT INTO student_module_progress
+          (student_user_id, module_id, status, started_at, completed_at)
+         VALUES ($1, $2, $3, now(), CASE WHEN $3 = 'completed' THEN now() ELSE NULL END)
+         ON CONFLICT (student_user_id, module_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           started_at = COALESCE(student_module_progress.started_at, EXCLUDED.started_at),
+           completed_at = CASE WHEN EXCLUDED.status = 'completed' THEN now() ELSE NULL END,
+           updated_at = now()
+         RETURNING *`,
+        [studentUserId, moduleId, status],
+      );
+      await client.query("COMMIT");
+      const row = saved.rows[0];
+      return { moduleId: row.module_id, status: row.status, startedAt: row.started_at, completedAt: row.completed_at };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertStudentActivityCompletion(studentUserId, activityId, status, evidence = {}) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const gate = await client.query(
+        `SELECT ma.id, ma.course_grade_weight_percent,
+                gi.id AS gradebook_item_id,
+                (
+                  EXISTS (
+                    SELECT 1
+                      FROM student_gradebook_scores direct
+                     WHERE direct.student_user_id = $1
+                       AND direct.gradebook_item_id = gi.id
+                       AND direct.published_at IS NOT NULL
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                      FROM student_submissions submission
+                      JOIN submission_grades grade
+                        ON grade.submission_id = submission.id
+                       AND grade.published_at IS NOT NULL
+                     WHERE submission.student_user_id = $1
+                       AND submission.assignment_id = gi.assignment_id
+                       AND submission.status = 'submitted'
+                       AND submission.id = (
+                         SELECT latest.id
+                           FROM student_submissions latest
+                          WHERE latest.student_user_id = $1
+                            AND latest.assignment_id = gi.assignment_id
+                          ORDER BY latest.attempt_number DESC,
+                                   latest.submitted_at DESC, latest.id DESC
+                          LIMIT 1
+                       )
+                  )
+                ) AS has_published_grade
+           FROM module_activities ma
+           LEFT JOIN gradebook_items gi
+             ON gi.module_activity_id = ma.id AND gi.status = 'published'
+          WHERE ma.id = $2 AND ma.status = 'published'
+          ORDER BY gi.position`,
+        [studentUserId, activityId],
+      );
+      const activity = gate.rows[0];
+      if (!activity) {
+        throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
+      }
+      if (
+        status === "completed" &&
+        Number(activity.course_grade_weight_percent) > 0 &&
+        (
+          !gate.rows.some((row) => row.gradebook_item_id) ||
+          gate.rows.some((row) => row.gradebook_item_id && !row.has_published_grade)
+        )
+      ) {
+        throw new ApiError(
+          409,
+          "ACTIVITY_GRADE_REQUIRED",
+          "All graded components must have a published grade before this activity can be completed.",
+        );
+      }
+      const result = await client.query(
+        `INSERT INTO student_activity_completions
+          (student_user_id, activity_id, status, evidence, completed_at)
+         VALUES ($1, $2, $3, $4::jsonb,
+                 CASE WHEN $3 IN ('completed', 'waived') THEN now() ELSE NULL END)
+         ON CONFLICT (student_user_id, activity_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           evidence = EXCLUDED.evidence,
+           completed_at = EXCLUDED.completed_at,
+           updated_at = now()
+         RETURNING *`,
+        [studentUserId, activityId, status, JSON.stringify(evidence)],
+      );
+      await client.query("COMMIT");
+      const row = result.rows[0];
+      return {
+        activityId: row.activity_id,
+        status: row.status,
+        evidence: row.evidence,
+        completedAt: row.completed_at,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async listCourseRoster(courseCode) {
+    const result = await this.pool.query(
+      `SELECT u.public_id AS student_id, u.display_name, u.email,
+              ce.status AS enrollment_status, ce.enrolled_at,
+              (SELECT count(*)::int
+                 FROM student_module_progress p
+                 JOIN course_modules cm ON cm.id = p.module_id
+                WHERE p.student_user_id = u.id AND cm.course_code = ce.course_code
+                  AND p.status = 'completed') AS completed_modules,
+              (SELECT count(*)::int FROM course_modules cm
+                WHERE cm.course_code = ce.course_code AND cm.status = 'published') AS total_modules
+         FROM course_enrollments ce
+         JOIN app_users u ON u.id = ce.student_user_id
+        WHERE ce.course_code = $1 AND ce.status = 'active' AND u.status = 'active'
+        ORDER BY u.display_name, u.public_id`,
+      [courseCode],
+    );
+    return result.rows.map((row) => ({
+      studentId: row.student_id,
+      displayName: row.display_name,
+      email: String(row.email).toLowerCase(),
+      enrollmentStatus: row.enrollment_status,
+      enrolledAt: row.enrolled_at,
+      completedModules: row.completed_modules,
+      totalModules: row.total_modules,
+    }));
+  }
+
+  async listCourseGradebook(courseCode) {
+    const [itemsResult, roster] = await Promise.all([
+      this.pool.query(
+        `SELECT id, category, component_key, title, weight_percent, max_score,
+                submission_mode, assignment_id, position
+           FROM gradebook_items
+          WHERE course_code = $1 AND status = 'published'
+          ORDER BY position`,
+        [courseCode],
+      ),
+      this.listCourseRoster(courseCode),
+    ]);
+    const scoresResult = await this.pool.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON (s.student_user_id, s.assignment_id)
+                s.id, s.student_user_id, s.assignment_id
+           FROM student_submissions s
+          WHERE s.course_code = $1 AND s.status = 'submitted'
+          ORDER BY s.student_user_id, s.assignment_id,
+                   s.attempt_number DESC, s.submitted_at DESC
+       )
+       SELECT u.public_id AS student_id, gi.id AS item_id,
+              latest.id AS submission_id,
+              CASE WHEN direct.id IS NOT NULL THEN direct.score ELSE g.score END AS score,
+              CASE WHEN direct.id IS NOT NULL THEN direct.feedback ELSE g.feedback END AS feedback,
+              CASE WHEN direct.id IS NOT NULL THEN direct.graded_at ELSE g.graded_at END AS graded_at,
+              CASE WHEN direct.id IS NOT NULL THEN direct.published_at ELSE g.published_at END AS published_at,
+              CASE WHEN direct.id IS NOT NULL THEN direct.version ELSE g.version END AS version,
+              CASE
+                WHEN direct.id IS NOT NULL THEN 'direct'
+                WHEN g.id IS NOT NULL THEN 'submission'
+                ELSE NULL
+              END AS grade_source,
+              CASE WHEN direct_published.id IS NOT NULL
+                THEN direct_published.score ELSE submission_published.score END AS published_score,
+              CASE WHEN direct_published.id IS NOT NULL
+                THEN direct_published.feedback ELSE submission_published.feedback END AS published_feedback,
+              CASE WHEN direct_published.id IS NOT NULL
+                THEN direct_published.graded_at ELSE submission_published.graded_at END AS latest_published_graded_at,
+              CASE WHEN direct_published.id IS NOT NULL
+                THEN direct_published.published_at ELSE submission_published.published_at END AS latest_published_at,
+              CASE WHEN direct_published.id IS NOT NULL
+                THEN direct_published.version ELSE submission_published.version END AS published_version,
+              CASE
+                WHEN direct_published.id IS NOT NULL THEN 'direct'
+                WHEN submission_published.id IS NOT NULL THEN 'submission'
+                ELSE NULL
+              END AS published_source
+         FROM course_enrollments ce
+         JOIN app_users u ON u.id = ce.student_user_id
+         CROSS JOIN gradebook_items gi
+         LEFT JOIN latest
+           ON latest.student_user_id = u.id AND latest.assignment_id = gi.assignment_id
+         LEFT JOIN submission_grades g
+           ON g.submission_id = latest.id AND g.is_current = true
+         LEFT JOIN student_gradebook_scores direct
+           ON direct.student_user_id = u.id
+          AND direct.gradebook_item_id = gi.id
+          AND direct.is_current = true
+         LEFT JOIN LATERAL (
+           SELECT published.*
+             FROM student_gradebook_scores published
+            WHERE published.student_user_id = u.id
+              AND published.gradebook_item_id = gi.id
+              AND published.published_at IS NOT NULL
+            ORDER BY published.version DESC
+            LIMIT 1
+         ) direct_published ON true
+         LEFT JOIN LATERAL (
+           SELECT published.*
+             FROM submission_grades published
+            WHERE published.submission_id = latest.id
+              AND published.published_at IS NOT NULL
+            ORDER BY published.version DESC
+            LIMIT 1
+         ) submission_published ON true
+        WHERE ce.course_code = $1 AND ce.status = 'active'
+          AND gi.course_code = $1 AND gi.status = 'published'
+        ORDER BY u.public_id, gi.position`,
+      [courseCode],
+    );
+    const scores = new Map();
+    for (const row of scoresResult.rows) {
+      if (!scores.has(row.student_id)) scores.set(row.student_id, []);
+      scores.get(row.student_id).push({
+        itemId: row.item_id,
+        submissionId: row.submission_id,
+        score: row.score,
+        feedback: row.feedback,
+        gradedAt: row.graded_at,
+        publishedAt: row.published_at,
+        version: row.version,
+        source: row.grade_source,
+        latestPublished: row.published_source
+          ? {
+              score: row.published_score,
+              feedback: row.published_feedback,
+              gradedAt: row.latest_published_graded_at,
+              publishedAt: row.latest_published_at,
+              version: row.published_version,
+              source: row.published_source,
+            }
+          : null,
+      });
+    }
+    return {
+      courseCode,
+      items: itemsResult.rows.map((row) => ({
+        id: row.id,
+        category: row.category,
+        componentKey: row.component_key,
+        title: row.title,
+        weightPercent: Number(row.weight_percent),
+        maxScore: Number(row.max_score),
+        submissionMode: row.submission_mode,
+        assignmentId: row.assignment_id,
+        position: row.position,
+      })),
+      students: roster.map((student) => ({ ...student, scores: scores.get(student.studentId) || [] })),
+    };
+  }
+
+  async createDirectGrade(input) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const target = await client.query(
+        `SELECT u.id AS student_user_id, u.public_id AS student_id,
+                gi.id AS gradebook_item_id, gi.course_code, gi.max_score,
+                gi.submission_mode
+           FROM app_users u
+           JOIN course_enrollments enrollment
+             ON enrollment.student_user_id = u.id
+            AND enrollment.course_code = $2
+            AND enrollment.status = 'active'
+           JOIN gradebook_items gi
+             ON gi.course_code = enrollment.course_code
+            AND gi.id = $3
+            AND gi.status = 'published'
+          WHERE u.public_id = $1 AND u.role = 'student' AND u.status = 'active'
+          LIMIT 1`,
+        [input.studentPublicId, input.courseCode, input.gradebookItemId],
+      );
+      if (!target.rows[0]) {
+        throw new ApiError(
+          404,
+          "STUDENT_GRADEBOOK_ITEM_NOT_FOUND",
+          "The enrolled student or gradebook item was not found.",
+        );
+      }
+      const item = target.rows[0];
+      if (!new Set(["supervised", "none", "oral_defence"]).has(item.submission_mode)) {
+        throw new ApiError(
+          422,
+          "DIRECT_GRADE_NOT_ALLOWED",
+          "This gradebook item must be graded through its student submission.",
+        );
+      }
+      if (input.score > Number(item.max_score)) {
+        throw new ApiError(
+          422,
+          "GRADE_EXCEEDS_MAXIMUM",
+          "The score cannot exceed the gradebook item's maximum score.",
+        );
+      }
+      const replay = await client.query(
+        `SELECT * FROM student_gradebook_scores
+          WHERE graded_by_user_id = $1 AND idempotency_key = $2 LIMIT 1`,
+        [input.grader.id, input.idempotencyKey],
+      );
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_fingerprint !== input.requestFingerprint) {
+          throw new ApiError(
+            409,
+            "IDEMPOTENCY_KEY_REUSED",
+            "The idempotency key was already used for different grade content.",
+          );
+        }
+        await client.query("COMMIT");
+        return this.#mapDirectGrade(replay.rows[0], {
+          studentId: item.student_id,
+          courseCode: item.course_code,
+        });
+      }
+      const current = await client.query(
+        `SELECT * FROM student_gradebook_scores
+          WHERE student_user_id = $1 AND gradebook_item_id = $2 AND is_current = true
+          FOR UPDATE`,
+        [item.student_user_id, item.gradebook_item_id],
+      );
+      const currentVersion = current.rows[0]?.version || 0;
+      if (input.expectedVersion !== currentVersion) {
+        throw new ApiError(
+          412,
+          "DIRECT_GRADE_VERSION_CONFLICT",
+          "This grade changed in another session. Refresh before publishing.",
+        );
+      }
+      if (current.rows[0]) {
+        await client.query(
+          "UPDATE student_gradebook_scores SET is_current = false WHERE id = $1",
+          [current.rows[0].id],
+        );
+      }
+      const inserted = await client.query(
+        `INSERT INTO student_gradebook_scores
+          (student_user_id, gradebook_item_id, version, score, feedback,
+           graded_by_user_id, graded_by, idempotency_key, request_fingerprint,
+           published_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10 THEN now() ELSE NULL END)
+         RETURNING *`,
+        [
+          item.student_user_id,
+          item.gradebook_item_id,
+          currentVersion + 1,
+          input.score,
+          input.feedback,
+          input.grader.id,
+          input.grader.publicId,
+          input.idempotencyKey,
+          input.requestFingerprint,
+          input.publish,
+        ],
+      );
+      await client.query("COMMIT");
+      return this.#mapDirectGrade(inserted.rows[0], {
+        studentId: item.student_id,
+        courseCode: item.course_code,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async listStudentPublishedDirectGrades(studentUserId, courseCodes) {
+    if (!courseCodes.length) return [];
+    const result = await this.pool.query(
+      `WITH latest_published AS (
+         SELECT DISTINCT ON (score.student_user_id, score.gradebook_item_id)
+                score.*
+           FROM student_gradebook_scores score
+          WHERE score.student_user_id = $1
+            AND score.published_at IS NOT NULL
+          ORDER BY score.student_user_id, score.gradebook_item_id, score.version DESC
+       )
+       SELECT score.*, gi.course_code, gi.component_key, gi.title,
+              gi.weight_percent, gi.max_score, gi.category
+         FROM latest_published score
+         JOIN gradebook_items gi ON gi.id = score.gradebook_item_id
+        WHERE gi.course_code = ANY($2::text[])
+          AND gi.status = 'published'
+        ORDER BY gi.course_code, gi.position`,
+      [studentUserId, courseCodes],
+    );
+    return result.rows.map((row) => ({
+      courseCode: row.course_code,
+      gradebookItemId: row.gradebook_item_id,
+      componentKey: row.component_key,
+      title: row.title,
+      category: row.category,
+      weightPercent: Number(row.weight_percent),
+      maxScore: Number(row.max_score),
+      score: row.score,
+      feedback: row.feedback,
+      gradedBy: row.graded_by,
+      gradedAt: row.graded_at,
+      publishedAt: row.published_at,
+      version: row.version,
+      etag: `"direct-grade-v${row.version}"`,
+      source: "direct",
+    }));
+  }
+
+  #mapDirectGrade(row, { studentId, courseCode }) {
+    return {
+      studentId,
+      courseCode,
+      gradebookItemId: row.gradebook_item_id,
+      score: row.score,
+      feedback: row.feedback,
+      gradedBy: row.graded_by,
+      gradedAt: row.graded_at,
+      publishedAt: row.published_at,
+      version: row.version,
+      etag: `"direct-grade-v${row.version}"`,
+      source: "direct",
+    };
+  }
+
+  async createModuleUnlockOverride({ teacherUserId, studentPublicId, moduleId, reason, expiresAt }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const target = await client.query(
+        `SELECT u.id AS student_user_id, u.public_id AS student_id,
+                cm.id AS module_id, cm.course_code
+           FROM app_users u
+           CROSS JOIN course_modules cm
+           JOIN course_enrollments ce
+             ON ce.student_user_id = u.id AND ce.course_code = cm.course_code AND ce.status = 'active'
+          WHERE u.public_id = $1 AND u.role = 'student' AND u.status = 'active'
+            AND cm.id = $2 AND cm.status = 'published'
+          LIMIT 1`,
+        [studentPublicId, moduleId],
+      );
+      if (!target.rows[0]) {
+        throw new ApiError(404, "STUDENT_MODULE_NOT_FOUND", "The enrolled student or module was not found.");
+      }
+      await client.query(
+        `UPDATE module_unlock_overrides
+            SET active = false, revoked_at = now(), revoked_by_user_id = $3
+          WHERE student_user_id = $1 AND module_id = $2 AND active = true`,
+        [target.rows[0].student_user_id, moduleId, teacherUserId],
+      );
+      const inserted = await client.query(
+        `INSERT INTO module_unlock_overrides
+          (student_user_id, module_id, granted_by_user_id, reason, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [target.rows[0].student_user_id, moduleId, teacherUserId, reason, expiresAt || null],
+      );
+      await client.query("COMMIT");
+      const row = inserted.rows[0];
+      return {
+        id: row.id,
+        studentId: target.rows[0].student_id,
+        moduleId: row.module_id,
+        reason: row.reason,
+        expiresAt: row.expires_at,
+        active: row.active,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
   async getAssignment(assignmentId) {
     const result = await this.pool.query(
       "SELECT * FROM assignments WHERE id = $1 AND status = 'active' LIMIT 1",
@@ -409,9 +1248,11 @@ export class PostgresRepository {
     return {
       id: row.id,
       courseCode: row.course_code,
+      moduleId: row.module_id,
       unitNumber: row.unit_number,
       title: row.title,
       maxAttempts: row.max_attempts,
+      submissionMode: row.submission_mode,
     };
   }
 
@@ -660,6 +1501,14 @@ export class PostgresRepository {
     if (filters.courseCode) conditions.push(`m.course_code = ${add(filters.courseCode)}`);
     if (filters.unitNumber) conditions.push(`m.unit_number = ${add(filters.unitNumber)}`);
     if (filters.category) conditions.push(`m.category = ${add(filters.category)}`);
+    if (!filters.includeStaff) {
+      conditions.push("m.audience = 'student'");
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM module_resources restricted
+         WHERE restricted.drive_material_id = m.id AND restricted.audience = 'staff'
+           AND restricted.status = 'published'
+      )`);
+    }
     if (Array.isArray(filters.allowedCourseCodes)) {
       conditions.push(`m.course_code = ANY(${add(filters.allowedCourseCodes)}::text[])`);
     }
@@ -668,7 +1517,7 @@ export class PostgresRepository {
     values.push(limit + 1, offset);
     const result = await this.pool.query(
       `SELECT m.id, m.course_code, m.unit_number, m.category, m.file_name,
-              m.mime_type, m.drive_modified_at, m.size_bytes
+              m.mime_type, m.drive_modified_at, m.size_bytes, m.audience
          FROM drive_materials m
         WHERE ${conditions.join(" AND ")}
         ORDER BY m.course_code, m.unit_number, m.category, m.file_name, m.id
@@ -680,10 +1529,18 @@ export class PostgresRepository {
 
   async getMaterial(materialId) {
     const result = await this.pool.query(
-      "SELECT * FROM drive_materials WHERE id = $1 AND is_active = true LIMIT 1",
+      `SELECT m.*,
+              CASE WHEN m.audience = 'staff' OR EXISTS (
+                SELECT 1 FROM module_resources restricted
+                 WHERE restricted.drive_material_id = m.id AND restricted.audience = 'staff'
+                   AND restricted.status = 'published'
+              ) THEN 'staff' ELSE 'student' END AS effective_audience
+         FROM drive_materials m
+        WHERE m.id = $1 AND m.is_active = true LIMIT 1`,
       [materialId],
     );
-    return result.rows[0] || null;
+    if (!result.rows[0]) return null;
+    return { ...result.rows[0], audience: result.rows[0].effective_audience };
   }
 
   async createDriveSource(input, actorId) {

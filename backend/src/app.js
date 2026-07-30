@@ -370,6 +370,12 @@ export async function createApp({ config, repository, drive, scanner, logger = f
     }
   }
 
+  async function requireCourseAccess(user, courseCode) {
+    if (!(await repository.canAccessCourse(user, courseCode))) {
+      throw new ApiError(403, "COURSE_ACCESS_DENIED", "You do not have access to this course.");
+    }
+  }
+
   async function issueSession(reply, user) {
     const token = opaqueToken();
     const sessionId = randomUUID();
@@ -390,6 +396,28 @@ export async function createApp({ config, repository, drive, scanner, logger = f
   app.get("/health/ready", async () => {
     await repository.ready();
     return { status: "ready" };
+  });
+  app.get("/health/catalog-ready", async (request) => {
+    await repository.ready();
+    const counts = await repository.catalogReady();
+    const expected = {
+      courses: 6,
+      modules: 72,
+      lessons: 120,
+      resources: 198,
+      activities: 72,
+      gradebook_items: 44,
+      assessment_components: 38,
+    };
+    const ready = Object.entries(expected).every(
+      ([key, value]) => Number(counts[key]) === value,
+    ) && Number(counts.invalid_course_hours) === 0 &&
+      Number(counts.invalid_course_weights) === 0;
+    if (!ready) {
+      request.log.warn({ counts }, "course catalog is incomplete");
+      throw new ApiError(503, "COURSE_CATALOG_NOT_READY", "The course catalog has not passed its integrity checks.");
+    }
+    return { status: "ready", catalog: counts };
   });
   app.get("/health/upload-ready", async () => {
     await Promise.all([
@@ -524,6 +552,353 @@ export async function createApp({ config, repository, drive, scanner, logger = f
     },
   );
 
+  app.get(
+    "/v1/courses",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => ({ data: await repository.listCoursesForUser(request.auth.user) }),
+  );
+
+  app.get(
+    "/v1/courses/:courseCode/modules",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+      await requireCourseAccess(request.auth.user, courseCode);
+      return {
+        data: await repository.listCourseModules(courseCode, {
+          includeStaff: request.auth.user.role !== "student",
+        }),
+      };
+    },
+  );
+
+  app.get(
+    "/v1/courses/:courseCode/assignments",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+      await requireCourseAccess(request.auth.user, courseCode);
+      return {
+        data: await repository.listCourseAssignments(courseCode, {
+          includeInactive: request.auth.user.role !== "student",
+        }),
+      };
+    },
+  );
+
+  app.get(
+    "/v1/me/progress",
+    { preHandler: [requireRoles("student")] },
+    async (request) => {
+      const query = parse(
+        z.object({ courseCode: courseCodeSchema.optional() }),
+        request.query || {},
+        "INVALID_PROGRESS_FILTER",
+      );
+      const courseCodes = query.courseCode
+        ? [query.courseCode]
+        : await repository.listAccessibleCourseCodes(request.auth.user);
+      if (query.courseCode) await requireCourseAccess(request.auth.user, query.courseCode);
+      const records = await Promise.all(
+        courseCodes.map((courseCode) => repository.listStudentProgress(request.auth.user.id, courseCode)),
+      );
+      return { data: records.flat() };
+    },
+  );
+
+  app.get(
+    "/v1/me/grades",
+    { preHandler: [requireRoles("student")] },
+    async (request) => {
+      const query = parse(
+        z.object({ courseCode: courseCodeSchema.optional() }),
+        request.query || {},
+        "INVALID_GRADE_FILTER",
+      );
+      const courseCodes = query.courseCode
+        ? [query.courseCode]
+        : await repository.listAccessibleCourseCodes(request.auth.user);
+      if (query.courseCode) await requireCourseAccess(request.auth.user, query.courseCode);
+      return {
+        data: await repository.listStudentPublishedDirectGrades(
+          request.auth.user.id,
+          courseCodes,
+        ),
+      };
+    },
+  );
+
+  app.put(
+    "/v1/me/progress/modules/:moduleId",
+    { preHandler: [requireRoles("student"), requireCsrf] },
+    async (request) => {
+      const moduleId = parse(assignmentIdSchema, request.params.moduleId, "INVALID_MODULE_ID");
+      const body = parse(
+        z.object({ status: z.enum(["in_progress", "completed"]) }),
+        request.body,
+        "INVALID_MODULE_PROGRESS",
+      );
+      const module = await repository.getModule(moduleId);
+      if (!module || module.status !== "published") {
+        throw new ApiError(404, "MODULE_NOT_FOUND", "The course module was not found.");
+      }
+      await requireCourseAccess(request.auth.user, module.courseCode);
+      return { data: await repository.upsertStudentModuleProgress(request.auth.user.id, moduleId, body.status) };
+    },
+  );
+
+  app.put(
+    "/v1/me/progress/activities/:activityId",
+    { preHandler: [requireRoles("student"), requireCsrf] },
+    async (request) => {
+      const activityId = parse(assignmentIdSchema, request.params.activityId, "INVALID_ACTIVITY_ID");
+      const body = parse(
+        z.object({
+          status: z.enum(["started", "submitted", "completed"]),
+          evidence: z.record(z.string(), z.unknown()).default({}),
+        }),
+        request.body,
+        "INVALID_ACTIVITY_PROGRESS",
+      );
+      const activity = await repository.getActivity(activityId);
+      if (!activity || activity.status !== "published") {
+        throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
+      }
+      await requireCourseAccess(request.auth.user, activity.courseCode);
+      const progress = await repository.listStudentProgress(request.auth.user.id, activity.courseCode);
+      if (progress.find((item) => item.moduleId === activity.moduleId)?.status === "locked") {
+        throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
+      }
+      return {
+        data: await repository.upsertStudentActivityCompletion(
+          request.auth.user.id,
+          activityId,
+          body.status,
+          body.evidence,
+        ),
+      };
+    },
+  );
+
+  app.route({
+    method: ["PUT", "PATCH"],
+    url: "/v1/me/progress/modules",
+    preHandler: [requireRoles("student"), requireCsrf],
+    async handler(request) {
+      const body = parse(
+        z.object({
+          moduleId: assignmentIdSchema,
+          status: z.enum(["in_progress", "completed"]),
+        }),
+        request.body,
+        "INVALID_MODULE_PROGRESS",
+      );
+      const module = await repository.getModule(body.moduleId);
+      if (!module || module.status !== "published") {
+        throw new ApiError(404, "MODULE_NOT_FOUND", "The course module was not found.");
+      }
+      await requireCourseAccess(request.auth.user, module.courseCode);
+      return {
+        data: await repository.upsertStudentModuleProgress(
+          request.auth.user.id,
+          body.moduleId,
+          body.status,
+        ),
+      };
+    },
+  });
+
+  app.route({
+    method: ["PUT", "PATCH"],
+    url: "/v1/me/progress/activities",
+    preHandler: [requireRoles("student"), requireCsrf],
+    async handler(request) {
+      const body = parse(
+        z.object({
+          activityId: assignmentIdSchema,
+          status: z.enum(["started", "submitted", "completed"]),
+          evidence: z.record(z.string(), z.unknown()).default({}),
+        }),
+        request.body,
+        "INVALID_ACTIVITY_PROGRESS",
+      );
+      const activity = await repository.getActivity(body.activityId);
+      if (!activity || activity.status !== "published") {
+        throw new ApiError(404, "ACTIVITY_NOT_FOUND", "The module activity was not found.");
+      }
+      await requireCourseAccess(request.auth.user, activity.courseCode);
+      const progress = await repository.listStudentProgress(request.auth.user.id, activity.courseCode);
+      if (progress.find((item) => item.moduleId === activity.moduleId)?.status === "locked") {
+        throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
+      }
+      return {
+        data: await repository.upsertStudentActivityCompletion(
+          request.auth.user.id,
+          body.activityId,
+          body.status,
+          body.evidence,
+        ),
+      };
+    },
+  });
+
+  app.get(
+    "/v1/teacher/courses",
+    { preHandler: [requireRoles("teacher", "teacher_admin")] },
+    async (request) => ({ data: await repository.listCoursesForUser(request.auth.user) }),
+  );
+
+  app.get(
+    "/v1/teacher/students",
+    { preHandler: [requireRoles("teacher", "teacher_admin")] },
+    async (request) => {
+      const query = parse(
+        z.object({ courseCode: courseCodeSchema.optional() }),
+        request.query || {},
+        "INVALID_ROSTER_FILTER",
+      );
+      const courseCodes = query.courseCode
+        ? [query.courseCode]
+        : await repository.listAccessibleCourseCodes(request.auth.user);
+      if (query.courseCode) await requireCourseAccess(request.auth.user, query.courseCode);
+      const rosters = await Promise.all(
+        courseCodes.map(async (courseCode) =>
+          (await repository.listCourseRoster(courseCode)).map((student) => ({ courseCode, ...student }))),
+      );
+      return { data: rosters.flat() };
+    },
+  );
+
+  app.get(
+    "/v1/teacher/courses/:courseCode/roster",
+    { preHandler: [requireRoles("teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+      await requireCourseAccess(request.auth.user, courseCode);
+      return { data: await repository.listCourseRoster(courseCode) };
+    },
+  );
+
+  app.get(
+    "/v1/teacher/courses/:courseCode/gradebook",
+    { preHandler: [requireRoles("teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+      await requireCourseAccess(request.auth.user, courseCode);
+      return { data: await repository.listCourseGradebook(courseCode) };
+    },
+  );
+
+  app.put(
+    "/v1/teacher/courses/:courseCode/students/:studentId/grades/:gradebookItemId",
+    { preHandler: [requireRoles("teacher", "teacher_admin"), requireCsrf] },
+    async (request, reply) => {
+      const params = parse(
+        z.object({
+          courseCode: courseCodeSchema,
+          studentId: z.string().trim().min(1).max(100),
+          gradebookItemId: assignmentIdSchema,
+        }),
+        request.params,
+        "INVALID_DIRECT_GRADE_TARGET",
+      );
+      const body = parse(
+        z.object({
+          score: z.number().int().min(0).max(100),
+          feedback: z.string().max(10000).default(""),
+          publish: z.boolean(),
+        }),
+        request.body,
+        "INVALID_DIRECT_GRADE",
+      );
+      await requireCourseAccess(request.auth.user, params.courseCode);
+      const match = String(request.headers["if-match"] || "").match(
+        /^"direct-grade-v(\d+)"$/,
+      );
+      if (!match) {
+        throw new ApiError(
+          428,
+          "IF_MATCH_REQUIRED",
+          "A valid If-Match direct-grade version is required.",
+        );
+      }
+      const key = idempotencyKey(request);
+      const requestFingerprint = stableFingerprint({ ...params, ...body });
+      const grade = await repository.createDirectGrade({
+        ...body,
+        courseCode: params.courseCode,
+        studentPublicId: params.studentId,
+        gradebookItemId: params.gradebookItemId,
+        grader: request.auth.user,
+        expectedVersion: Number(match[1]),
+        idempotencyKey: key,
+        requestFingerprint,
+      });
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: request.auth.user.id,
+        action: body.publish ? "direct-grade.publish" : "direct-grade.draft",
+        resourceType: "gradebook_item",
+        resourceId: params.gradebookItemId,
+        outcome: "success",
+        details: {
+          courseCode: params.courseCode,
+          studentId: params.studentId,
+          version: grade.version,
+        },
+      });
+      reply.header("ETag", grade.etag).send({ data: grade });
+    },
+  );
+
+  app.post(
+    "/v1/teacher/students/:studentId/modules/:moduleId/unlock-overrides",
+    { preHandler: [requireRoles("teacher", "teacher_admin"), requireCsrf] },
+    async (request, reply) => {
+      const params = parse(
+        z.object({
+          studentId: z.string().trim().min(1).max(100),
+          moduleId: assignmentIdSchema,
+        }),
+        request.params,
+        "INVALID_UNLOCK_TARGET",
+      );
+      const body = parse(
+        z.object({
+          reason: z.string().trim().min(1).max(1000),
+          expiresAt: z.string().datetime({ offset: true }).optional(),
+        }),
+        request.body,
+        "INVALID_UNLOCK_OVERRIDE",
+      );
+      if (body.expiresAt && new Date(body.expiresAt) <= new Date()) {
+        throw new ApiError(422, "INVALID_UNLOCK_EXPIRY", "The override expiry must be in the future.");
+      }
+      const module = await repository.getModule(params.moduleId);
+      if (!module || module.status !== "published") {
+        throw new ApiError(404, "MODULE_NOT_FOUND", "The course module was not found.");
+      }
+      await requireCourseAccess(request.auth.user, module.courseCode);
+      const override = await repository.createModuleUnlockOverride({
+        teacherUserId: request.auth.user.id,
+        studentPublicId: params.studentId,
+        moduleId: params.moduleId,
+        reason: body.reason,
+        expiresAt: body.expiresAt || null,
+      });
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: request.auth.user.id,
+        action: "module.unlock.override",
+        resourceType: "course_module",
+        resourceId: params.moduleId,
+        outcome: "success",
+        details: { studentId: params.studentId, courseCode: module.courseCode },
+      });
+      reply.status(201).send({ data: override });
+    },
+  );
+
   app.post(
     "/v1/submissions",
     {
@@ -546,7 +921,9 @@ export async function createApp({ config, repository, drive, scanner, logger = f
       const metadata = parse(
         z.object({
           courseCode: courseCodeSchema,
-          unitNumber: z.coerce.number().int().min(1).max(999),
+          // Kept for compatibility with older clients. The assignment record is
+          // authoritative because platform module numbers are not OSSD unit numbers.
+          unitNumber: z.coerce.number().int().min(1).max(999).optional(),
           assignmentId: assignmentIdSchema,
           assignmentTitle: z.string().trim().min(1).max(300),
           attemptNumber: z.coerce.number().int().min(1).max(99),
@@ -557,9 +934,6 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         fields,
         "INVALID_SUBMISSION",
       );
-      if (!uploaded.length && !metadata.note) {
-        throw new ApiError(422, "EMPTY_SUBMISSION", "Add a note or at least one file.");
-      }
       if (metadata.replacesSubmissionId && !uploaded.length) {
         throw new ApiError(
           422,
@@ -568,18 +942,63 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         );
       }
       const assignment = await repository.getAssignment(metadata.assignmentId);
-      if (
-        !assignment ||
-        assignment.courseCode !== metadata.courseCode ||
-        assignment.unitNumber !== metadata.unitNumber
-      ) {
-        throw new ApiError(422, "ASSIGNMENT_MISMATCH", "The assignment does not belong to the selected course and unit.");
+      if (!assignment || assignment.courseCode !== metadata.courseCode) {
+        throw new ApiError(
+          422,
+          "ASSIGNMENT_MISMATCH",
+          "The assignment does not belong to the selected course.",
+        );
+      }
+      if (!["text", "file", "text_or_file", "project"].includes(assignment.submissionMode)) {
+        throw new ApiError(
+          422,
+          "SUBMISSION_MODE_NOT_ALLOWED",
+          "This assignment is completed under teacher supervision and does not accept a student upload.",
+        );
+      }
+      if (["file", "project"].includes(assignment.submissionMode) && !uploaded.length) {
+        throw new ApiError(
+          422,
+          "SUBMISSION_FILE_REQUIRED",
+          "This assignment requires at least one uploaded file.",
+        );
+      }
+      if (assignment.submissionMode === "text" && !metadata.note) {
+        throw new ApiError(
+          422,
+          "SUBMISSION_NOTE_REQUIRED",
+          "This assignment requires a written response.",
+        );
+      }
+      if (assignment.submissionMode === "text" && uploaded.length) {
+        throw new ApiError(
+          422,
+          "SUBMISSION_FILE_NOT_ALLOWED",
+          "This assignment accepts a written response without attachments.",
+        );
+      }
+      if (!uploaded.length && !metadata.note) {
+        throw new ApiError(422, "EMPTY_SUBMISSION", "Add a note or at least one file.");
       }
       if (metadata.attemptNumber > assignment.maxAttempts) {
         throw new ApiError(422, "ATTEMPT_LIMIT_REACHED", "No additional attempt is allowed for this assignment.");
       }
       if (!(await repository.canAccessCourse(request.auth.user, metadata.courseCode))) {
         throw new ApiError(403, "NOT_ENROLLED", "You are not enrolled in this course.");
+      }
+      if (assignment.moduleId) {
+        const progress = await repository.listStudentProgress(
+          request.auth.user.id,
+          assignment.courseCode,
+        );
+        const moduleProgress = progress.find((item) => item.moduleId === assignment.moduleId);
+        if (!moduleProgress || moduleProgress.status === "locked") {
+          throw new ApiError(
+            409,
+            "MODULE_LOCKED",
+            "This assignment is not available until its module is unlocked.",
+          );
+        }
       }
       if (metadata.replacesSubmissionId) {
         const replaced = await repository.getSubmission(metadata.replacesSubmissionId, "student");
@@ -607,8 +1026,8 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         });
       }
       const fingerprint = stableFingerprint({
-        courseCode: metadata.courseCode,
-        unitNumber: metadata.unitNumber,
+        courseCode: assignment.courseCode,
+        unitNumber: assignment.unitNumber,
         assignmentId: metadata.assignmentId,
         attemptNumber: metadata.attemptNumber,
         note: metadata.note,
@@ -656,9 +1075,9 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         for (const file of validatedFiles) {
           const storedName = `${randomUUID()}${path.extname(file.originalName).toLowerCase()}`;
           const pathSegments = [
-            metadata.courseCode,
+            assignment.courseCode,
             request.auth.user.publicId,
-            `Unit ${metadata.unitNumber}`,
+            `Unit ${assignment.unitNumber}`,
             metadata.assignmentId,
             `Attempt ${metadata.attemptNumber}`,
           ];
@@ -690,8 +1109,8 @@ export async function createApp({ config, repository, drive, scanner, logger = f
             studentEmail: request.auth.user.email,
             studentFirstName: request.auth.user.firstName,
             studentLastName: request.auth.user.lastName,
-            courseCode: metadata.courseCode,
-            unitNumber: metadata.unitNumber,
+            courseCode: assignment.courseCode,
+            unitNumber: assignment.unitNumber,
             assignmentId: metadata.assignmentId,
             assignmentTitle: assignment.title,
             attemptNumber: metadata.attemptNumber,
@@ -864,6 +1283,7 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         ...query,
         offset,
         allowedCourseCodes,
+        includeStaff: request.auth.user.role !== "student",
       });
       const hasMore = records.length > query.limit;
       const data = records.slice(0, query.limit).map((row) => ({
@@ -888,6 +1308,9 @@ export async function createApp({ config, repository, drive, scanner, logger = f
       const materialId = parse(uuidSchema, request.params.materialId, "INVALID_MATERIAL_ID");
       const material = await repository.getMaterial(materialId);
       if (!material) throw new ApiError(404, "MATERIAL_NOT_FOUND", "The material was not found.");
+      if (request.auth.user.role === "student" && material.audience === "staff") {
+        throw new ApiError(403, "MATERIAL_ACCESS_DENIED", "You cannot open this material.");
+      }
       if (!(await repository.canAccessCourse(request.auth.user, material.course_code))) {
         throw new ApiError(403, "COURSE_ACCESS_DENIED", "You cannot open this material.");
       }

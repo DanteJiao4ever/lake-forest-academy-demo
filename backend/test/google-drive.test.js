@@ -22,6 +22,7 @@ function fakeDriveClient() {
       { id: "coursebook", name: "01 Coursebook and Workbook", mimeType: folder },
       { id: "assessment", name: "02 Assessment", mimeType: folder },
       { id: "reading", name: "Reading_Library", mimeType: folder },
+      { id: "answer-key", name: "03 STAFF_ONLY Teacher Guide and Answer Key.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "90" },
       { id: "zip", name: "bulk-export.zip", mimeType: "application/zip", modifiedTime: "2026-07-20T00:00:00Z" },
       { id: "form", name: "Student Survey", mimeType: "application/vnd.google-apps.form", modifiedTime: "2026-07-20T00:00:00Z" },
     ]],
@@ -65,6 +66,7 @@ describe("Google Drive curriculum adapter", () => {
     assert.equal(result.records.find((item) => item.driveFileId === "reading-file").category, "Resources");
     assert.equal(result.records.some((item) => item.driveFileId === "zip"), false);
     assert.equal(result.records.some((item) => item.driveFileId === "form"), false);
+    assert.equal(result.records.some((item) => item.driveFileId === "answer-key"), false);
   });
 
   test("exports Google-native documents through the private API instead of redirecting", async () => {

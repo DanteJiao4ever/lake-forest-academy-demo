@@ -73,6 +73,29 @@
         "",
     ).trim(),
   });
+  const PLATFORM_API_CONFIG = Object.freeze({
+    coursesEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.coursesEndpoint || "",
+    ).trim(),
+    studentProgressEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.studentProgressEndpoint || "",
+    ).trim(),
+    studentGradesEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.studentGradesEndpoint || "",
+    ).trim(),
+    moduleProgressEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.moduleProgressEndpoint || "",
+    ).trim(),
+    activityProgressEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.activityProgressEndpoint || "",
+    ).trim(),
+    teacherCoursesEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.teacherCoursesEndpoint || "",
+    ).trim(),
+    teacherStudentsEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.teacherStudentsEndpoint || "",
+    ).trim(),
+  });
   const WORKSPACE_GMAIL_URL =
     "https://mail.google.com/a/lakeforestacademy.ca";
   const SCHOOL_ACCOUNT = {
@@ -102,11 +125,8 @@
       subject: "Mathematics",
       instructor: "James Whitmore",
       instructorEmail: "james.whitmore@lakeforestacademy.ca",
-      term: "Summer 2026",
       schedule: "Mon, Wed & Fri · 9:00 AM",
       mode: "Teacher-paced",
-      startDate: "2026-07-06",
-      completionDate: "2026-08-21",
       weeklyHours: "15–17 hours",
       credit: "1.0 OSSD credit",
       prerequisite: "MCR3U or MCF3M",
@@ -239,11 +259,8 @@
       subject: "Science",
       instructor: "Dr. Amelia Hart",
       instructorEmail: "amelia.hart@lakeforestacademy.ca",
-      term: "Summer 2026",
       schedule: "Tue & Thu · 10:15 AM",
       mode: "Teacher-paced",
-      startDate: "2026-07-06",
-      completionDate: "2026-08-21",
       weeklyHours: "15–17 hours",
       credit: "1.0 OSSD credit",
       prerequisite: "SBI3U",
@@ -376,11 +393,8 @@
       subject: "English",
       instructor: "Eleanor Bennett",
       instructorEmail: "eleanor.bennett@lakeforestacademy.ca",
-      term: "Summer 2026",
       schedule: "Mon & Thu · 1:30 PM",
       mode: "Teacher-paced",
-      startDate: "2026-07-06",
-      completionDate: "2026-08-21",
       weeklyHours: "15–17 hours",
       credit: "1.0 OSSD credit",
       prerequisite: "ENG3U",
@@ -514,9 +528,10 @@
   DRIVE_CATALOG.forEach((catalogCourse) => {
     const existing = COURSES.find((course) => course.id === catalogCourse.id);
     if (existing) {
-      const existingLessons = existing.lessons;
       Object.assign(existing, catalogCourse);
-      existing.lessons = existingLessons;
+      existing.lessons = (catalogCourse.lessons || []).map((lesson) => ({
+        ...lesson,
+      }));
       return;
     }
     COURSES.push({
@@ -529,6 +544,140 @@
   )
     ? [...window.LFA_SELECTABLE_COURSE_IDS]
     : ["mhf4u"];
+
+  const PLATFORM_CATALOG =
+    window.LFA_PLATFORM_SEQUENCES || window.LFA_PLATFORM_CATALOG || {};
+  const PLATFORM_COURSES = Array.isArray(PLATFORM_CATALOG.courses)
+    ? PLATFORM_CATALOG.courses
+    : [];
+
+  function platformCourseForCode(code) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    return (
+      PLATFORM_CATALOG.coursesByCode?.[normalizedCode] ||
+      PLATFORM_COURSES.find(
+        (course) => String(course?.code || "").toUpperCase() === normalizedCode,
+      ) ||
+      null
+    );
+  }
+
+  function moduleLessonDuration(module) {
+    const hours = Number(module?.estimatedCreditHours);
+    const lessonCount = Math.max(1, module?.lessons?.length || 0);
+    return Number.isFinite(hours) && hours > 0
+      ? `${Math.max(1, Math.round((hours * 60) / lessonCount))} min`
+      : "Self-paced";
+  }
+
+  function normalizePlatformModule(module, courseCode) {
+    const number = Number(module?.number ?? module?.moduleNumber);
+    const moduleNumber = Number.isFinite(number) ? number : 0;
+    const moduleKey =
+      String(module?.key || "").trim() ||
+      `${courseCode}-M${String(moduleNumber).padStart(2, "0")}`;
+    const rawLessons = Array.isArray(module?.lessons)
+      ? module.lessons
+      : (module?.lessonIds || []).map((id, index) => ({
+          id,
+          key: id,
+          title: module?.lessonTitles?.[index] || `Lesson ${index + 1}`,
+          order: index + 1,
+        }));
+    return {
+      ...module,
+      key: moduleKey,
+      number: moduleNumber,
+      title: String(module?.title || module?.moduleTitle || `Module ${moduleNumber}`),
+      unitNumber: module?.unitNumber ?? module?.unit_number ?? null,
+      unitTitle: String(module?.unitTitle || module?.unit_title || ""),
+      learningFocus: Array.isArray(module?.learningFocus)
+        ? module.learningFocus
+        : module?.learning_focus || [],
+      readingSteps: Array.isArray(module?.readingSteps)
+        ? module.readingSteps
+        : module?.core_reading_order || [],
+      selfStudyResources: Array.isArray(module?.selfStudyResources)
+        ? module.selfStudyResources
+        : module?.self_study_resources || [],
+      guidedPractice: String(
+        module?.guidedPractice || module?.guided_practice || "",
+      ),
+      lowStakesCheck: String(
+        module?.lowStakesCheck || module?.low_stakes_check || "",
+      ),
+      feedbackAndUnlock: String(
+        module?.feedbackAndUnlock ||
+          module?.feedback_and_unlock ||
+          module?.unlockRule?.ruleText ||
+          "",
+      ),
+      teacherPresence: String(
+        module?.teacherPresence || module?.teacher_presence || "",
+      ),
+      evidenceToRetain: String(
+        module?.evidenceToRetain || module?.evidence_to_retain || "",
+      ),
+      estimatedCreditHours: Number(
+        module?.estimatedCreditHours ?? module?.estimated_credit_hours ?? 0,
+      ),
+      workloadLabel: String(
+        module?.workloadLabel || module?.workload_label || "Self-paced",
+      ),
+      unlockRule: {
+        ruleText: String(
+          module?.unlockRule?.ruleText ||
+            module?.feedbackAndUnlock ||
+            module?.feedback_and_unlock ||
+            "",
+        ),
+        teacherOverrideAllowed:
+          module?.unlockRule?.teacherOverrideAllowed !== false,
+        overrideReasonRequired:
+          module?.unlockRule?.overrideReasonRequired !== false,
+      },
+      lessons: rawLessons.map((lesson, index) => ({
+        ...lesson,
+        id: String(lesson?.id || lesson?.key || `${moduleKey}-L${index + 1}`),
+        key: String(lesson?.key || lesson?.id || `${moduleKey}-L${index + 1}`),
+        title: String(lesson?.title || `Lesson ${index + 1}`),
+        order: Number(lesson?.order || index + 1),
+      })),
+    };
+  }
+
+  COURSES.forEach((course) => {
+    const platformCourse = platformCourseForCode(course.code);
+    if (!platformCourse) return;
+    const modules = (platformCourse.modules || [])
+      .map((module) => normalizePlatformModule(module, course.code))
+      .sort((a, b) => a.number - b.number);
+    course.platformCourse = platformCourse;
+    course.platformModules = modules;
+    course.gradebookItems = Array.isArray(platformCourse.gradebookItems)
+      ? platformCourse.gradebookItems
+      : [];
+    course.plannedHours = Number(platformCourse.hours || course.plannedHours || 110);
+    course.description = platformCourse.description || course.description;
+    course.overview = platformCourse.description || course.overview;
+    course.lessons = modules.flatMap((module) =>
+      module.lessons.map((lesson) => ({
+        id: lesson.id,
+        unit: `Module ${String(module.number).padStart(2, "0")}`,
+        unitTitle: module.title,
+        title: lesson.title,
+        duration: moduleLessonDuration(module),
+        summary:
+          module.learningFocus[lesson.order - 1] ||
+          module.learningFocus[0] ||
+          `Complete the assigned reading and practice for ${module.title}.`,
+        objectives: [...module.learningFocus],
+        content: [...module.readingSteps],
+        platformModuleKey: module.key,
+        platformModuleNumber: module.number,
+      })),
+    );
+  });
 
   const ASSIGNMENTS = [
     {
@@ -709,7 +858,126 @@
     },
   );
 
-  const ANNOUNCEMENTS = [
+  function generatedGradebookItems(course) {
+    if (course.gradebookItems?.length) return course.gradebookItems;
+    return (course.platformModules || []).flatMap((module) => {
+      const assessment = module.assessment || {};
+      const weight = Number(
+        assessment.weightPercent ?? assessment.courseGradeWeightPercent ?? 0,
+      );
+      if (!(weight > 0)) return [];
+      const components = Array.isArray(assessment.components)
+        ? assessment.components.filter(
+            (component) => Number(component?.weightPercent ?? component?.weight) > 0,
+          )
+        : [];
+      if (components.length) {
+        return components.map((component, index) => ({
+          key: `${module.key}-A${index + 1}`,
+          moduleKey: module.key,
+          moduleNumber: module.number,
+          category: module.number === 11 ? "Final Evaluation" : "Coursework",
+          title: component.title || `${assessment.title} — Part ${index + 1}`,
+          type: component.type || assessment.type,
+          weightPercent: Number(component.weightPercent ?? component.weight),
+          evidenceDescription: component.description || assessment.taskType || "",
+        }));
+      }
+      return [
+        {
+          key: assessment.key || `${module.key}-A1`,
+          moduleKey: module.key,
+          moduleNumber: module.number,
+          category: module.number === 11 ? "Final Evaluation" : "Coursework",
+          title: assessment.title,
+          type: assessment.type,
+          weightPercent: weight,
+          timeMinutes: assessment.timeMinutes,
+          processCheckpoints: assessment.processCheckpoints,
+          evidenceDescription: assessment.taskType || assessment.evidenceFile || "",
+        },
+      ];
+    });
+  }
+
+  const PLATFORM_COURSE_IDS = new Set(
+    COURSES.filter((course) => course.platformModules?.length).map(
+      (course) => course.id,
+    ),
+  );
+  for (let index = ASSIGNMENTS.length - 1; index >= 0; index -= 1) {
+    if (PLATFORM_COURSE_IDS.has(ASSIGNMENTS[index].courseId)) {
+      ASSIGNMENTS.splice(index, 1);
+    }
+  }
+  COURSES.filter((course) => PLATFORM_COURSE_IDS.has(course.id)).forEach(
+    (course) => {
+      generatedGradebookItems(course)
+        .filter(
+          (item) =>
+            Number(item?.weightPercent) > 0 &&
+            (item.assignmentKey || !course.gradebookItems?.length),
+        )
+        .forEach((item, index) => {
+          const module = (course.platformModules || []).find(
+            (candidate) =>
+              candidate.key === item.moduleKey ||
+              candidate.number === Number(item.moduleNumber),
+          );
+          const assessment = module?.assessment || {};
+          const assessmentComponent = (assessment.components || []).find(
+            (component) => component.assignmentKey === item.assignmentKey,
+          );
+          const teacherRecorded = /participation/i.test(
+            `${item.category || ""} ${item.type || ""} ${item.title || ""}`,
+          );
+          ASSIGNMENTS.push({
+            id: String(
+              item.assignmentKey || item.key || `${course.code}-GB-${index + 1}`,
+            ).toLowerCase(),
+            gradebookItemId: String(item.key || "").toLowerCase(),
+            courseId: course.id,
+            moduleKey: item.moduleKey || module?.key || "",
+            moduleNumber: module?.number ?? item.moduleNumber ?? null,
+            unitNumber: module?.unitNumber ?? null,
+            unit:
+              module?.number == null
+                ? "Coursewide"
+                : `Module ${String(module.number).padStart(2, "0")}`,
+            unitTitle: module?.title || item.category || "Course Gradebook",
+            title: String(item.title || assessment.title || "Assessed Evidence"),
+            points: 100,
+            weightPercent: Number(item.weightPercent),
+            status: "open",
+            teacherRecorded,
+            submissionMode:
+              assessmentComponent?.submissionMode || item.submissionMode || "file",
+            rubric: [
+              { label: "Knowledge and Understanding", points: 25 },
+              { label: "Thinking and Inquiry", points: 25 },
+              { label: "Communication", points: 25 },
+              { label: "Application", points: 25 },
+            ],
+            instructions: String(
+              item.evidenceDescription ||
+                assessmentComponent?.type ||
+                assessment.taskType ||
+                assessment.evidenceFile ||
+                (teacherRecorded
+                  ? "Participation evidence is recorded by the teacher from required contact, checkpoints, conferences and documented use of feedback."
+                  : "Complete the evidence sequence shown in the course module and submit the required final work."),
+            ),
+            processCheckpoints:
+              assessmentComponent?.processCheckpoints ||
+              item.processCheckpoints ||
+              assessment.processCheckpoints ||
+              "",
+          });
+        });
+    },
+  );
+
+  const LEGACY_DEMO_ANNOUNCEMENTS = [
     {
       id: "ann-1",
       date: "2026-07-19",
@@ -748,7 +1016,9 @@
     },
   ];
 
-  const GRADES = [
+  const ANNOUNCEMENTS = [];
+
+  const LEGACY_DEMO_GRADES = [
     { courseId: "mhf4u", current: 89, target: 90, completed: 4 },
     { courseId: "sbi4u", current: 87, target: 88, completed: 3 },
     { courseId: "eng4u", current: 92, target: 92, completed: 5 },
@@ -762,7 +1032,9 @@
     { id: "support", label: "Save your teacher and Student Support contacts" },
   ];
 
-  const CALENDAR_EVENTS = [
+  const GRADES = [];
+
+  const LEGACY_DEMO_CALENDAR_EVENTS = [
     {
       id: "cal-mhf-1",
       courseId: "mhf4u",
@@ -835,6 +1107,14 @@
       route: "course/mhf4u",
     },
   ];
+
+  const CALENDAR_EVENTS = [];
+
+  // Retain the former demo records only as migration reference. Production
+  // students never receive fabricated announcements, grades, or schedules.
+  void LEGACY_DEMO_ANNOUNCEMENTS;
+  void LEGACY_DEMO_GRADES;
+  void LEGACY_DEMO_CALENDAR_EVENTS;
 
   const SUPPORT_CONTACTS = [
     {
@@ -971,6 +1251,27 @@
   let submissionsRequestInFlight = false;
   let submissionsEndpointCheckedFor = "";
   let enrollmentSaveInFlight = false;
+  const platformRuntime = {
+    modules: {},
+    assignments: {},
+    studentProgress: {},
+    studentGrades: {},
+    teacherRosters: {},
+    teacherGradebooks: {},
+    errors: {},
+  };
+  const platformRequests = new Map();
+
+  function resetPlatformRuntime() {
+    platformRuntime.modules = {};
+    platformRuntime.assignments = {};
+    platformRuntime.studentProgress = {};
+    platformRuntime.studentGrades = {};
+    platformRuntime.teacherRosters = {};
+    platformRuntime.teacherGradebooks = {};
+    platformRuntime.errors = {};
+    platformRequests.clear();
+  }
   let drawerScrollY = 0;
   let remoteSessionValidated = !AUTH_CONFIG.workspaceSessionEndpoint;
   const drawerMedia = window.matchMedia("(max-width: 860px)");
@@ -1110,7 +1411,9 @@
       if (!session || typeof session.email !== "string") return null;
       return {
         email: normalizeEmail(session.email),
-        role: session.role === "teacher" ? "teacher" : "student",
+        role: ["teacher", "teacher_admin"].includes(session.role)
+          ? session.role
+          : "student",
         firstName: String(session.firstName || "").trim(),
         lastName: String(session.lastName || "").trim(),
         displayName: String(session.displayName || "").trim(),
@@ -1139,7 +1442,9 @@
         `${identity.firstName || ""} ${identity.lastName || ""}`.trim() ||
         identity.email,
       accountType: identity.accountType || "personal",
-      role: identity.role === "teacher" ? "teacher" : "student",
+      role: ["teacher", "teacher_admin"].includes(identity.role)
+        ? identity.role
+        : "student",
       program: "OSSD · Grade 12",
     };
   }
@@ -1151,7 +1456,9 @@
       SESSION_KEY,
       JSON.stringify({
         email: normalizeEmail(account.email),
-        role: account.role === "teacher" ? "teacher" : "student",
+        role: ["teacher", "teacher_admin"].includes(account.role)
+          ? account.role
+          : "student",
         firstName: String(account.firstName || "").trim(),
         lastName: String(account.lastName || "").trim(),
         displayName:
@@ -1166,6 +1473,7 @@
       lastLoadedAt: "",
     };
     submissionsEndpointCheckedFor = "";
+    resetPlatformRuntime();
   }
 
   function expireRemoteSession() {
@@ -1179,6 +1487,7 @@
       lastLoadedAt: "",
     };
     submissionsEndpointCheckedFor = "";
+    resetPlatformRuntime();
     state = initialStateForUser(null);
     signInNotice = "Your secure session expired. Please sign in again.";
     const destination = facultySession
@@ -1204,7 +1513,7 @@
   }
 
   function isTeacher(user = currentUser()) {
-    return user?.role === "teacher";
+    return ["teacher", "teacher_admin"].includes(user?.role);
   }
 
   function userInitials(user = currentUser()) {
@@ -1539,7 +1848,6 @@
                 "UNMAPPED",
               title: remote.courseMeta?.title || "Unmapped Course",
               subject: "Needs Mapping",
-              term: "Unassigned",
             };
           const history = Array.isArray(remote.submission.history)
             ? remote.submission.history
@@ -2247,6 +2555,245 @@
     }
   }
 
+  function platformEndpoint(base, suffix = "") {
+    const configured = configuredDriveUrl(base);
+    if (!configured) return "";
+    const root = configured.endsWith("/") ? configured : `${configured}/`;
+    return configuredDriveUrl(String(suffix || ""), root);
+  }
+
+  function courseModulesEndpoint(course) {
+    return platformEndpoint(
+      PLATFORM_API_CONFIG.coursesEndpoint,
+      `${encodeURIComponent(course.code)}/modules`,
+    );
+  }
+
+  function courseAssignmentsEndpoint(course) {
+    return platformEndpoint(
+      PLATFORM_API_CONFIG.coursesEndpoint,
+      `${encodeURIComponent(course.code)}/assignments`,
+    );
+  }
+
+  function studentProgressEndpoint(course) {
+    const endpoint = configuredDriveUrl(
+      PLATFORM_API_CONFIG.studentProgressEndpoint,
+    );
+    if (!endpoint) return "";
+    const url = new URL(endpoint);
+    url.searchParams.set("courseCode", course.code);
+    return url.toString();
+  }
+
+  function studentGradesEndpoint(course) {
+    const endpoint = configuredDriveUrl(
+      PLATFORM_API_CONFIG.studentGradesEndpoint,
+    );
+    if (!endpoint) return "";
+    const url = new URL(endpoint);
+    url.searchParams.set("courseCode", course.code);
+    return url.toString();
+  }
+
+  function teacherCourseEndpoint(course, resource) {
+    return platformEndpoint(
+      PLATFORM_API_CONFIG.teacherCoursesEndpoint,
+      `${encodeURIComponent(course.code)}/${resource}`,
+    );
+  }
+
+  async function requestPlatformJson(endpoint, options = {}) {
+    const url = configuredDriveUrl(endpoint);
+    if (!url) throw new Error("The secure course service is not connected.");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = {
+      Accept: "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    };
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+      const csrfToken = currentCsrfToken();
+      if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+    }
+    try {
+      const response = await fetch(url, {
+        ...options,
+        method,
+        headers,
+        credentials: "include",
+        mode: "cors",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      saveCsrfToken(payload);
+      if (response.status === 401) expireRemoteSession();
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message || payload?.message || "The request failed.",
+        );
+      }
+      return payload;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  function platformPayloadData(payload, fallback) {
+    return payload?.data ?? fallback;
+  }
+
+  function mergeRemoteAssignments(course, records) {
+    if (!Array.isArray(records)) return;
+    platformRuntime.assignments[course.code] = records;
+    records.forEach((record) => {
+      const id = String(record?.id || "").trim().toLowerCase();
+      if (!id) return;
+      const assignment = ASSIGNMENTS.find((item) => item.id === id);
+      if (!assignment) return;
+      assignment.instructions = record.instructions || assignment.instructions;
+      assignment.rubric = Array.isArray(record.rubric) && record.rubric.length
+        ? record.rubric
+        : assignment.rubric;
+      assignment.weightPercent = Number(
+        record.weightPercent ?? assignment.weightPercent,
+      );
+      assignment.submissionMode =
+        record.submissionMode || assignment.submissionMode;
+      assignment.status = record.status || assignment.status;
+      assignment.unitNumber =
+        record.unitNumber != null && Number.isInteger(Number(record.unitNumber))
+        ? Number(record.unitNumber)
+        : assignment.unitNumber;
+      assignment.moduleNumber =
+        record.moduleNumber != null && Number.isInteger(Number(record.moduleNumber))
+        ? Number(record.moduleNumber)
+        : assignment.moduleNumber;
+      assignment.due = record.dueAt || "";
+      assignment.availableFrom = record.availableFrom || "";
+      assignment.availableUntil = record.availableUntil || "";
+      assignment.remoteModuleId = record.moduleId || "";
+    });
+  }
+
+  function loadPlatformData(key, loader) {
+    if (platformRequests.has(key)) return platformRequests.get(key);
+    const request = Promise.resolve()
+      .then(loader)
+      .catch((error) => {
+        platformRuntime.errors[key] =
+          error?.name === "AbortError"
+            ? "The course service timed out."
+            : error?.message || "Course data could not be loaded.";
+      })
+      .finally(() => {
+        platformRequests.set(key, Promise.resolve());
+        render(false, true);
+      });
+    platformRequests.set(key, request);
+    return request;
+  }
+
+  function ensureStudentPlatformData(course) {
+    if (!course?.platformModules?.length) return;
+    const endpoint = studentProgressEndpoint(course);
+    const modulesEndpoint = courseModulesEndpoint(course);
+    if (!endpoint || !modulesEndpoint) return;
+    const key = `student-progress:${course.code}`;
+    if (platformRequests.has(key)) return;
+    void loadPlatformData(key, async () => {
+      const [
+        progressPayload,
+        modulesPayload,
+        assignmentsPayload,
+        gradesPayload,
+      ] = await Promise.all([
+        requestPlatformJson(endpoint),
+        requestPlatformJson(modulesEndpoint),
+        requestPlatformJson(courseAssignmentsEndpoint(course)).catch(() => ({
+          data: [],
+        })),
+        requestPlatformJson(studentGradesEndpoint(course)).catch(() => ({
+          data: [],
+        })),
+      ]);
+      const records = platformPayloadData(progressPayload, []);
+      platformRuntime.studentProgress[course.code] = Array.isArray(records)
+        ? records
+        : [];
+      const modules = platformPayloadData(modulesPayload, []);
+      platformRuntime.modules[course.code] = Array.isArray(modules)
+        ? modules
+        : [];
+      mergeRemoteAssignments(
+        course,
+        platformPayloadData(assignmentsPayload, []),
+      );
+      const grades = platformPayloadData(gradesPayload, []);
+      platformRuntime.studentGrades[course.code] = Array.isArray(grades)
+        ? grades.filter((grade) => Boolean(grade?.publishedAt))
+        : [];
+      delete platformRuntime.errors[key];
+    });
+  }
+
+  function ensureTeacherPlatformData(course) {
+    if (!course?.platformModules?.length) return;
+    const rosterEndpoint = teacherCourseEndpoint(course, "roster");
+    const gradebookEndpoint = teacherCourseEndpoint(course, "gradebook");
+    const modulesEndpoint = courseModulesEndpoint(course);
+    if (modulesEndpoint) {
+      const key = `teacher-modules:${course.code}`;
+      if (!platformRequests.has(key)) {
+        void loadPlatformData(key, async () => {
+          const [payload, assignmentsPayload] = await Promise.all([
+            requestPlatformJson(modulesEndpoint),
+            requestPlatformJson(courseAssignmentsEndpoint(course)).catch(
+              () => ({ data: [] }),
+            ),
+          ]);
+          const records = platformPayloadData(payload, []);
+          platformRuntime.modules[course.code] = Array.isArray(records)
+            ? records
+            : [];
+          mergeRemoteAssignments(
+            course,
+            platformPayloadData(assignmentsPayload, []),
+          );
+          delete platformRuntime.errors[key];
+        });
+      }
+    }
+    if (rosterEndpoint) {
+      const key = `teacher-roster:${course.code}`;
+      if (!platformRequests.has(key)) {
+        void loadPlatformData(key, async () => {
+          const payload = await requestPlatformJson(rosterEndpoint);
+          const records = platformPayloadData(payload, []);
+          platformRuntime.teacherRosters[course.code] = Array.isArray(records)
+            ? records
+            : [];
+          delete platformRuntime.errors[key];
+        });
+      }
+    }
+    if (gradebookEndpoint) {
+      const key = `teacher-gradebook:${course.code}`;
+      if (!platformRequests.has(key)) {
+        void loadPlatformData(key, async () => {
+          const payload = await requestPlatformJson(gradebookEndpoint);
+          const record = platformPayloadData(payload, {});
+          platformRuntime.teacherGradebooks[course.code] =
+            record && typeof record === "object" ? record : {};
+          delete platformRuntime.errors[key];
+        });
+      }
+    }
+  }
+
   function collapseRemoteSubmissionRecords(records) {
     const groups = new Map();
     for (const record of records) {
@@ -2314,8 +2861,10 @@
     }
     const email = normalizeEmail(source.email || payload.email);
     const serverRole = String(source.role || payload.role || "").toLowerCase();
-    const role = serverRole === "teacher_admin" ? "teacher" : serverRole;
-    if (!email || !["student", "teacher"].includes(role)) return null;
+    const role = serverRole;
+    if (!email || !["student", "teacher", "teacher_admin"].includes(role)) {
+      return null;
+    }
     const firstName = String(source.firstName || "").trim();
     const lastName = String(source.lastName || "").trim();
     return {
@@ -2328,7 +2877,9 @@
         String(source.displayName || source.name || "").trim() ||
         `${firstName} ${lastName}`.trim() ||
         email,
-      accountType: role === "teacher" ? "faculty" : "personal",
+      accountType: ["teacher", "teacher_admin"].includes(role)
+        ? "faculty"
+        : "personal",
     };
   }
 
@@ -2995,6 +3546,85 @@
     return ASSIGNMENTS.find((assignment) => assignment.id === id);
   }
 
+  function findPlatformModule(course, identifier) {
+    if (!course?.platformModules?.length) return null;
+    const decoded = safeDecode(String(identifier ?? ""));
+    const numeric = Number(decoded);
+    return (
+      course.platformModules.find(
+        (module) =>
+          module.key === decoded ||
+          (Number.isFinite(numeric) && module.number === numeric),
+      ) || null
+    );
+  }
+
+  function platformAssignmentsForModule(course, module) {
+    return ASSIGNMENTS.filter(
+      (assignment) =>
+        assignment.courseId === course.id &&
+        (assignment.moduleKey === module.key ||
+          Number(assignment.moduleNumber) === module.number),
+    );
+  }
+
+  function remotePlatformModule(course, module) {
+    const records = platformRuntime.modules[course?.code];
+    if (!Array.isArray(records) || !module) return null;
+    return (
+      records.find(
+        (record) =>
+          record.moduleKey === module.key ||
+          Number(record.moduleNumber) === module.number,
+      ) || null
+    );
+  }
+
+  function studentModuleProgress(course, module) {
+    if (!course || !module) return null;
+    const records = platformRuntime.studentProgress[course.code];
+    if (!Array.isArray(records)) return null;
+    return (
+      records.find(
+        (record) =>
+          record.moduleId === module.id ||
+          record.moduleKey === module.key ||
+          Number(record.moduleNumber) === module.number,
+      ) || null
+    );
+  }
+
+  function officialProgressConnected(course) {
+    return Array.isArray(platformRuntime.studentProgress[course?.code]);
+  }
+
+  function moduleIsUnlocked(course, module) {
+    if (module.number === 0) return true;
+    if (!officialProgressConnected(course)) return true;
+    const current = studentModuleProgress(course, module);
+    if (current?.override?.active) return true;
+    const previous = findPlatformModule(course, module.number - 1);
+    return studentModuleProgress(course, previous)?.status === "completed";
+  }
+
+  function moduleStatus(course, module) {
+    const record = studentModuleProgress(course, module);
+    if (record?.status === "completed") {
+      return { key: "completed", label: "Completed", className: "success" };
+    }
+    if (!moduleIsUnlocked(course, module)) {
+      return { key: "locked", label: "Locked", className: "warning" };
+    }
+    if (record?.status === "in_progress") {
+      return { key: "in_progress", label: "In Progress", className: "info" };
+    }
+    return {
+      key: "available",
+      label: officialProgressConnected(course) ? "Available" : "Preview",
+      className: "",
+    };
+  }
+
   function catalogCourses() {
     return SELECTABLE_COURSE_IDS.map(findCourse).filter(Boolean);
   }
@@ -3057,11 +3687,28 @@
   }
 
   function courseProgress(course) {
+    if (course.platformModules?.length) {
+      const records = platformRuntime.studentProgress[course.code];
+      const completed = Array.isArray(records)
+        ? course.platformModules.filter(
+            (module) => studentModuleProgress(course, module)?.status === "completed",
+          ).length
+        : 0;
+      return {
+        completed,
+        total: course.platformModules.length,
+        percent: course.platformModules.length
+          ? Math.round((completed / course.platformModules.length) * 100)
+          : 0,
+        official: Array.isArray(records),
+      };
+    }
     const completed = course.lessons.filter((lesson) =>
       state.completed.includes(lesson.id),
     ).length;
     return {
       completed,
+      total: course.lessons.length,
       percent: course.lessons.length
         ? Math.round((completed / course.lessons.length) * 100)
         : 0,
@@ -3083,6 +3730,16 @@
   }
 
   function overallProgress() {
+    const modules = studentCourses().flatMap((course) =>
+      (course.platformModules || []).map((module) => ({ course, module })),
+    );
+    if (modules.length) {
+      const completed = modules.filter(
+        ({ course, module }) =>
+          studentModuleProgress(course, module)?.status === "completed",
+      ).length;
+      return Math.round((completed / modules.length) * 100);
+    }
     const lessons = studentLessons();
     if (!lessons.length) return 0;
     const completed = lessons.filter((lesson) =>
@@ -3102,12 +3759,114 @@
     };
   }
 
+  function publishedDirectGrades(courseCode) {
+    const records = platformRuntime.studentGrades[courseCode];
+    return Array.isArray(records)
+      ? records.filter(
+          (grade) =>
+            grade?.publishedAt &&
+            Number.isFinite(Number(grade.score)) &&
+            Number(grade.score) >= 0,
+        )
+      : [];
+  }
+
+  function directGradeForAssignment(assignment) {
+    if (!assignment?.gradebookItemId) return null;
+    const course = findCourse(assignment.courseId);
+    return (
+      publishedDirectGrades(course?.code).find(
+        (grade) =>
+          String(grade.gradebookItemId || "").toLowerCase() ===
+          assignment.gradebookItemId,
+      ) || null
+    );
+  }
+
+  function normalizedGradePercent(score, maxScore = 100) {
+    const numericScore = Number(score);
+    const numericMaximum = Number(maxScore);
+    if (
+      !Number.isFinite(numericScore) ||
+      !Number.isFinite(numericMaximum) ||
+      numericMaximum <= 0
+    ) {
+      return null;
+    }
+    return Math.round((numericScore / numericMaximum) * 100);
+  }
+
   function courseGrade(courseId, user = currentUser()) {
+    const assignments = ASSIGNMENTS.filter(
+      (assignment) =>
+        assignment.courseId === courseId && Number(assignment.weightPercent) > 0,
+    );
+    const scored = assignments
+      .map((assignment) => ({
+        assignment,
+        score: assignmentScore(assignment, user),
+      }))
+      .filter((record) => record.score != null);
+    const assignedGradebookIds = new Set(
+      assignments.map((assignment) => assignment.gradebookItemId).filter(Boolean),
+    );
+    const directOnly = publishedDirectGrades(findCourse(courseId)?.code)
+      .filter(
+        (grade) =>
+          !assignedGradebookIds.has(
+            String(grade.gradebookItemId || "").toLowerCase(),
+          ),
+      )
+      .map((grade) => ({
+        grade,
+        score: normalizedGradePercent(grade.score, grade.maxScore),
+        weightPercent: Number(grade.weightPercent || 0),
+      }))
+      .filter(
+        (record) =>
+          record.score != null && Number(record.weightPercent) > 0,
+      );
+    if (scored.length || directOnly.length) {
+      const earnedFromAssignments = scored.reduce(
+        (total, record) =>
+          total + record.score * Number(record.assignment.weightPercent),
+        0,
+      );
+      const assignmentWeight = scored.reduce(
+        (total, record) => total + Number(record.assignment.weightPercent),
+        0,
+      );
+      const earnedFromDirect = directOnly.reduce(
+        (total, record) => total + record.score * record.weightPercent,
+        0,
+      );
+      const directWeight = directOnly.reduce(
+        (total, record) => total + record.weightPercent,
+        0,
+      );
+      const earned = earnedFromAssignments + earnedFromDirect;
+      const weight = assignmentWeight + directWeight;
+      const current = weight ? Math.round(earned / weight) : null;
+      return current == null
+        ? null
+        : {
+            current,
+            target: current,
+            completed: scored.length + directOnly.length,
+            gradedWeight: weight,
+          };
+    }
+    if (findCourse(courseId)?.platformModules?.length) return null;
     if (!hasSeededAcademicRecord(user)) return null;
     return GRADES.find((grade) => grade.courseId === courseId);
   }
 
   function assignmentScore(assignment, user = currentUser()) {
+    const directGrade = directGradeForAssignment(assignment);
+    if (directGrade) {
+      return normalizedGradePercent(directGrade.score, directGrade.maxScore);
+    }
+    if (assignment?.submissionMode === "supervised") return null;
     const submission = submissionForAssignment(assignment.id, user);
     if (
       Number.isInteger(submission?.score) &&
@@ -3121,6 +3880,9 @@
   }
 
   function assignmentFeedback(assignment, user = currentUser()) {
+    const directGrade = directGradeForAssignment(assignment);
+    if (directGrade) return String(directGrade.feedback || "");
+    if (assignment?.submissionMode === "supervised") return "";
     const submission = submissionForAssignment(assignment.id, user);
     if (submission?.feedback) return submission.feedback;
     if (submissionsEndpointUrl()) return "";
@@ -3135,8 +3897,22 @@
     }).format(new Date(value));
   }
 
+  function assignmentScheduleLabel(assignment, includeTime = true) {
+    return assignment?.due
+      ? formatDate(assignment.due, includeTime)
+      : "Schedule set separately";
+  }
+
+  function assignmentAvailabilityLabel(assignment) {
+    return assignment?.availableUntil
+      ? formatDate(assignment.availableUntil, true)
+      : "Set in the course offering";
+  }
+
   function calendarEvents() {
-    const dueDates = studentAssignments().map((assignment) => {
+    const dueDates = studentAssignments()
+      .filter((assignment) => Boolean(assignment.due))
+      .map((assignment) => {
       const course = findCourse(assignment.courseId);
       return {
         id: `due-${assignment.id}`,
@@ -3186,7 +3962,9 @@
         route: `assignment/${assignment.id}`,
         eyebrow: `${course.code} · ${status.label}`,
         title: assignment.title,
-        meta: `Due ${formatDate(assignment.due, true)}`,
+        meta: assignment.due
+          ? `Due ${formatDate(assignment.due, true)}`
+          : "Schedule set separately",
         cta: status.key === "revision" ? "Revise Submission" : `Open ${assignment.title}`,
         className: status.key === "overdue" ? "danger" : "warning",
       });
@@ -3261,6 +4039,13 @@
       return {
         key: "submitted",
         label: "Awaiting Grading",
+        className: "info",
+      };
+    }
+    if (!assignment.due) {
+      return {
+        key: "open",
+        label: assignment.teacherRecorded ? "Teacher Recorded" : "Open",
         className: "info",
       };
     }
@@ -3544,7 +4329,7 @@
       if (aIndex < 0) return 1;
       if (bIndex < 0) return -1;
       return aIndex - bIndex;
-    });
+      });
     return `
       <div class="hierarchy-list">
         ${hierarchyCourses.map((course, courseIndex) => {
@@ -3929,7 +4714,7 @@
               <a class="teacher-course-card" href="#/teacher/course/${course.id}">
                 <span class="course-code">${course.code}</span>
                 <h3>${escapeHtml(course.title)}</h3>
-                <p>${escapeHtml(course.subject)} · ${escapeHtml(course.term)}</p>
+                <p>${escapeHtml(course.subject)} · ${course.plannedHours} planned hours</p>
                 <dl>
                   <div><dt>Submissions</dt><dd>${courseRecords.length}</dd></div>
                   <div><dt>Awaiting Review</dt><dd>${pending}</dd></div>
@@ -3990,6 +4775,147 @@
     `;
   }
 
+  const DIRECT_GRADE_MODES = new Set([
+    "supervised",
+    "none",
+    "oral_defence",
+  ]);
+
+  function gradebookScoreFor(student, itemId) {
+    return (student?.scores || []).find((score) => score.itemId === itemId) || null;
+  }
+
+  function publishedTeacherGrade(score) {
+    if (!score) return null;
+    if (Object.prototype.hasOwnProperty.call(score, "latestPublished")) {
+      const snapshot = score.latestPublished;
+      return snapshot?.publishedAt && Number.isFinite(Number(snapshot.score))
+        ? snapshot
+        : null;
+    }
+    const legacySnapshot = score.published || null;
+    if (
+      legacySnapshot?.publishedAt &&
+      Number.isFinite(Number(legacySnapshot.score))
+    ) {
+      return legacySnapshot;
+    }
+    if (
+      score.latestPublishedAt &&
+      Number.isFinite(Number(score.publishedScore))
+    ) {
+      return {
+        score: Number(score.publishedScore),
+        feedback: score.publishedFeedback || "",
+        publishedAt: score.latestPublishedAt,
+      };
+    }
+    return score.publishedAt && Number.isFinite(Number(score.score))
+      ? score
+      : null;
+  }
+
+  function teacherPublishedStanding(gradebook, student) {
+    const published = (gradebook?.items || [])
+      .map((item) => ({
+        item,
+        grade: publishedTeacherGrade(gradebookScoreFor(student, item.id)),
+      }))
+      .filter(({ item, grade }) => grade && Number(item.weightPercent) > 0)
+      .map(({ item, grade }) => ({
+        percent: normalizedGradePercent(grade.score, item.maxScore),
+        weight: Number(item.weightPercent),
+      }))
+      .filter((record) => record.percent != null);
+    const weight = published.reduce((sum, record) => sum + record.weight, 0);
+    const earned = published.reduce(
+      (sum, record) => sum + record.percent * record.weight,
+      0,
+    );
+    return {
+      count: published.length,
+      weight,
+      average: weight ? Math.round(earned / weight) : null,
+    };
+  }
+
+  function directGradebookMarkup(course, gradebook) {
+    const directItems = (gradebook?.items || []).filter((item) =>
+      DIRECT_GRADE_MODES.has(item.submissionMode),
+    );
+    if (!directItems.length || !gradebook?.students?.length) {
+      return '<div class="teacher-empty"><p>No teacher-entered gradebook items are available yet.</p></div>';
+    }
+    return `
+      <div class="direct-gradebook-list">
+        ${directItems
+          .map(
+            (item) => `
+              <details class="direct-gradebook-item">
+                <summary>
+                  <span><span class="course-code">${escapeHtml(String(item.submissionMode || "teacher entry").replaceAll("_", " "))}</span><strong>${escapeHtml(item.title)}</strong></span>
+                  <span>${item.weightPercent}% · ${item.maxScore} points</span>
+                </summary>
+                <div class="direct-grade-students">
+                  ${gradebook.students
+                    .map((student) => {
+                      const score = gradebookScoreFor(student, item.id);
+                      const priorPublished = Boolean(
+                        !score?.publishedAt && publishedTeacherGrade(score),
+                      );
+                      const status = score?.publishedAt
+                        ? "Published"
+                        : score?.score != null
+                          ? priorPublished
+                            ? "Draft · prior result published"
+                            : "Draft"
+                          : "Not Entered";
+                      return `
+                        <form class="direct-grade-form" data-course="${course.id}" data-course-code="${course.code}" data-student="${escapeHtml(student.studentId)}" data-item="${escapeHtml(item.id)}" data-version="${Number(score?.version || 0)}" data-max-score="${Number(item.maxScore || 100)}">
+                          <div class="direct-grade-student-heading"><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span><span class="badge ${status === "Published" ? "success" : status.startsWith("Draft") ? "warning" : ""}">${status}</span></div>
+                          <div class="form-alert" role="alert" tabindex="-1" hidden></div>
+                          <div class="direct-grade-fields">
+                            <label><span>Score</span><input name="score" type="number" min="0" max="${Number(item.maxScore || 100)}" step="1" value="${score?.score == null ? "" : Number(score.score)}" required /></label>
+                            <label><span>Feedback</span><textarea name="feedback" maxlength="10000" placeholder="Feedback visible after publishing">${escapeHtml(score?.feedback || "")}</textarea></label>
+                          </div>
+                          <div class="direct-grade-actions">
+                            <button class="button button-quiet" type="submit" name="gradeAction" value="draft">Save Draft</button>
+                            <button class="button button-primary" type="submit" name="gradeAction" value="publish">Publish to Student</button>
+                          </div>
+                        </form>
+                      `;
+                    })
+                    .join("")}
+                </div>
+              </details>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  function teacherStandingMarkup(course, gradebook) {
+    if (!gradebook?.students?.length) {
+      return `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No published gradebook records are available yet." : "Connect the secure course service to view the official gradebook."}</p></div>`;
+    }
+    return `
+      <div class="teacher-gradebook-table" role="region" aria-label="${course.code} gradebook">
+        <table>
+          <thead><tr><th>Student</th><th>Published Items</th><th>Weight Graded</th><th>Current Average</th></tr></thead>
+          <tbody>
+            ${gradebook.students
+              .map((student) => {
+                const standing = teacherPublishedStanding(gradebook, student);
+                return `<tr><td><strong>${escapeHtml(student.displayName || student.email)}</strong><small>${escapeHtml(student.email || "")}</small></td><td>${standing.count}</td><td>${standing.weight}%</td><td>${standing.average == null ? "—" : `${standing.average}%`}</td></tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function teacherCourseView(course) {
     const syllabus = course.syllabus || { units: [], drive: {} };
     const drive = syllabus.drive || {};
@@ -3999,9 +4925,9 @@
     const awaiting = records.filter(
       isAwaitingTeacherReview,
     );
-    const roster = allStudentAccounts().filter((student) =>
-      isCourseEnrolled(course.id, loadState(student)),
-    );
+    const connectedRoster = platformRuntime.teacherRosters[course.code];
+    const roster = Array.isArray(connectedRoster) ? connectedRoster : [];
+    const gradebook = platformRuntime.teacherGradebooks[course.code] || null;
     const assignments = ASSIGNMENTS.filter(
       (assignment) => assignment.courseId === course.id,
     );
@@ -4032,11 +4958,11 @@
           <section class="teacher-section">
             <div class="section-heading"><div><p class="eyebrow">Syllabus</p><h2>110-Hour Course Plan</h2></div><span class="badge">${escapeHtml(course.credit)}</span></div>
             <p class="teacher-section-copy">${escapeHtml(syllabus.description || course.overview)}</p>
-            <div class="teacher-syllabus-list">
-              ${(syllabus.units || [])
+            <div class="teacher-syllabus-list platform-teacher-module-list">
+              ${(course.platformModules || [])
                 .map(
-                  (unit, index) => `
-                    <article><span>${String(index + 1).padStart(2, "0")}</span><div><small>Unit ${index + 1}</small><strong>${escapeHtml(unit.title)}</strong></div><b>${unit.hours}h</b></article>
+                  (module) => `
+                    <a href="#/teacher/course/${course.id}/module/${module.number}"><span>${String(module.number).padStart(2, "0")}</span><div><small>${escapeHtml(module.unitTitle || "Course Sequence")}</small><strong>${escapeHtml(module.title)}</strong></div><b>${module.estimatedCreditHours || 0}h</b>${icon("arrow", 15)}</a>
                   `,
                 )
                 .join("")}
@@ -4055,7 +4981,7 @@
                         (assignment) => `
                           <article>
                             <span class="course-chip">${escapeHtml(assignment.unit)}</span>
-                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${formatDate(assignment.due, true)} · ${assignment.points} points</p></div>
+                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p></div>
                             <a class="button button-quiet" href="#/teacher/submissions/${course.id}/${assignment.id}">Submissions</a>
                           </article>
                         `,
@@ -4064,6 +4990,15 @@
                   : '<div class="teacher-empty"><p>No assignments have been added to this course yet.</p></div>'
               }
             </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Gradebook</p><h2>Course Standing</h2></div><span class="badge">${course.gradebookItems?.length || assignments.length} items</span></div>
+            ${teacherStandingMarkup(course, gradebook)}
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Teacher-Entered Results</p><h2>Supervised, Participation & Oral Results</h2></div><span class="badge">Draft or Publish</span></div>
+            <p class="teacher-section-copy">Enter results that do not use the student submission workflow. Drafts remain staff-only; published results appear in the student grade report.</p>
+            ${directGradebookMarkup(course, gradebook)}
           </section>
           <section class="teacher-section">
             <div class="section-heading"><div><p class="eyebrow">Student Work</p><h2>Recent Submissions</h2></div><a class="text-link" href="#/teacher/submissions/${course.id}">View All ${icon("arrow", 15)}</a></div>
@@ -4080,11 +5015,11 @@
                 ? `<div class="teacher-roster">${roster
                     .map(
                       (student) => `
-                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span></div>
+                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)} · ${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules</small></span></div>
                       `,
                     )
                     .join("")}</div>`
-                : '<div class="teacher-empty"><p>No students have selected this course on this device.</p></div>'
+                : `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No enrolled students are available for this course." : "Connect the secure course service to view the official roster and progress."}</p></div>`
             }
           </section>
           <section class="teacher-section teacher-drive-card">
@@ -4099,6 +5034,35 @@
         </aside>
       </section>
     `;
+  }
+
+  function teacherModuleView(course, module) {
+    const assessment = module.assessment || {};
+    const assignments = platformAssignmentsForModule(course, module);
+    const roster = Array.isArray(platformRuntime.teacherRosters[course.code])
+      ? platformRuntime.teacherRosters[course.code]
+      : [];
+    const remoteModule = remotePlatformModule(course, module);
+    const unlockReady = Boolean(
+      remoteModule?.id &&
+        roster.length &&
+        configuredDriveUrl(PLATFORM_API_CONFIG.teacherStudentsEndpoint),
+    );
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb"><a href="#/teacher/courses">Course Management</a><span>/</span><a href="#/teacher/course/${course.id}">${course.code}</a><span>/</span><span aria-current="page">Module ${module.number}</span></nav>
+      <header class="teacher-course-hero module-teacher-hero"><div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div><div class="teacher-course-hero-actions"><a class="button button-gold" href="#/teacher/submissions/${course.id}">Open Submission Centre</a><a class="button button-on-dark" href="#/teacher/course/${course.id}">Back to Course</a></div></header>
+      <section class="teacher-module-layout">
+        <div>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Instructional Plan</p><h2>Teacher Presence</h2></div><span class="badge">${module.estimatedCreditHours || 0} hours</span></div><p class="teacher-section-copy">${escapeHtml(module.teacherPresence)}</p><h3>Learning Focus</h3><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Sequence</p><h2>Reading, Practice & Check</h2></div></div><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol><div class="module-activity-grid"><article><h3>Guided Practice</h3><p>${escapeHtml(module.guidedPractice)}</p></article><article><h3>Low-Stakes Check</h3><p>${escapeHtml(module.lowStakesCheck)}</p></article></div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}%</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
+        </div>
+        <aside>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Student Progress</p><h2>Roster</h2></div><span class="badge">${roster.length}</span></div>${roster.length ? `<div class="teacher-module-roster">${roster.map((student) => `<div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules complete</small></span></div>`).join("")}</div>` : '<div class="teacher-empty"><p>Official roster progress will appear when the secure course service is connected.</p></div>'}</section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Override</p><h2>Unlock Module</h2></div></div><p>Use only for an accommodation, technical barrier or documented alternative pathway. A reason is required and retained in the audit record.</p><form id="unlock-override-form" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}"><div class="form-alert" role="alert" tabindex="-1" hidden></div><label for="unlock-student">Student</label><select id="unlock-student" name="studentId" required ${!unlockReady ? "disabled" : ""}><option value="">Select a student</option>${roster.map((student) => `<option value="${escapeHtml(student.studentId || student.id || "")}">${escapeHtml(student.displayName)} · ${escapeHtml(student.email)}</option>`).join("")}</select><label for="unlock-reason">Documented reason</label><textarea id="unlock-reason" name="reason" required minlength="10" placeholder="Describe the approved accommodation, technical barrier or alternative pathway." ${!unlockReady ? "disabled" : ""}></textarea><button class="button button-primary full-width" type="submit" ${!unlockReady ? "disabled" : ""}>Create Unlock Override</button>${!unlockReady ? '<p class="teacher-security-note"><strong>Official service required.</strong> Unlocks are never stored as browser-only authority.</p>' : ""}</form></section>
+        </aside>
+      </section>`;
   }
 
   function teacherSubmissionsView(courseId = "", assignmentId = "") {
@@ -4173,7 +5137,7 @@
         course ? course.subject : "Submission Centre",
         title,
         course
-          ? `Browse ${course.term} work by student, unit and assignment.`
+          ? `Browse ${course.code} work by student, module and assignment.`
           : "Every uploaded assignment is organized by course, student, unit and assignment.",
         course
           ? '<a class="button button-secondary" href="#/teacher/submissions">View All Courses</a>'
@@ -4700,9 +5664,7 @@
       ),
     );
     const feedback = unreadFeedback();
-    const weekEvents = calendarEvents().filter(
-      (event) => event.date >= "2026-07-20" && event.date <= "2026-07-26",
-    );
+    const weekEvents = calendarEvents().slice(0, 5);
     const primaryCopy = !enrolled.length
       ? "Choose your courses to build your learning plan and unlock course syllabi."
       : primary
@@ -4825,7 +5787,7 @@
     return `
       <a class="course-row" href="#/course/${course.id}">
         <span class="course-chip">${course.code}</span>
-        <span><h3>${escapeHtml(course.title)}</h3><p>${progress.completed}/${course.lessons.length} lessons · ${guide.isComplete ? "Guide complete" : `${guide.completed}/${guide.total} guide steps`}</p></span>
+        <span><h3>${escapeHtml(course.title)}</h3><p>${progress.completed}/${progress.total} modules · ${progress.official ? "official progress" : `${guide.completed}/${guide.total} guide steps`}</p></span>
         <span class="progress-track" aria-label="${progress.percent}% complete"><span style="width:${progress.percent}%"></span></span>
         ${icon("arrow", 18)}
       </a>
@@ -4971,7 +5933,7 @@
     const enrolled = studentCourses();
     return `
       ${pageHeading(
-        "2026–2027 Academic Year",
+        "Grade 12 OSSD",
         "My Courses",
         "Open a course to review its outline, work through lessons and see your current progress.",
         '<a class="button button-secondary" href="#/course-selection">Add or Change Courses</a>',
@@ -4993,10 +5955,10 @@
                 <p>${escapeHtml(course.description)}</p>
                 <div class="course-meta">
                   <span>${escapeHtml(course.instructor)}</span>
-                  <span>${escapeHtml(course.mode)} · Ends ${formatDate(course.completionDate)}</span>
+                  <span>${escapeHtml(course.mode)} · ${course.plannedHours} planned hours</span>
                 </div>
                 <div class="course-progress">
-                  <div><span>${progress.completed} of ${course.lessons.length} lessons</span><strong>${progress.percent}%</strong></div>
+                  <div><span>${progress.completed} of ${progress.total} modules</span><strong>${progress.percent}%</strong></div>
                   <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
                 </div>
               </div>
@@ -5011,20 +5973,15 @@
 
   function courseView(course) {
     const progress = courseProgress(course);
-    const guide = guideProgress(course);
     const grade = courseGrade(course.id);
-    const nextLesson = nextLessonForCourse(course);
-    const modules = [...new Set(course.lessons.map((lesson) => lesson.unit))];
-    const primaryCourseRoute = !guide.isComplete
-      ? `syllabus/${course.id}`
-      : nextLesson
-        ? `lesson/${nextLesson.id}`
-        : "progress";
-    const primaryCourseLabel = !guide.isComplete
-      ? `Finish Course Setup (${guide.completed}/${guide.total})`
-      : nextLesson
-        ? `Continue: ${nextLesson.title}`
-        : "Review Course Progress";
+    const modules = course.platformModules || [];
+    const nextModule =
+      modules.find(
+        (module) =>
+          moduleIsUnlocked(course, module) &&
+          moduleStatus(course, module).key !== "completed",
+      ) || modules[0];
+    if (!modules.length) return notFoundView();
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="courses">My Courses</button><span>/</span><span>${course.code}</span>
@@ -5035,11 +5992,11 @@
           <h1>${escapeHtml(course.title)}</h1>
           <p>${escapeHtml(course.overview)}</p>
           <div class="course-progress">
-            <div><span>${progress.completed} of ${course.lessons.length} lessons complete</span><strong>${progress.percent}%</strong></div>
+            <div><span>${progress.completed} of ${progress.total} modules complete</span><strong>${progress.percent}%</strong></div>
             <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
           </div>
           <div class="course-hero-actions">
-            <a class="button button-gold" href="#/${primaryCourseRoute}">${guide.isComplete ? icon("arrow", 17) : icon("book", 17)} ${escapeHtml(primaryCourseLabel)}</a>
+            <a class="button button-gold" href="#/course/${course.id}/module/${nextModule.number}">${icon("arrow", 17)} ${nextModule.number === 0 ? "Start Course" : `Continue Module ${nextModule.number}`}</a>
             <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
           </div>
         </div>
@@ -5047,32 +6004,26 @@
       </section>
       <section class="course-detail-grid">
         <div class="panel">
-          <header class="panel-header"><div><h2>Course Learning Path</h2><p>Follow the unit order and complete each learning check</p></div></header>
+          <header class="panel-header"><div><h2>12-Module Learning Path</h2><p>Read, practise, check understanding, complete evidence, then use feedback to unlock the next module.</p></div></header>
+          <div class="platform-connection-note ${progress.official ? "is-connected" : ""}" role="status">
+            ${progress.official ? icon("check", 16) : icon("clock", 16)}
+            <span><strong>${progress.official ? "Official progress connected" : "Catalog preview"}</strong><small>${progress.official ? "Module completion is synchronized with your school record." : "Course content is available to review. Official completion and unlock decisions appear when the secure course service is connected."}</small></span>
+          </div>
           ${modules
-            .map((unit) => {
-              const lessons = course.lessons.filter((lesson) => lesson.unit === unit);
+            .map((module) => {
+              const status = moduleStatus(course, module);
+              const assignments = platformAssignmentsForModule(course, module);
               return `
-                <details class="module" ${lessons.some((lesson) => lesson.id === nextLesson?.id) ? "open" : ""}>
-                  <summary class="module-heading">
-                    <span><p class="course-code">${unit}</p><h3>${escapeHtml(lessons[0].unitTitle)}</h3><p>${plural(lessons.length, "lesson")} in this unit</p></span>
-                    <span class="module-toggle">Open Unit ${icon("arrow", 16)}</span>
-                  </summary>
-                  <div class="module-lessons">
-                    ${lessons
-                      .map((lesson) => {
-                        const complete = state.completed.includes(lesson.id);
-                        return `
-                          <a class="lesson-row" href="#/lesson/${lesson.id}">
-                            <span class="lesson-status ${complete ? "complete" : ""}">${complete ? icon("check", 14) : ""}</span>
-                            <span><h4>${escapeHtml(lesson.title)}</h4><p>${escapeHtml(lesson.summary)}</p></span>
-                            <span class="badge">${icon("clock", 13)} ${lesson.duration}</span>
-                            ${icon("arrow", 17)}
-                          </a>
-                        `;
-                      })
-                      .join("")}
-                  </div>
-                </details>
+                <a class="platform-module-row ${status.key === "locked" ? "is-locked" : ""}" href="#/course/${course.id}/module/${module.number}">
+                  <span class="platform-module-number">${String(module.number).padStart(2, "0")}</span>
+                  <span class="platform-module-copy">
+                    <span class="module-row-meta">${escapeHtml(module.unitTitle || (module.number === 0 ? "Course Orientation" : module.number === 11 ? "Final Evaluation" : `Unit ${module.unitNumber}`))}</span>
+                    <strong>${escapeHtml(module.title)}</strong>
+                    <small>${plural(module.readingSteps.length, "reading step")} · ${plural(module.selfStudyResources.length, "resource")} · ${assignments.length ? `${assignments.reduce((sum, assignment) => sum + Number(assignment.weightPercent || 0), 0)}% assessed` : "formative"}</small>
+                  </span>
+                  <span class="badge ${status.className}">${status.label}</span>
+                  ${icon("arrow", 17)}
+                </a>
               `;
             })
             .join("")}
@@ -5080,11 +6031,10 @@
         </div>
         <aside>
           <div class="panel guide-status-card">
-            <header class="panel-header"><div><h3>Start Here</h3><p>Course Syllabus</p></div><span class="badge ${guide.isComplete ? "success" : "warning"}">${guide.isComplete ? "Complete" : `${guide.completed}/${guide.total}`}</span></header>
+            <header class="panel-header"><div><h3>Course Sequence</h3><p>Permanent catalog</p></div><span class="badge">12 modules</span></header>
             <div class="panel-content">
-              <div class="progress-track" aria-label="${guide.percent}% of course guide complete"><span style="width:${guide.percent}%"></span></div>
-              <p>Review expectations, evaluation, dates and support before beginning major assessments.</p>
-              <a class="button button-secondary full-width" href="#/syllabus/${course.id}">${guide.isComplete ? "Review Syllabus" : "Continue Syllabus"}</a>
+              <p>Module 0 establishes course routines. Modules 1–10 move through core reading, self-study, guided application and assessment. Module 11 completes the final evaluation.</p>
+              <a class="button button-secondary full-width" href="#/syllabus/${course.id}">Review Syllabus</a>
             </div>
           </div>
           <div class="panel">
@@ -5092,10 +6042,8 @@
             <div class="panel-content course-facts">
               <div class="fact"><span>Instructor</span><strong>${escapeHtml(course.instructor)}</strong></div>
               <div class="fact"><span>Course Mode</span><strong>${escapeHtml(course.mode)}</strong></div>
-              <div class="fact"><span>Term</span><strong>${escapeHtml(course.term)}</strong></div>
-              <div class="fact"><span>Completion Date</span><strong>${formatDate(course.completionDate)}</strong></div>
-              <div class="fact"><span>Weekly Study Plan</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
-              <div class="fact"><span>Live Sessions</span><strong>${escapeHtml(course.schedule)}</strong></div>
+              <div class="fact"><span>Planned Learning</span><strong>${course.plannedHours} hours</strong></div>
+              <div class="fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
               <div class="fact"><span>Current Standing</span><strong>${grade ? `${grade.current}%` : "Not Yet Graded"}</strong></div>
               <div class="fact"><span>OSSD Credit</span><strong>${escapeHtml(course.credit)}</strong></div>
             </div>
@@ -5113,6 +6061,52 @@
         </aside>
       </section>
     `;
+  }
+
+  function sequenceList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    return String(value || "")
+      .split(/\s*[>→]\s*|\s{2,}/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function studentModuleView(course, module) {
+    const status = moduleStatus(course, module);
+    const remoteModule = remotePlatformModule(course, module);
+    const assignments = platformAssignmentsForModule(course, module);
+    const assessment = module.assessment || {};
+    if (status.key === "locked") {
+      return `
+        <nav class="breadcrumb" aria-label="Breadcrumb"><button type="button" data-route="courses">My Courses</button><span>/</span><button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span><span>Module ${module.number}</span></nav>
+        <section class="module-lock-card">
+          ${icon("clock", 30)}<p class="course-code">Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1>
+          <p>${escapeHtml(module.unlockRule.ruleText || module.feedbackAndUnlock)}</p>
+          <a class="button button-secondary" href="#/course/${course.id}">Return to Course Path</a>
+        </section>`;
+    }
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb"><button type="button" data-route="courses">My Courses</button><span>/</span><button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span><span>Module ${module.number}</span></nav>
+      <header class="module-detail-hero">
+        <div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div>
+        <span class="badge ${status.className}">${status.label}</span>
+      </header>
+      <section class="module-detail-layout">
+        <div class="module-detail-main">
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Learning Focus</h2><p>${escapeHtml(module.workloadLabel)}</p></div></header><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Required Reading Order</h2><p>Complete each step in sequence</p></div></header><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${module.lessons.length ? `<div class="module-lesson-links">${module.lessons.map((lesson) => `<a class="resource-link" href="#/lesson/${lesson.id}"><span>${icon("book", 18)}</span><span><strong>${escapeHtml(lesson.title)}</strong><small>Core lesson ${lesson.order}</small></span>${icon("arrow", 16)}</a>`).join("")}</div>` : ""}</section>
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Self-Study Resources</h2><p>Use after the required core reading</p></div></header>${module.selfStudyResources.length ? `<div class="module-resource-grid">${module.selfStudyResources.map((resource) => `<a class="module-resource-card" href="${escapeHtml(resource.url || resource.openUrl || "#")}" target="_blank" rel="noopener noreferrer"><span class="course-code">${escapeHtml(resource.provider || "Learning Resource")}</span><strong>${escapeHtml(resource.title)}</strong><p>${escapeHtml(resource.assignedUse || resource.assigned_use || "Complete the assigned bounded task.")}</p><span class="text-link">Open Resource ${icon("arrow", 14)}</span></a>`).join("")}</div>` : '<div class="empty-state compact"><p>No external resource is required in this module.</p></div>'}</section>
+          <section class="module-activity-grid">
+            <article class="panel module-content-section"><h2>Guided Practice</h2><p>${escapeHtml(module.guidedPractice)}</p></article>
+            <article class="panel module-content-section"><h2>Low-Stakes Check</h2><p>${escapeHtml(module.lowStakesCheck)}</p></article>
+          </section>
+          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}% of course grade</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</section>
+        </div>
+        <aside>
+          <section class="panel"><header class="panel-header"><h3>Feedback & Unlock</h3></header><div class="panel-content"><p>${escapeHtml(module.feedbackAndUnlock)}</p><div class="platform-connection-note ${officialProgressConnected(course) ? "is-connected" : ""}"><span>${officialProgressConnected(course) ? "Official record connected" : "Official progress unavailable"}</span></div>${officialProgressConnected(course) ? `<button class="button button-primary full-width" type="button" data-action="set-module-complete" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}" data-activity-id="${escapeHtml(remoteModule?.activity?.id || "")}" ${!remoteModule?.id || (status.key !== "completed" && !remoteModule?.activity?.id) ? "disabled" : ""}>${status.key === "completed" ? "Reopen Module" : `${icon("check", 16)} Mark Module Complete`}</button>` : '<p class="teacher-security-note"><strong>Preview only.</strong> Browser activity is not treated as the school’s official progress record.</p>'}</div></section>
+          <section class="panel"><header class="panel-header"><h3>Module Evidence</h3></header><div class="panel-content"><p><strong>Estimated credit time</strong><br>${module.estimatedCreditHours || 0} hours</p><p><strong>What to retain</strong><br>${escapeHtml(module.evidenceToRetain)}</p></div></section>
+        </aside>
+      </section>`;
   }
 
   function courseGuideView(course) {
@@ -5140,8 +6134,8 @@
           <section class="panel">
             <header class="panel-header"><div><h2>Course at a Glance</h2><p>${escapeHtml(course.mode)} · ${escapeHtml(course.credit)}</p></div></header>
             <div class="guide-fact-grid">
-              <div class="guide-fact"><span>Start Date</span><strong>${formatDate(course.startDate)}</strong></div>
-              <div class="guide-fact"><span>Completion Date</span><strong>${formatDate(course.completionDate)}</strong></div>
+              <div class="guide-fact"><span>Course Structure</span><strong>${course.platformModules?.length || 0} modules</strong></div>
+              <div class="guide-fact"><span>Planned Learning</span><strong>${course.plannedHours} hours</strong></div>
               <div class="guide-fact"><span>Weekly Commitment</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
               <div class="guide-fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
             </div>
@@ -5228,7 +6222,12 @@
       drive: {},
     };
     const selected = isCourseEnrolled(course.id);
-    const nextLesson = nextLessonForCourse(course);
+    const nextModule =
+      (course.platformModules || []).find(
+        (module) =>
+          moduleIsUnlocked(course, module) &&
+          moduleStatus(course, module).key !== "completed",
+      ) || course.platformModules?.[0];
     const requirement = enrollmentRequirement(course);
     const drive = syllabus.drive || {};
     return `
@@ -5252,12 +6251,12 @@
       <section class="syllabus-action-card">
         <div>
           <p class="eyebrow">${selected ? `${course.code} Learning Path` : "Ready to Begin?"}</p>
-          <h2>${selected ? (nextLesson ? escapeHtml(nextLesson.title) : "Course Learning Path Complete") : `Add ${course.code} to Your Learning Plan`}</h2>
-          <p>${selected ? (nextLesson ? `${escapeHtml(nextLesson.unit)} is your next step. Your progress is saved as you work.` : "Review your completed work and published feedback.") : `Add this course now to unlock its lessons, assignments and progress tracking.`}</p>
+          <h2>${selected ? (nextModule ? escapeHtml(nextModule.title) : "Course Learning Path Complete") : `Add ${course.code} to Your Learning Plan`}</h2>
+          <p>${selected ? (nextModule ? `Module ${nextModule.number} is your next step. Official progress is synchronized when the secure course service is connected.` : "Review your completed work and published feedback.") : `Add this course now to open its modules, assignments and progress tracking.`}</p>
         </div>
         ${
           selected
-            ? `<a class="button button-primary" href="#/${nextLesson ? `lesson/${nextLesson.id}` : `course/${course.id}`}">${nextLesson ? `Start ${escapeHtml(nextLesson.unit)}` : "Review Course"} ${icon("arrow", 16)}</a>`
+            ? `<a class="button button-primary" href="#/course/${course.id}${nextModule ? `/module/${nextModule.number}` : ""}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
             : !requirement.met && requirement.missing.includes("mhf4u")
               ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
               : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
@@ -5275,28 +6274,25 @@
             </div>
           </section>
           <section class="panel">
-            <header class="panel-header"><div><h2>110-Hour Unit Plan</h2><p>Learning, assessed evidence, teacher feedback and final evaluation</p></div></header>
+            <header class="panel-header"><div><h2>110-Hour Module Plan</h2><p>Learning, assessed evidence, teacher feedback and final evaluation</p></div></header>
             <div class="syllabus-units">
-              ${(syllabus.units || [])
-                .map((unit, index) => {
-                  const lesson = course.lessons[index];
-                  const complete = lesson
-                    ? state.completed.includes(lesson.id)
-                    : false;
+              ${(course.platformModules || [])
+                .map((module) => {
+                  const status = moduleStatus(course, module);
                   return `
-                    <details class="syllabus-unit" ${index === 0 ? "open" : ""}>
+                    <details class="syllabus-unit" ${module.number === 0 ? "open" : ""}>
                       <summary>
-                        <span class="syllabus-unit-number">${String(index + 1).padStart(2, "0")}</span>
-                        <span><span class="course-code">Unit ${index + 1}</span><strong>${escapeHtml(unit.title)}</strong></span>
-                        <span class="syllabus-unit-hours">${unit.hours} hours</span>
-                        <span class="syllabus-unit-toggle">${complete ? "Complete" : "View Unit"} ${icon("arrow", 15)}</span>
+                        <span class="syllabus-unit-number">${String(module.number).padStart(2, "0")}</span>
+                        <span><span class="course-code">Module ${module.number}</span><strong>${escapeHtml(module.title)}</strong></span>
+                        <span class="syllabus-unit-hours">${module.estimatedCreditHours || 0} hours</span>
+                        <span class="syllabus-unit-toggle">${status.label} ${icon("arrow", 15)}</span>
                       </summary>
                       <div class="syllabus-unit-body">
-                        <p>${lesson ? escapeHtml(lesson.summary) : `Review the learning goals, evidence requirements and assessments for ${escapeHtml(unit.title)}.`}</p>
+                        <p>${escapeHtml(module.learningFocus[0] || `Review the learning goals, evidence requirements and assessment for ${module.title}.`)}</p>
                         ${
-                          selected && lesson
-                            ? `<a class="button button-secondary" href="#/lesson/${lesson.id}">${complete ? "Review Unit" : "Open Unit Orientation"} ${icon("arrow", 15)}</a>`
-                            : `<span class="syllabus-unit-lock">${icon("book", 16)} Add this course to open the unit learning path.</span>`
+                          selected
+                            ? `<a class="button button-secondary" href="#/course/${course.id}/module/${module.number}">Open Module ${icon("arrow", 15)}</a>`
+                            : `<span class="syllabus-unit-lock">${icon("book", 16)} Add this course to open the module learning path.</span>`
                         }
                       </div>
                     </details>
@@ -5360,7 +6356,7 @@
               }
               ${
                 selected
-                  ? `<a class="button button-primary full-width" href="#/${nextLesson ? `lesson/${nextLesson.id}` : `course/${course.id}`}">${nextLesson ? `${state.completed.some((id) => course.lessons.some((lesson) => lesson.id === id)) ? "Continue" : "Start"} ${escapeHtml(nextLesson.unit)}` : "Review Course"} ${icon("arrow", 16)}</a>`
+                  ? `<a class="button button-primary full-width" href="#/course/${course.id}${nextModule ? `/module/${nextModule.number}` : ""}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
                   : !requirement.met && requirement.missing.includes("mhf4u")
                     ? `<button class="button button-primary full-width" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
                     : `<button class="button button-primary full-width" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
@@ -5443,32 +6439,28 @@
   }
 
   function calendarView() {
-    const dates = [
-      "2026-07-20",
-      "2026-07-21",
-      "2026-07-22",
-      "2026-07-23",
-      "2026-07-24",
-    ];
     const events = calendarEvents();
+    const dates = [...new Set(events.map((event) => event.date).filter(Boolean))]
+      .sort()
+      .slice(0, 5);
     const deadlineEvents = events.filter(
       (event) => event.type === "Assignment Due",
     );
     return `
       ${pageHeading(
-        "Summer Term · July 20–24",
+        "Offering Schedule",
         "Learning Calendar",
-        "See live classes, support sessions and assignment deadlines from every course in one place. All times are shown in Eastern Time (ET).",
+        "Scheduled classes, support sessions and assignment deadlines appear here when the active course offering is published.",
         `<a class="button button-secondary" href="#/assignments">${icon("clipboard", 17)} View Assignments</a>`,
       )}
-      <section class="calendar-summary" aria-label="Week summary">
+      <section class="calendar-summary" aria-label="Schedule summary">
         <div><strong>${events.filter((event) => dates.includes(event.date) && event.type === "Live Class").length}</strong><span>Live Classes</span></div>
-        <div><strong>${deadlineEvents.filter((event) => dates.includes(event.date)).length}</strong><span>Due This Week</span></div>
+        <div><strong>${deadlineEvents.filter((event) => dates.includes(event.date)).length}</strong><span>Published Deadlines</span></div>
         <div><strong>${events.filter((event) => dates.includes(event.date) && event.type === "Student Support").length}</strong><span>Support Session</span></div>
         <div><strong>${smartActions().filter((action) => action.priority <= 2).length}</strong><span>Priority Actions</span></div>
       </section>
-      <section class="week-calendar" aria-label="Week of July 20, 2026">
-        ${dates
+      <section class="week-calendar" aria-label="Published offering schedule">
+        ${dates.length ? dates
           .map((date) => {
             const dayEvents = events.filter((event) => event.date === date);
             const dateObject = new Date(`${date}T12:00:00-04:00`);
@@ -5503,20 +6495,25 @@
               </section>
             `;
           })
-          .join("")}
+          .join("") : '<p class="calendar-empty">No offering dates have been published.</p>'}
       </section>
       <section class="calendar-lower-grid">
         <div class="panel">
           <header class="panel-header"><div><h2>Upcoming Deadlines</h2><p>Due date and final submission window</p></div></header>
           ${studentAssignments().slice()
-            .sort((a, b) => new Date(a.due) - new Date(b.due))
+            .sort((a, b) => {
+              if (!a.due && !b.due) return a.title.localeCompare(b.title);
+              if (!a.due) return 1;
+              if (!b.due) return -1;
+              return new Date(a.due) - new Date(b.due);
+            })
             .map((assignment) => {
               const course = findCourse(assignment.courseId);
               const status = assignmentStatus(assignment);
               return `
                 <a class="deadline-row" href="#/assignment/${assignment.id}">
-                  <span class="deadline-date"><strong>${formatDate(assignment.due).split(",")[0]}</strong><small>${formatTime(assignment.due)}</small></span>
-                  <span><p class="course-code">${course.code}</p><h3>${escapeHtml(assignment.title)}</h3><p>Available until ${formatDate(assignment.availableUntil, true)}</p></span>
+                  <span class="deadline-date"><strong>${assignment.due ? formatDate(assignment.due).split(",")[0] : "TBD"}</strong><small>${assignment.due ? formatTime(assignment.due) : "Offering schedule"}</small></span>
+                  <span><p class="course-code">${course.code}</p><h3>${escapeHtml(assignment.title)}</h3><p>${assignment.due ? `Available until ${assignmentAvailabilityLabel(assignment)}` : "Schedule set separately for the active course offering"}</p></span>
                   <span class="badge ${status.className}">${status.label}</span>
                   ${icon("arrow", 17)}
                 </a>
@@ -5532,7 +6529,7 @@
               return `
                 <a class="study-plan-row" href="#/course/${course.id}">
                   <span class="course-chip">${course.code}</span>
-                  <span><strong>${escapeHtml(course.weeklyHours)}</strong><small>${progress.percent}% complete · ${formatDate(course.completionDate)} finish</small></span>
+                  <span><strong>${course.plannedHours} planned hours</strong><small>${progress.percent}% official module progress</small></span>
                 </a>
               `;
             }).join("")}
@@ -5619,7 +6616,7 @@
       const key = assignmentStatus(assignment).key;
       if (assignmentFilter === "all") return true;
       if (assignmentFilter === "open") {
-        return ["due", "upcoming", "late", "overdue", "revision"].includes(
+        return ["open", "due", "upcoming", "late", "overdue", "revision"].includes(
           key,
         );
       }
@@ -5661,7 +6658,7 @@
                       <span>
                         <p class="course-code">${course.code} · ${course.title}</p>
                         <h2>${escapeHtml(assignment.title)}</h2>
-                        <p>${formatDate(assignment.due, true)} · ${assignment.points} points</p>
+                        <p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p>
                       </span>
                       <span class="badge ${status.className}">${status.label}</span>
                       ${icon("arrow", 18)}
@@ -5683,10 +6680,15 @@
     const deliveredToLotus =
       submission?.delivery === "lotus" ||
       Boolean(submission?.driveFileId || submission?.fileUrl);
+    const submissionManagedByTeacher =
+      assignment.teacherRecorded || assignment.submissionMode === "supervised";
     const showSubmissionForm =
-      !submission || replacingSubmissionId === assignment.id;
+      !submissionManagedByTeacher &&
+      (!submission || replacingSubmissionId === assignment.id);
     const submittedOnTime =
-      submission && new Date(submission.submittedAt) <= new Date(assignment.due);
+      submission &&
+      (!assignment.due ||
+        new Date(submission.submittedAt) <= new Date(assignment.due));
     const score = assignmentScore(assignment);
     const feedback = assignmentFeedback(assignment);
     const lifecycleIndex =
@@ -5727,9 +6729,9 @@
             <h1>${escapeHtml(assignment.title)}</h1>
             <span class="badge ${submission && !deliveredToLotus ? "warning" : status.className}">${submission && !deliveredToLotus ? "Device-Only Draft" : status.label}</span>
             <div class="assignment-date-grid">
-              <div><span>Due Date</span><strong>${formatDate(assignment.due, true)}</strong></div>
-              <div><span>Available Until</span><strong>${formatDate(assignment.availableUntil, true)}</strong></div>
-              <div><span>Value</span><strong>${assignment.points} Points</strong></div>
+              <div><span>Schedule</span><strong>${assignmentScheduleLabel(assignment)}</strong></div>
+              <div><span>Availability</span><strong>${assignmentAvailabilityLabel(assignment)}</strong></div>
+              <div><span>Course Weight</span><strong>${assignment.weightPercent || 0}%</strong></div>
             </div>
             <section class="lesson-section">
               <h2>Assignment Brief</h2>
@@ -5799,7 +6801,9 @@
                 </span>
               </div>
               ${
-                !showSubmissionForm
+                submissionManagedByTeacher
+                  ? `<div class="teacher-recorded-note"><strong>${assignment.submissionMode === "supervised" ? "Supervised assessment" : "Teacher-recorded evidence"}</strong><p>${assignment.submissionMode === "supervised" ? "The school schedules and administers this assessment separately. No browser file upload is required here." : "This gradebook item is based on required contact, checkpoints, conferences and documented use of feedback. No file upload is required here."}</p></div>`
+                  : !showSubmissionForm
                   ? `
                     <div class="receipt-card">
                       <div class="receipt-heading">
@@ -5890,22 +6894,38 @@
 
   function progressView() {
     const enrolled = studentCourses();
-    const enrolledIds = new Set(enrolled.map((course) => course.id));
-    const grades = hasSeededAcademicRecord()
-      ? GRADES.filter((grade) => enrolledIds.has(grade.courseId))
-      : [];
-    const average = grades.length
+    const standings = enrolled.map((course) => courseGrade(course.id)).filter(Boolean);
+    const average = standings.length
       ? Math.round(
-          grades.reduce((total, grade) => total + grade.current, 0) /
-            grades.length,
+          standings.reduce((total, grade) => total + grade.current, 0) /
+            standings.length,
         )
       : null;
     const graded = studentAssignments().filter(
       (assignment) => assignmentScore(assignment) != null,
     );
-    const lessons = studentLessons();
-    const completedLessons = lessons.filter((lesson) =>
-      state.completed.includes(lesson.id),
+    const assignmentGradebookIds = new Set(
+      studentAssignments()
+        .map((assignment) => assignment.gradebookItemId)
+        .filter(Boolean),
+    );
+    const standaloneDirectGrades = enrolled.flatMap((course) =>
+      publishedDirectGrades(course.code)
+        .filter(
+          (grade) =>
+            !assignmentGradebookIds.has(
+              String(grade.gradebookItemId || "").toLowerCase(),
+            ),
+        )
+        .map((grade) => ({ course, grade })),
+    );
+    const evaluatedCount = graded.length + standaloneDirectGrades.length;
+    const platformModules = enrolled.flatMap((course) =>
+      (course.platformModules || []).map((module) => ({ course, module })),
+    );
+    const completedModules = platformModules.filter(
+      ({ course, module }) =>
+        studentModuleProgress(course, module)?.status === "completed",
     ).length;
     return `
       ${pageHeading(
@@ -5914,9 +6934,9 @@
         "A current view of lesson completion and evaluated course work.",
       )}
       <section class="progress-summary">
-        <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${completedLessons} of ${lessons.length} lessons complete</span></div>
+        <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${completedModules} of ${platformModules.length} modules complete</span></div>
         <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${enrolled.length} active courses`}</span></div>
-        <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${graded.length}</strong><span>${graded.length === 1 ? "Published assignment grade" : "Published assignment grades"}</span></div>
+        <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${evaluatedCount}</strong><span>${evaluatedCount === 1 ? "Published gradebook result" : "Published gradebook results"}</span></div>
       </section>
       <section class="panel">
         <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is returned</p></div></header>
@@ -5927,10 +6947,10 @@
             <a class="grade-row" href="#/course/${course.id}">
               <span>
                 <h3>${course.code} · ${escapeHtml(course.title)}</h3>
-                <p>${progress.completed}/${course.lessons.length} lessons · Instructor: ${escapeHtml(course.instructor)}</p>
+                <p>${progress.completed}/${progress.total} modules · Instructor: ${escapeHtml(course.instructor)}</p>
               </span>
               <strong class="grade-score">${grade ? `${grade.current}%` : "—"}</strong>
-              <span class="badge ${grade ? (grade.current >= grade.target ? "success" : "warning") : ""}">${grade ? `Target ${grade.target}%` : "Not Yet Graded"}</span>
+              <span class="badge ${grade ? "success" : ""}">${grade ? `${grade.gradedWeight || 0}% weight graded` : "Not Yet Graded"}</span>
             </a>
           `;
         }).join("")}
@@ -5938,19 +6958,33 @@
       <section class="panel" style="margin-top:23px">
         <header class="panel-header"><div><h2>Returned Work</h2><p>Published feedback and scores</p></div></header>
         ${
-          graded.length
-            ? graded
+          evaluatedCount
+            ? `${graded
                 .map((assignment) => {
                   const course = findCourse(assignment.courseId);
                   return `
                     <a class="grade-row" href="#/assignment/${assignment.id}">
-                      <span><h3>${escapeHtml(assignment.title)}</h3><p>${course.code} · ${formatDate(assignment.due)}</p></span>
+                      <span><h3>${escapeHtml(assignment.title)}</h3><p>${course.code} · ${assignmentScheduleLabel(assignment, false)}</p></span>
                       <strong class="grade-score">${assignmentScore(assignment)}%</strong>
                       <span>${icon("arrow", 18)}</span>
                     </a>
                   `;
                 })
-                .join("")
+                .join("")}${standaloneDirectGrades
+                .map(({ course, grade }) => {
+                  const score = normalizedGradePercent(
+                    grade.score,
+                    grade.maxScore,
+                  );
+                  return `
+                    <div class="grade-row direct-grade-row">
+                      <span><h3>${escapeHtml(grade.title || "Gradebook Result")}</h3><p>${course.code} · ${escapeHtml(grade.category || "Direct grade")} · ${Number(grade.weightPercent || 0)}% of course</p>${grade.feedback ? `<small>${escapeHtml(grade.feedback)}</small>` : ""}</span>
+                      <strong class="grade-score">${score == null ? "—" : `${score}%`}</strong>
+                      <span class="badge success">Published</span>
+                    </div>
+                  `;
+                })
+                .join("")}`
             : '<div class="empty-state compact"><p>No grades have been published for this account.</p></div>'
         }
       </section>
@@ -6066,8 +7100,14 @@
       view = teacherMaterialsView();
     } else if (teacherRoute[1] === "course") {
       const course = findCourse(teacherRoute[2]);
+      const module =
+        course && teacherRoute[3] === "module"
+          ? findPlatformModule(course, teacherRoute[4])
+          : null;
       view = course
-        ? teacherCourseView(course)
+        ? module
+          ? teacherModuleView(course, module)
+          : teacherCourseView(course)
         : teacherCoursesView();
     } else if (teacherRoute[1] === "submission") {
       view = teacherSubmissionDetailView(
@@ -6080,6 +7120,9 @@
       view = teacherDashboardView();
     }
     APP_ROOT.innerHTML = teacherShell(view);
+    if (teacherRoute[1] === "course") {
+      ensureTeacherPlatformData(findCourse(teacherRoute[2]));
+    }
     if (
       teacherRoute[1] === "materials" &&
       !driveEndpointChecked &&
@@ -6154,7 +7197,12 @@
       const course = findCourse(route[1]);
       view = course
         ? isCourseEnrolled(course.id)
-          ? courseView(course)
+          ? route[2] === "module"
+            ? studentModuleView(
+                course,
+                findPlatformModule(course, route[3]) || course.platformModules?.[0],
+              )
+            : courseView(course)
           : SELECTABLE_COURSE_IDS.includes(course.id)
             ? courseAccessView(course)
             : notFoundView()
@@ -6190,6 +7238,14 @@
     else if (route[0] === "support") view = supportView();
     else view = notFoundView();
     APP_ROOT.innerHTML = shell(view);
+    if (route[0] === "course") {
+      ensureStudentPlatformData(findCourse(route[1]));
+    } else if (route[0] === "assignment") {
+      const assignment = findAssignment(route[1]);
+      ensureStudentPlatformData(findCourse(assignment?.courseId));
+    } else if (["dashboard", "assignments", "progress"].includes(route[0])) {
+      studentCourses().forEach(ensureStudentPlatformData);
+    }
     if (
       route[0] === "course" &&
       !driveEndpointChecked &&
@@ -6218,7 +7274,7 @@
   }
 
   function setFormAlert(form, message = "", tone = "error") {
-    const alert = form?.querySelector("#assignment-form-alert");
+    const alert = form?.querySelector("#assignment-form-alert, .form-alert");
     if (!alert) return;
     alert.textContent = message;
     alert.className = `form-alert ${tone ? `is-${tone}` : ""}`;
@@ -6298,8 +7354,9 @@
           account = authenticatedUserFrom(payload);
           accepted = Boolean(
             account &&
-              account.role === (portal === "faculty" ? "teacher" : "student") &&
-              (portal !== "faculty" || account.email === TEACHER_EMAIL),
+              (portal === "faculty"
+                ? isTeacher(account)
+                : account.role === "student"),
           );
           remoteLogin = accepted;
         } catch (error) {
@@ -6502,6 +7559,124 @@
                 "We could not securely create this account. Please try again.",
         });
         document.querySelector("#registration-errors")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.matches(".direct-grade-form")) {
+      event.preventDefault();
+      const form = event.target;
+      setFormAlert(form);
+      const values = new FormData(form);
+      const scoreText = String(values.get("score") || "").trim();
+      const score = Number(scoreText);
+      const feedback = String(values.get("feedback") || "").trim();
+      const maxScore = Number(form.dataset.maxScore || 100);
+      const courseCode = String(form.dataset.courseCode || "").trim();
+      const studentId = String(form.dataset.student || "").trim();
+      const itemId = String(form.dataset.item || "").trim();
+      const version = Number(form.dataset.version || 0);
+      const publish = event.submitter?.value === "publish";
+      if (
+        !courseCode ||
+        !studentId ||
+        !itemId ||
+        !scoreText ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > maxScore
+      ) {
+        setFormAlert(
+          form,
+          `Enter a whole-number score from 0 to ${maxScore}.`,
+        );
+        return;
+      }
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.teacherCoursesEndpoint,
+        `${encodeURIComponent(courseCode)}/students/${encodeURIComponent(studentId)}/grades/${encodeURIComponent(itemId)}`,
+      );
+      if (!endpoint) {
+        setFormAlert(form, "The secure gradebook service is not connected.");
+        return;
+      }
+      const buttons = [...form.querySelectorAll('[type="submit"]')];
+      buttons.forEach((button) => {
+        button.disabled = true;
+      });
+      try {
+        await requestPlatformJson(endpoint, {
+          method: "PUT",
+          headers: {
+            "If-Match": `"direct-grade-v${version}"`,
+            "Idempotency-Key": requestIdFor("direct-grade"),
+          },
+          body: JSON.stringify({ score, feedback, publish }),
+        });
+        delete platformRuntime.teacherGradebooks[courseCode];
+        platformRequests.delete(`teacher-gradebook:${courseCode}`);
+        const course = findCourse(form.dataset.course);
+        if (course) ensureTeacherPlatformData(course);
+        showToast(
+          publish
+            ? "The result was published to the student."
+            : "The gradebook draft was saved.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        setFormAlert(
+          form,
+          error?.message || "The gradebook result could not be saved.",
+        );
+      } finally {
+        buttons.forEach((button) => {
+          button.disabled = false;
+        });
+      }
+      return;
+    }
+
+    if (event.target.id === "unlock-override-form") {
+      event.preventDefault();
+      setFormAlert(event.target);
+      const values = new FormData(event.target);
+      const studentId = String(values.get("studentId") || "").trim();
+      const reason = String(values.get("reason") || "").trim();
+      const moduleId = String(event.target.dataset.moduleId || "").trim();
+      const course = findCourse(event.target.dataset.course);
+      if (!studentId || !moduleId || reason.length < 10) {
+        setFormAlert(
+          event.target,
+          "Choose a student and provide a documented reason of at least 10 characters.",
+        );
+        return;
+      }
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.teacherStudentsEndpoint,
+        `${encodeURIComponent(studentId)}/modules/${encodeURIComponent(moduleId)}/unlock-overrides`,
+      );
+      const button = event.target.querySelector('[type="submit"]');
+      if (button) button.disabled = true;
+      try {
+        await requestPlatformJson(endpoint, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        event.target.reset();
+        if (course) {
+          platformRequests.delete(`teacher-roster:${course.code}`);
+          ensureTeacherPlatformData(course);
+        }
+        showToast("The documented module unlock override was created.", {
+          tone: "success",
+        });
+      } catch (error) {
+        setFormAlert(
+          event.target,
+          error?.message || "The unlock override could not be created.",
+        );
+      } finally {
+        if (button) button.disabled = false;
       }
       return;
     }
@@ -6751,8 +7926,7 @@
         const course = assignment ? findCourse(assignment.courseId) : null;
         const user = currentUser();
         const unitNumber =
-          Number.parseInt(String(assignment?.unit || "").match(/\d+/)?.[0], 10) ||
-          "";
+          assignment?.unitNumber == null ? "" : Number(assignment.unitNumber);
         const attemptNumber =
           Math.max(
             Number(existing?.attemptNumber || 0),
@@ -7224,6 +8398,7 @@
         lastLoadedAt: "",
       };
       submissionsEndpointCheckedFor = "";
+      resetPlatformRuntime();
       signInNotice = "";
       signInPrefill = "";
       window.location.hash = facultySession
@@ -7346,6 +8521,68 @@
           action: "undo-enrollment",
         },
       );
+    } else if (action === "set-module-complete") {
+      const course = findCourse(target.dataset.course);
+      const module = course
+        ? findPlatformModule(course, target.dataset.module)
+        : null;
+      const moduleId = String(target.dataset.moduleId || "").trim();
+      const activityId = String(target.dataset.activityId || "").trim();
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.moduleProgressEndpoint,
+        encodeURIComponent(moduleId),
+      );
+      if (!course || !module || !moduleId || !endpoint) {
+        showToast("Official module progress is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      const currentStatus = studentModuleProgress(course, module)?.status;
+      const nextStatus =
+        currentStatus === "completed" ? "in_progress" : "completed";
+      const activityEndpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.activityProgressEndpoint,
+        encodeURIComponent(activityId),
+      );
+      if (nextStatus === "completed" && (!activityId || !activityEndpoint)) {
+        showToast(
+          "The required module activity is not connected, so official completion cannot be recorded.",
+          { tone: "error", persistent: true },
+        );
+        return;
+      }
+      target.disabled = true;
+      try {
+        if (nextStatus === "completed") {
+          await requestPlatformJson(activityEndpoint, {
+            method: "PUT",
+            body: JSON.stringify({
+              status: "completed",
+              evidence: { source: "student_module_completion" },
+            }),
+          });
+        }
+        await requestPlatformJson(endpoint, {
+          method: "PUT",
+          body: JSON.stringify({ status: nextStatus }),
+        });
+        platformRequests.delete(`student-progress:${course.code}`);
+        delete platformRuntime.studentProgress[course.code];
+        ensureStudentPlatformData(course);
+        showToast(
+          nextStatus === "completed"
+            ? "Module completion was saved to your official record."
+            : "The module was returned to in progress.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "Module progress could not be saved.", {
+          tone: "error",
+          persistent: true,
+        });
+      }
     } else if (action === "toggle-lesson") {
       const id = target.dataset.id;
       if (state.completed.includes(id)) {

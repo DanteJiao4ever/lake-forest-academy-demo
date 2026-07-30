@@ -1,9 +1,6 @@
 (() => {
   "use strict";
 
-  const TERM = "2026–2027";
-  const START_DATE = "2026-09-01";
-  const COMPLETION_DATE = "2027-06-30";
   const INSTRUCTOR = "James Whitmore";
   const INSTRUCTOR_EMAIL = "james.whitmore@lakeforestacademy.ca";
 
@@ -30,11 +27,8 @@
     gradeType,
     instructor: INSTRUCTOR,
     instructorEmail: INSTRUCTOR_EMAIL,
-    term: TERM,
     schedule: "Flexible online schedule",
     mode: "Teacher-guided online",
-    startDate: START_DATE,
-    completionDate: COMPLETION_DATE,
     weeklyHours: "8–12 hours",
     credit: "1.0 OSSD credit",
     plannedHours: 110,

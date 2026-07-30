@@ -9,7 +9,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "20260723-1";
+  const SCRIPT_VERSION = "grade12-gradebook-v2";
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
@@ -89,6 +89,23 @@
       syncEndpoint: ready ? optionalApiUrl(origin, config.driveSyncPath) : "",
       submissionsEndpoint: ready ? apiUrl(origin, "/v1/submissions") : "",
       gradingEndpoint: ready ? apiUrl(origin, "/v1/grades") : "",
+    });
+    window.LFA_PLATFORM_API_CONFIG = Object.freeze({
+      coursesEndpoint: ready ? apiUrl(origin, "/v1/courses") : "",
+      studentProgressEndpoint: ready ? apiUrl(origin, "/v1/me/progress") : "",
+      studentGradesEndpoint: ready ? apiUrl(origin, "/v1/me/grades") : "",
+      moduleProgressEndpoint: ready
+        ? apiUrl(origin, "/v1/me/progress/modules")
+        : "",
+      activityProgressEndpoint: ready
+        ? apiUrl(origin, "/v1/me/progress/activities")
+        : "",
+      teacherCoursesEndpoint: ready
+        ? apiUrl(origin, "/v1/teacher/courses")
+        : "",
+      teacherStudentsEndpoint: ready
+        ? apiUrl(origin, "/v1/teacher/students")
+        : "",
     });
   }
 
@@ -209,6 +226,7 @@
     }
 
     await loadScript("course-catalog.js");
+    await loadScript("platform-sequences.js");
     await loadScript("app.js");
   }
 
