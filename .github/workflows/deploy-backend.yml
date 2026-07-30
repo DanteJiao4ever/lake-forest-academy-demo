@@ -195,8 +195,16 @@ jobs:
               --dump-header "$headers" \
               --output "$body" \
               "$CANDIDATE_URL$path"
-            jq -e '.status == "ready"' "$body" >/dev/null
-            grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca\r?$' "$headers"
+            if ! jq -e '.status == "ready"' "$body" >/dev/null; then
+              echo "::error title=${key} readiness probe::Expected {status: ready}; response body follows."
+              cat "$body"
+              return 1
+            fi
+            if ! grep -Eiq '^access-control-allow-origin:[[:space:]]*https://lakeforestacademy\.ca[[:space:]]*$' "$headers"; then
+              echo "::error title=${key} CORS probe::Missing the expected Lake Forest Academy allow-origin header."
+              grep -Ei '^access-control-' "$headers" || true
+              return 1
+            fi
           }
           probe "/health/ready" "core-ready"
           probe "/health/catalog-ready" "catalog-ready"
