@@ -77,7 +77,7 @@ async function renderPortal(hash, session, options = {}) {
     window,
     document,
     sessionStorage,
-    localStorage: memoryStorage(),
+    localStorage: memoryStorage(options.localStorageSeed || {}),
     setTimeout,
     clearTimeout,
     URL,
@@ -109,8 +109,9 @@ async function renderPortal(hash, session, options = {}) {
     await source("public/learning/platform-sequences.js"),
     context,
   );
+  options.beforeApp?.(context.window);
   vm.runInContext(await source("public/learning/app.js"), context);
-  for (let index = 0; index < (options.settleTurns || 8); index += 1) {
+  for (let index = 0; index < (options.settleTurns ?? 8); index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
   return appRoot.innerHTML;
@@ -122,6 +123,55 @@ function jsonResponse(payload, status = 200) {
     status,
     json: async () => payload,
   };
+}
+
+const studentPlatformApiConfig = {
+  coursesEndpoint: "https://api.example.test/v1/courses",
+  studentProgressEndpoint: "https://api.example.test/v1/me/progress",
+  studentGradesEndpoint: "https://api.example.test/v1/me/grades",
+};
+
+async function lockedStudentPlatformFetch(request) {
+  const url = new URL(String(request));
+  if (url.pathname === "/v1/me/progress") {
+    const courseCode = url.searchParams.get("courseCode");
+    return jsonResponse({
+      data:
+        courseCode === "SCH4U"
+          ? [
+              {
+                moduleKey: "SCH4U-M00",
+                moduleNumber: 0,
+                status: "in_progress",
+              },
+              {
+                moduleKey: "SCH4U-M01",
+                moduleNumber: 1,
+                status: "locked",
+              },
+              {
+                moduleKey: "SCH4U-M02",
+                moduleNumber: 2,
+                status: "locked",
+              },
+            ]
+          : [],
+    });
+  }
+  if (url.pathname === "/v1/courses/SCH4U/assignments") {
+    return jsonResponse({
+      data: [
+        {
+          id: "sch4u-m02-assignment",
+          moduleNumber: 2,
+          unitNumber: 1,
+          dueAt: "2099-08-01T16:00:00-04:00",
+          status: "open",
+        },
+      ],
+    });
+  }
+  return jsonResponse({ data: [] });
 }
 
 test("bootstrap loads the permanent course metadata and platform sequence before the app", async () => {
@@ -195,6 +245,8 @@ test("student and faculty module routes render the merged course sequence", asyn
   });
   assert.match(student, /12-Module Learning Path/);
   assert.equal((student.match(/class="platform-module-row/g) || []).length, 12);
+  assert.match(student, /#\/course\/sch4u\/module\/SCH4U-M00/);
+  assert.doesNotMatch(student, /#\/course\/sch4u\/module\/0(?:["/])/);
 
   const studentModule = await renderPortal("#/course/sch4u/module/1", {
     email: "student@lakeforestacademy.ca",
@@ -204,6 +256,27 @@ test("student and faculty module routes render the merged course sequence", asyn
   assert.match(studentModule, /Self-Study Resources/);
   assert.match(studentModule, /Guided Practice/);
   assert.match(studentModule, /Feedback &amp; Unlock|Feedback & Unlock/);
+  assert.doesNotMatch(studentModule, /What to retain/);
+
+  const stableKeyModule = await renderPortal(
+    "#/course/sch4u/module/SCH4U-M01",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+  );
+  assert.match(stableKeyModule, /Required Reading Order/);
+
+  const invalidModule = await renderPortal(
+    "#/course/sch4u/module/SCH4U-M99",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+  );
+  assert.match(invalidModule, /Page Not Found/);
+  assert.doesNotMatch(invalidModule, /Start Here: Learning Chemistry/);
+
+  const missingModuleKey = await renderPortal(
+    "#/course/sch4u/module/",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+  );
+  assert.match(missingModuleKey, /Page Not Found/);
+  assert.doesNotMatch(missingModuleKey, /Start Here: Learning Chemistry/);
 
   for (const code of ["ics4u", "bbb4m"]) {
     const finalModule = await renderPortal(`#/course/${code}/module/11`, {
@@ -241,8 +314,22 @@ test("student and faculty module routes render the merged course sequence", asyn
       .length,
     12,
   );
+  assert.match(
+    facultyCourse,
+    /#\/teacher\/course\/sch4u\/module\/SCH4U-M00/,
+  );
   assert.match(facultyCourse, /Connect the secure course service to view the official roster and progress/);
   assert.doesNotMatch(facultyCourse, />undefined</);
+
+  const invalidFacultyModule = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M99",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+  );
+  assert.match(invalidFacultyModule, /Page Not Found/);
 
   const calendar = await renderPortal("#/calendar", {
     email: "student@lakeforestacademy.ca",
@@ -250,6 +337,268 @@ test("student and faculty module routes render the merged course sequence", asyn
   });
   assert.match(calendar, /Offering schedule/);
   assert.doesNotMatch(calendar, /Invalid Date/);
+});
+
+test("locked module lessons and assignments cannot be opened through deep links or dashboard actions", async () => {
+  const options = {
+    platformApiConfig: studentPlatformApiConfig,
+    fetch: lockedStudentPlatformFetch,
+    settleTurns: 14,
+  };
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+
+  const lesson = await renderPortal("#/lesson/SCH4U-U1-L3", session, options);
+  assert.match(lesson, /class="module-lock-card"/);
+  assert.doesNotMatch(lesson, /Lesson Notes/);
+
+  const assignment = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    session,
+    options,
+  );
+  assert.match(assignment, /class="module-lock-card"/);
+  assert.doesNotMatch(assignment, /Assignment Brief|id="assignment-form"/);
+
+  const assignmentList = await renderPortal("#/assignments", session, options);
+  assert.match(
+    assignmentList,
+    /<article class="assignment-card is-locked" aria-disabled="true">[\s\S]*?Locked/,
+  );
+  assert.doesNotMatch(
+    assignmentList,
+    /href="#\/assignment\/sch4u-m02-assignment"/,
+  );
+
+  const state = {
+    enrolledCourseIds: ["sch4u"],
+    completed: [],
+    guideChecks: {
+      sch4u: ["overview", "evaluation", "schedule", "technology", "support"],
+    },
+    read: [],
+    feedbackRead: [],
+    submissions: {},
+  };
+  const dashboard = await renderPortal("#/dashboard", session, {
+    ...options,
+    localStorageSeed: {
+      "lake-forest-learning-state-v1": JSON.stringify(state),
+    },
+  });
+  assert.doesNotMatch(dashboard, /#\/lesson\/SCH4U-U1-L1/);
+  assert.doesNotMatch(dashboard, /#\/assignment\/sch4u-m02-assignment/);
+
+  let progressRequests = 0;
+  const calendar = await renderPortal("#/calendar", session, {
+    ...options,
+    fetch: async (request) => {
+      const url = new URL(String(request));
+      if (url.pathname === "/v1/me/progress") progressRequests += 1;
+      return lockedStudentPlatformFetch(request);
+    },
+  });
+  assert.ok(progressRequests > 0);
+  assert.match(
+    calendar,
+    /<article class="deadline-row is-locked" aria-disabled="true">[\s\S]*?Safer Organic Product Reformulation Dossier[\s\S]*?Locked/,
+  );
+  assert.doesNotMatch(
+    calendar,
+    /href="#\/assignment\/sch4u-m02-assignment"/,
+  );
+});
+
+test("configured progress fails closed while loading or unavailable and preserves published unlocks", async () => {
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+  const protectedRoutes = [
+    ["#/course/sch4u/module/SCH4U-M02", /Required Reading Order/],
+    ["#/lesson/SCH4U-U1-L3", /Lesson Notes/],
+    ["#/assignment/sch4u-m02-assignment", /Assignment Brief|id="assignment-form"/],
+  ];
+  const delayedFetch = (request) =>
+    new Promise((resolve) => {
+      setTimeout(() => {
+        void lockedStudentPlatformFetch(request).then(resolve);
+      }, 30);
+    });
+
+  for (const [route, protectedContent] of protectedRoutes) {
+    const pending = await renderPortal(route, session, {
+      platformApiConfig: studentPlatformApiConfig,
+      fetch: delayedFetch,
+      settleTurns: 0,
+    });
+    assert.match(pending, /class="module-lock-card"/);
+    assert.doesNotMatch(pending, protectedContent);
+
+    const failed = await renderPortal(route, session, {
+      platformApiConfig: studentPlatformApiConfig,
+      fetch: async () => {
+        throw new Error("Course service unavailable");
+      },
+      settleTurns: 12,
+    });
+    assert.match(failed, /class="module-lock-card"/);
+    assert.doesNotMatch(failed, protectedContent);
+  }
+
+  const failedCalendar = await renderPortal("#/calendar", session, {
+    platformApiConfig: studentPlatformApiConfig,
+    fetch: async () => {
+      throw new Error("Course service unavailable");
+    },
+    settleTurns: 12,
+  });
+  assert.doesNotMatch(
+    failedCalendar,
+    /href="#\/assignment\/sch4u-m02-assignment"/,
+  );
+
+  const available = await renderPortal(
+    "#/course/sch4u/module/SCH4U-M02",
+    session,
+    {
+      platformApiConfig: studentPlatformApiConfig,
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname === "/v1/me/progress") {
+          return jsonResponse({
+            data: [
+              {
+                moduleKey: "SCH4U-M01",
+                moduleNumber: 1,
+                status: "completed",
+              },
+              {
+                moduleKey: "SCH4U-M02",
+                moduleNumber: 2,
+                status: "available",
+              },
+            ],
+          });
+        }
+        return jsonResponse({ data: [] });
+      },
+      settleTurns: 12,
+    },
+  );
+  assert.doesNotMatch(available, /class="module-lock-card"/);
+  assert.match(available, /Required Reading Order/);
+});
+
+test("final evaluation assignment labels do not depend on the remote API", async () => {
+  const html = await renderPortal("#/teacher/course/sch4u", {
+    email: "administrator@lakeforestacademy.ca",
+    displayName: "Academic Administrator",
+    role: "teacher_admin",
+  });
+  assert.match(
+    html,
+    /course-chip">Final Evaluation<[\s\S]*?SCH4U Mandatory Written Examination/,
+  );
+  assert.doesNotMatch(html, /course-chip">(?:Module|Unit) 11/);
+});
+
+test("faculty module details prefer staff-only API fields and normalize final evaluation activity fields", async () => {
+  const platformApiConfig = {
+    coursesEndpoint: "https://api.example.test/v1/courses",
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+    teacherStudentsEndpoint: "https://api.example.test/v1/teacher/students",
+  };
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/courses/SCH4U/modules") {
+      return jsonResponse({
+        data: [
+          {
+            id: "sch4u-m11",
+            moduleNumber: 11,
+            unitNumber: null,
+            title: "Remote Final Evaluation Title",
+            unitTitle: "Final Evaluation",
+            learningFocus: ["Remote final learning focus"],
+            coreReadingOrder: ["Remote final reading sequence"],
+            guidedPractice: "Remote final guided practice",
+            lowStakesCheck: "Remote final readiness check",
+            feedbackAndUnlock: "Remote final unlock rule",
+            estimatedCreditHours: 2.5,
+            workloadLabel: "Remote final workload",
+            teacherPresence: "STAFF API TEACHER PRESENCE",
+            evidenceToRetain: "STAFF API EVIDENCE TO RETAIN",
+            activity: {
+              id: "sch4u-m11-assessment",
+              type: "final_evaluation",
+              title: "Remote Mandatory Written Examination",
+              weightPercent: 25,
+              sequence: ["Remote final assessment sequence"],
+              taskType: "Remote supervised examination",
+              processCheckpoints: ["Remote process checkpoint"],
+              authenticationEvidence: ["Remote identity evidence"],
+              isRequired: true,
+              components: [],
+            },
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/assignments") {
+      return jsonResponse({
+        data: [
+          {
+            id: "sch4u-m11-assignment",
+            moduleId: "sch4u-m11",
+            moduleKey: "SCH4U-M11",
+            moduleNumber: 11,
+            unitNumber: 11,
+            curriculumUnitNumber: null,
+            sectionKind: "final_evaluation",
+            sectionLabel: "Final Evaluation",
+            title: "Remote Mandatory Written Examination",
+            submissionMode: "supervised",
+            status: "open",
+          },
+        ],
+      });
+    }
+    if (url.pathname.endsWith("/gradebook")) {
+      return jsonResponse({ data: {} });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const html = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M11",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    { platformApiConfig, fetch, settleTurns: 14 },
+  );
+  assert.match(html, /Remote Final Evaluation Title/);
+  assert.match(html, /STAFF API TEACHER PRESENCE/);
+  assert.match(html, /STAFF API EVIDENCE TO RETAIN/);
+  assert.match(html, /Remote Mandatory Written Examination/);
+  assert.match(html, /Remote final assessment sequence/);
+  assert.match(html, /Remote process checkpoint/);
+  assert.match(html, /Remote identity evidence/);
+
+  const courseHtml = await renderPortal(
+    "#/teacher/course/sch4u",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    { platformApiConfig, fetch, settleTurns: 14 },
+  );
+  assert.match(courseHtml, /course-chip">Final Evaluation/);
+  assert.doesNotMatch(courseHtml, /course-chip">Unit 11/);
 });
 
 test("platform contracts include published grades, remote unit numbers and direct-grade concurrency headers", async () => {
@@ -260,7 +609,16 @@ test("platform contracts include published grades, remote unit numbers and direc
   assert.match(bootstrap, /studentGradesEndpoint:[\s\S]*\/v1\/me\/grades/);
   assert.match(app, /gradebookItemId: String\(item\.key \|\| ""\)\.toLowerCase\(\)/);
   assert.match(app, /assignment\.unitNumber\s*=\s*[\s\S]*record\.unitNumber/);
+  assert.match(app, /assignment\.moduleKey\s*=/);
+  assert.match(app, /assignment\.sectionKind\s*=/);
+  assert.match(app, /record\.sectionLabel/);
+  assert.match(app, /record\.curriculumUnitNumber/);
   assert.match(app, /upload\.set\("unitNumber", String\(unitNumber\)\)/);
+  assert.match(
+    app,
+    /Number\.isInteger\(unitNumber\)[\s\S]{0,180}unitNumber >= 1[\s\S]{0,180}upload\.set\("unitNumber"/,
+  );
+  assert.doesNotMatch(app, /assignment\?\.unitNumber == null \? ""/);
   assert.doesNotMatch(app, /assignment\.unit\.match/);
   assert.match(app, /"If-Match": `"direct-grade-v\$\{version\}"`/);
   assert.match(app, /"Idempotency-Key": requestIdFor\("direct-grade"\)/);
@@ -276,6 +634,79 @@ test("platform contracts include published grades, remote unit numbers and direc
     app,
     /platformEndpoint\(\s*PLATFORM_API_CONFIG\.activityProgressEndpoint,\s*encodeURIComponent\(activityId\)/,
   );
+});
+
+test("project submissions require a new file and final-evaluation uploads omit empty unit numbers", async () => {
+  const app = await source("public/learning/app.js");
+  const project = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+  );
+  assert.match(
+    project,
+    /id="submission-file"[^>]*required aria-required="true"/,
+  );
+  assert.match(project, /required for this assignment/);
+  assert.match(
+    app,
+    /\["file", "project"\]\.includes\(assignment\?\.submissionMode\)[\s\S]{0,100}!newFileName/,
+  );
+  assert.match(
+    app,
+    /Number\.isInteger\(unitNumber\)[\s\S]{0,180}upload\.set\("unitNumber", String\(unitNumber\)\)/,
+  );
+});
+
+test("catalog and module links expose only credential-free HTTPS destinations", async () => {
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+  const mutateResources = (window) => {
+    const resources =
+      window.LFA_PLATFORM_SEQUENCES.coursesByCode.SCH4U.modules[1]
+        .selfStudyResources;
+    resources[0].url = "javascript:alert(1)";
+    resources[0].openUrl = "/v1/materials/material-1/open";
+    resources[1].url = "http://unsafe.example.test/resource";
+    resources[1].openUrl = "https://cross-origin.example.test/material";
+    resources[2].url = "https://safe.example.test/resource";
+  };
+  const module = await renderPortal(
+    "#/course/sch4u/module/SCH4U-M01",
+    session,
+    {
+      beforeApp: mutateResources,
+      platformApiConfig: {
+        coursesEndpoint: studentPlatformApiConfig.coursesEndpoint,
+      },
+    },
+  );
+  assert.doesNotMatch(
+    module,
+    /javascript:|http:\/\/unsafe\.example\.test|cross-origin\.example\.test/,
+  );
+  assert.match(
+    module,
+    /https:\/\/api\.example\.test\/v1\/materials\/material-1\/open/,
+  );
+  assert.match(module, /https:\/\/safe\.example\.test\/resource/);
+  assert.match(module, /Secure link unavailable/);
+
+  const syllabus = await renderPortal("#/syllabus/sch4u", session, {
+    beforeApp(window) {
+      const course = window.LFA_COURSE_CATALOG.find(
+        (candidate) => candidate.id === "sch4u",
+      );
+      course.syllabus.drive.curriculumMapUrl = "javascript:alert(1)";
+      course.syllabus.drive.coursebookUrl =
+        "https://user:secret@unsafe.example.test/coursebook";
+      course.syllabus.drive.assessmentUrl =
+        "https://safe.example.test/assessment";
+    },
+  });
+  assert.doesNotMatch(syllabus, /javascript:|user:secret@unsafe/);
+  assert.match(syllabus, /https:\/\/safe\.example\.test\/assessment/);
 });
 
 test("student progress uses only published direct grades and weights supervised and participation results", async () => {

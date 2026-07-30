@@ -6,8 +6,29 @@ import { describe, test } from "node:test";
 const catalogUrl = new URL("../catalog/lfa-course-catalog.json", import.meta.url);
 const schemaUrl = new URL("../migrations/003_platform_catalog_schema.sql", import.meta.url);
 const seedUrl = new URL("../migrations/004_lotus_grade12_catalog_v1.sql", import.meta.url);
+const guardsUrl = new URL("../migrations/005_platform_catalog_guards_v1.sql", import.meta.url);
 const appUrl = new URL("../src/app.js", import.meta.url);
 const postgresUrl = new URL("../src/db/postgres.js", import.meta.url);
+
+const immutableMigrationDigests = {
+  "003_platform_catalog_schema.sql":
+    "8012e07b45b47543366ba4dca1dfc5b55fdaceb65748dd11122b3dce0ddb9cde",
+  "004_lotus_grade12_catalog_v1.sql":
+    "1e39ff7d7e6fb8b8d674417a9f4839b2f5fd320b30da548c4022ecc9e5411b55",
+};
+
+function normalizedSha256(value) {
+  return createHash("sha256").update(value.replaceAll("\r\n", "\n")).digest("hex");
+}
+
+function valuesBlock(sql, startPattern, endPattern) {
+  const start = sql.search(startPattern);
+  assert.ok(start >= 0, `Missing values block start: ${startPattern}`);
+  const remainder = sql.slice(start);
+  const end = remainder.search(endPattern);
+  assert.ok(end > 0, `Missing values block end: ${endPattern}`);
+  return remainder.slice(0, end);
+}
 
 describe("course catalog migration contract", () => {
   test("contains every expand-only table and explicit runtime grant", async () => {
@@ -88,6 +109,102 @@ describe("course catalog migration contract", () => {
     assert.match(seed, /'text_or_file', NULL, NULL, NULL/);
   });
 
+  test("extends immutable 003/004 migrations only through the additive 005 guard", async () => {
+    const [schema, seed, guards] = await Promise.all([
+      readFile(schemaUrl, "utf8"),
+      readFile(seedUrl, "utf8"),
+      readFile(guardsUrl, "utf8"),
+    ]);
+
+    assert.equal(
+      normalizedSha256(schema),
+      immutableMigrationDigests["003_platform_catalog_schema.sql"],
+    );
+    assert.equal(
+      normalizedSha256(seed),
+      immutableMigrationDigests["004_lotus_grade12_catalog_v1.sql"],
+    );
+    assert.doesNotMatch(schema, /\bsection_kind\b/);
+    assert.doesNotMatch(seed, /\bsection_kind\b/);
+
+    assert.match(
+      guards,
+      /ALTER TABLE assignments\s+ADD COLUMN section_kind text NOT NULL DEFAULT 'unit'/,
+    );
+    assert.match(
+      guards,
+      /CHECK \(section_kind IN \('unit', 'final_evaluation'\)\)/,
+    );
+    assert.doesNotMatch(
+      guards,
+      /ALTER TABLE student_submissions[\s\S]{0,120}ADD COLUMN section_kind/i,
+    );
+    assert.doesNotMatch(
+      guards,
+      /ALTER TABLE (?:assignments|student_submissions)[\s\S]{0,120}unit_number/i,
+    );
+    assert.match(
+      guards,
+      /COMMENT ON COLUMN student_submissions\.unit_number[\s\S]+Resolve the public section through assignment_id/,
+    );
+  });
+
+  test("seeds 8 final-evaluation and 30 numbered-unit assignments with 72 explicit unlock rules", async () => {
+    const [rawCatalog, guards] = await Promise.all([
+      readFile(catalogUrl, "utf8"),
+      readFile(guardsUrl, "utf8"),
+    ]);
+    const catalog = JSON.parse(rawCatalog);
+    const modules = catalog.courses.flatMap((course) => course.modules);
+    const weightedAssignments = catalog.courses.flatMap((course) =>
+      course.gradebookItems.filter((item) => item.assignmentKey),
+    );
+    const finalAssignments = weightedAssignments.filter(
+      (item) => item.category === "final_evaluation",
+    );
+
+    assert.equal(modules.length, 72);
+    assert.equal(
+      modules.filter(
+        (module) =>
+          module.number === 11 &&
+          module.unitNumber === null &&
+          module.unitTitle === "Final Evaluation",
+      ).length,
+      6,
+    );
+    assert.equal(weightedAssignments.length, 38);
+    assert.equal(finalAssignments.length, 8);
+    assert.equal(weightedAssignments.length - finalAssignments.length, 30);
+
+    const assignmentSections = valuesBlock(
+      guards,
+      /UPDATE assignments AS assignment/,
+      /ALTER TABLE module_resources/,
+    );
+    assert.equal(
+      [...assignmentSections.matchAll(/\('[^']+', 'final_evaluation'\)/g)].length,
+      8,
+    );
+    assert.equal(
+      [...assignmentSections.matchAll(/\('[^']+', 'unit'\)/g)].length,
+      30,
+    );
+
+    const unlockRules = valuesBlock(
+      guards,
+      /UPDATE course_modules AS module/,
+      /ALTER TABLE course_modules\s+ALTER COLUMN unlock_criteria/,
+    );
+    assert.equal(
+      [...unlockRules.matchAll(/\('[a-z0-9]+-m(?:0\d|1[01])', '\{/g)].length,
+      72,
+    );
+    assert.match(guards, /expected 8 final-evaluation assignments/);
+    assert.match(guards, /expected 30 numbered-unit assignments/);
+    assert.match(guards, /expected 72 preserved rules with versioned criteria/);
+  });
+
   test("passes the public student identifier consistently to direct grading", async () => {
     const [app, postgres] = await Promise.all([
       readFile(appUrl, "utf8"),
@@ -97,7 +214,7 @@ describe("course catalog migration contract", () => {
     assert.match(postgres, /input\.studentPublicId, input\.courseCode, input\.gradebookItemId/);
   });
 
-  test("maps submission policy fields and keeps the database assignment unit authoritative", async () => {
+  test("maps submission policy fields while treating the numeric assignment unit as legacy storage", async () => {
     const [app, postgres] = await Promise.all([
       readFile(appUrl, "utf8"),
       readFile(postgresUrl, "utf8"),
@@ -105,6 +222,26 @@ describe("course catalog migration contract", () => {
     assert.match(postgres, /moduleId:\s*row\.module_id/);
     assert.match(postgres, /submissionMode:\s*row\.submission_mode/);
     assert.match(app, /unitNumber:\s*assignment\.unitNumber/);
-    assert.match(app, /`Unit \$\{assignment\.unitNumber\}`/);
+    assert.match(app, /sectionKind:\s*assignment\.sectionKind/);
+    assert.match(
+      app,
+      /assignment\.sectionKind === "final_evaluation"[\s\S]+?\? "Final Evaluation"[\s\S]+?: `Unit \$\{assignment\.curriculumUnitNumber \?\? assignment\.unitNumber\}`/,
+    );
+    assert.doesNotMatch(
+      app,
+      /const pathSegments = \[[\s\S]{0,240}`Unit \$\{assignment\.unitNumber\}`/,
+    );
+  });
+
+  test("keeps terminal student activity evidence immutable in the atomic PostgreSQL upsert", async () => {
+    const postgres = await readFile(postgresUrl, "utf8");
+    assert.match(
+      postgres,
+      /ON CONFLICT \(student_user_id, activity_id\) DO UPDATE SET[\s\S]+?WHERE existing\.status NOT IN \('completed', 'waived'\)[\s\S]+?existing\.status = EXCLUDED\.status[\s\S]+?existing\.evidence = EXCLUDED\.evidence/,
+    );
+    assert.match(
+      postgres,
+      /if \(!result\.rowCount\) \{[\s\S]+?"ACTIVITY_COMPLETION_LOCKED"/,
+    );
   });
 });

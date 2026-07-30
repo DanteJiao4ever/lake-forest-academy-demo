@@ -21,6 +21,12 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const catalogPath = path.join(repositoryRoot, "backend", "catalog", "lfa-course-catalog.json");
 const javascriptPath = path.join(repositoryRoot, "public", "learning", "platform-sequences.js");
 const sqlPath = path.join(repositoryRoot, "backend", "migrations", "004_lotus_grade12_catalog_v1.sql");
+const guardsSqlPath = path.join(
+  repositoryRoot,
+  "backend",
+  "migrations",
+  "005_platform_catalog_guards_v1.sql",
+);
 
 function walkKeys(value, visit) {
   if (Array.isArray(value)) {
@@ -88,6 +94,49 @@ test("browser artifact exposes array and code-indexed views of the same catalog"
   assert.equal(catalog.coursesByCode.MHF4U, catalog.courses.find((course) => course.code === "MHF4U"));
   assert.equal(catalog.coursesByCode.MHF4U.modules[0].key, "MHF4U-M00");
   assert.equal(catalog.coursesByCode.MHF4U.modules[11].key, "MHF4U-M11");
+  assert.equal("teacherPresence" in catalog.coursesByCode.MHF4U.modules[2], false);
+  assert.equal("evidenceToRetain" in catalog.coursesByCode.MHF4U.modules[2], false);
+  assert.equal(
+    "authenticationEvidence" in
+      catalog.coursesByCode.MHF4U.modules[2].assessment,
+    false,
+  );
+  const forbiddenPublicKeys = new Set([
+    "sourceComponents",
+    "finalEvaluationComponents",
+    "teacherPresence",
+    "evidenceToRetain",
+    "processCheckpoints",
+    "authenticationEvidence",
+  ]);
+  walkKeys(catalog, (key) => {
+    assert.equal(
+      forbiddenPublicKeys.has(key),
+      false,
+      `browser catalog must not expose staff-only key ${key}`,
+    );
+  });
+  for (const course of catalog.courses) {
+    for (const module of course.modules) {
+      for (const resource of module.selfStudyResources) {
+        const url = new URL(resource.url);
+        assert.equal(url.protocol, "https:");
+        assert.equal(url.username, "");
+        assert.equal(url.password, "");
+      }
+    }
+  }
+});
+
+test("additive catalog guards classify final evidence and version unlock policy without thresholds", () => {
+  const sql = readFileSync(guardsSqlPath, "utf8");
+  assert.match(sql, /ADD COLUMN section_kind text NOT NULL DEFAULT 'unit'/);
+  assert.match(sql, /expected 8 final-evaluation assignments/);
+  assert.match(sql, /expected 30 numbered-unit assignments/);
+  assert.match(sql, /expected 72 preserved rules with versioned criteria/);
+  assert.match(sql, /platform_policy_not_natural_language_parser/);
+  assert.doesNotMatch(sql, /minScore|threshold|percentage/i);
+  assert.doesNotMatch(sql, /ALTER TABLE student_submissions\s+ADD COLUMN section_kind/i);
 });
 
 test("SQL seed contains the exact catalog row counts and no scheduled dates", () => {
@@ -120,9 +169,11 @@ test("generation is byte-for-byte deterministic and preserves source unlock text
   assert.equal(first.json, second.json);
   assert.equal(first.javascript, second.javascript);
   assert.equal(first.sql, second.sql);
+  assert.equal(first.guardsSql, second.guardsSql);
   assert.equal(first.json, readFileSync(catalogPath, "utf8"));
   assert.equal(first.javascript, readFileSync(javascriptPath, "utf8"));
   assert.equal(first.sql, readFileSync(sqlPath, "utf8"));
+  assert.equal(first.guardsSql, readFileSync(guardsSqlPath, "utf8"));
 
   if (sourceDirectory) {
     const rebuilt = buildCatalogFromSources(sourceDirectory);

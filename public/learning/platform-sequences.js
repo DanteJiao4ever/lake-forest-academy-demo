@@ -52,19 +52,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "SCH4U-M11-C01",
-          "componentKey": "m11-written-exam",
-          "position": 1,
-          "title": "SCH4U Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 25,
-          "timeMinutes": 150,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "SCH4U-M00",
@@ -102,8 +89,6 @@
               "Safety/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -114,9 +99,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "SCH4U-M01",
@@ -201,8 +184,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -213,9 +194,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SCH4U-M02",
@@ -304,18 +283,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Evidence-based design report and oral defence",
-            "processCheckpoints": [
-              "Approve the product category, research question, and safety boundary",
-              "Submit a structure, nomenclature, and source-credibility check",
-              "Conference on the comparison matrix, reaction reasoning, and provisional recommendation",
-              "Revise after peer review and complete an individual oral defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -326,12 +293,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve the product category, research question, and safety boundary",
-                  "Submit a structure, nomenclature, and source-credibility check",
-                  "Conference on the comparison matrix, reaction reasoning, and provisional recommendation",
-                  "Revise after peer review and complete an individual oral defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SCH4U-M02-ASSIGNMENT"
               }
@@ -344,9 +305,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SCH4U-M03",
@@ -431,8 +390,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -443,9 +400,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SCH4U-M04",
@@ -534,18 +489,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Data investigation and technical recommendation",
-            "processCheckpoints": [
-              "Approve the coded-material evidence plan and variable definitions",
-              "Submit atomic, bonding, and geometry model checks",
-              "Conference on property classification and alternative explanations",
-              "Revise the recommendation after an individual evidence defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -556,12 +499,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve the coded-material evidence plan and variable definitions",
-                  "Submit atomic, bonding, and geometry model checks",
-                  "Conference on property classification and alternative explanations",
-                  "Revise the recommendation after an individual evidence defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SCH4U-M04-ASSIGNMENT"
               }
@@ -574,9 +511,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SCH4U-M05",
@@ -661,8 +596,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -673,9 +606,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SCH4U-M06",
@@ -764,18 +695,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Quantitative case study and process recommendation",
-            "processCheckpoints": [
-              "Approve the functional output, boundary, and variables",
-              "Check thermochemical equations, signs, units, and data provenance",
-              "Conference on kinetic interpretation and catalyst claims",
-              "Complete sensitivity analysis and individual recommendation defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -786,12 +705,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve the functional output, boundary, and variables",
-                  "Check thermochemical equations, signs, units, and data provenance",
-                  "Conference on kinetic interpretation and catalyst claims",
-                  "Complete sensitivity analysis and individual recommendation defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SCH4U-M06-ASSIGNMENT"
               }
@@ -804,9 +717,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SCH4U-M07",
@@ -891,8 +802,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -903,9 +812,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SCH4U-M08",
@@ -994,18 +901,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Quantitative evidence report and stakeholder briefing",
-            "processCheckpoints": [
-              "Approve system boundary, chemical species, and decision question",
-              "Submit equilibrium expressions and calculation setup for feedback",
-              "Conference on assumptions, sensitivity, and guideline interpretation",
-              "Revise the stakeholder briefing after an individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -1016,12 +911,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve system boundary, chemical species, and decision question",
-                  "Submit equilibrium expressions and calculation setup for feedback",
-                  "Conference on assumptions, sensitivity, and guideline interpretation",
-                  "Revise the stakeholder briefing after an individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SCH4U-M08-ASSIGNMENT"
               }
@@ -1034,9 +923,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SCH4U-M09",
@@ -1121,8 +1008,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -1133,9 +1018,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SCH4U-M10",
@@ -1224,18 +1107,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Quantitative engineering case and policy memo",
-            "processCheckpoints": [
-              "Approve the application, electrochemical system, and safety boundary",
-              "Submit balanced equations, cell notation, and potential check",
-              "Conference on quantitative performance and lifecycle evidence",
-              "Revise the policy memo after sensitivity analysis and oral defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -1246,12 +1117,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve the application, electrochemical system, and safety boundary",
-                  "Submit balanced equations, cell notation, and potential check",
-                  "Conference on quantitative performance and lifecycle evidence",
-                  "Revise the policy memo after sensitivity analysis and oral defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SCH4U-M10-ASSIGNMENT"
               }
@@ -1264,9 +1129,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 11.5,
-          "workloadLabel": "11.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "11.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SCH4U-M11",
@@ -1334,8 +1197,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": 150,
             "components": [
               {
@@ -1346,7 +1207,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 25,
                 "timeMinutes": 150,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "SCH4U-M11-ASSIGNMENT"
               }
@@ -1359,9 +1219,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 2.5,
-          "workloadLabel": "2.5 h supervised written examination",
-          "teacherPresence": "Readiness confirmation, approved accommodations, identity check, supervision, and post-exam closure.",
-          "evidenceToRetain": "Supervised examination script and administration record."
+          "workloadLabel": "2.5 h supervised written examination"
         }
       ],
       "gradebookItems": [
@@ -1478,13 +1336,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     },
     {
       "code": "ICS4U",
@@ -1524,35 +1376,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "ICS4U-M11-C01",
-          "componentKey": "m11-culminating",
-          "position": 1,
-          "title": "ICS4U Culminating Performance and Defence",
-          "type": "Culminating performance and defence",
-          "weightPercent": 10,
-          "timeMinutes": 120,
-          "processCheckpoints": [
-            "Scope, evidence, and integrity conference",
-            "Interim artefact and source-trail review",
-            "Testing, analysis, or feasibility checkpoint",
-            "Final submission and authenticated individual defence"
-          ],
-          "submissionMode": "project"
-        },
-        {
-          "key": "ICS4U-M11-C02",
-          "componentKey": "m11-written-exam",
-          "position": 2,
-          "title": "ICS4U Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 15,
-          "timeMinutes": 90,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "ICS4U-M00",
@@ -1591,8 +1414,6 @@
               "Safety/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -1603,9 +1424,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "ICS4U-M01",
@@ -1690,8 +1509,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -1702,9 +1519,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "ICS4U-M02",
@@ -1793,18 +1608,6 @@
               "Code walk-through and reflection"
             ],
             "taskType": "Individual programming artefact, test dossier, and technical explanation",
-            "processCheckpoints": [
-              "Approved problem statement, sample rows, and privacy screen",
-              "Pseudocode and function-contract conference",
-              "Mid-build test review with one demonstrated defect",
-              "Final code walk-through and individual oral verification"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -1815,12 +1618,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approved problem statement, sample rows, and privacy screen",
-                  "Pseudocode and function-contract conference",
-                  "Mid-build test review with one demonstrated defect",
-                  "Final code walk-through and individual oral verification"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "ICS4U-M02-ASSIGNMENT"
               }
@@ -1833,9 +1630,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "ICS4U-M03",
@@ -1921,8 +1716,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -1933,9 +1726,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "ICS4U-M04",
@@ -2024,18 +1815,6 @@
               "Final module library, dossier, and design explanation"
             ],
             "taskType": "Modular local program, design dossier, and refactoring review",
-            "processCheckpoints": [
-              "Module boundary and data-invariant conference",
-              "Interface-contract and recursion base-case check",
-              "Independent-test demonstration before integration",
-              "Refactoring review and individual explanation of one design trade-off"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -2046,12 +1825,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Module boundary and data-invariant conference",
-                  "Interface-contract and recursion base-case check",
-                  "Independent-test demonstration before integration",
-                  "Refactoring review and individual explanation of one design trade-off"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "ICS4U-M04-ASSIGNMENT"
               }
@@ -2064,9 +1837,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "ICS4U-M05",
@@ -2152,8 +1923,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -2164,9 +1933,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "ICS4U-M06",
@@ -2255,18 +2022,6 @@
               "Final prototype, results, recommendation memo, and defence"
             ],
             "taskType": "Comparative algorithm investigation, local prototype, and recommendation memo",
-            "processCheckpoints": [
-              "Algorithm and comparison-condition approval",
-              "Trace and complexity conference before timing",
-              "Benchmark protocol review for reproducibility and fairness",
-              "Recommendation defence using one result and one limitation"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -2277,12 +2032,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Algorithm and comparison-condition approval",
-                  "Trace and complexity conference before timing",
-                  "Benchmark protocol review for reproducibility and fairness",
-                  "Recommendation defence using one result and one limitation"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "ICS4U-M06-ASSIGNMENT"
               }
@@ -2295,9 +2044,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "ICS4U-M07",
@@ -2383,8 +2130,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -2395,9 +2140,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "ICS4U-M08",
@@ -2486,18 +2229,6 @@
               "Closing demonstration, portfolio, retrospective, and individual verification"
             ],
             "taskType": "Team process portfolio, local prototype, individual evidence, and project review",
-            "processCheckpoints": [
-              "Charter, scope, and accessibility/security requirement approval",
-              "Planning review after first backlog and architecture draft",
-              "Midpoint prototype, test, and contribution audit",
-              "Closing demonstration, retrospective, and individual oral verification"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -2508,12 +2239,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Charter, scope, and accessibility/security requirement approval",
-                  "Planning review after first backlog and architecture draft",
-                  "Midpoint prototype, test, and contribution audit",
-                  "Closing demonstration, retrospective, and individual oral verification"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "ICS4U-M08-ASSIGNMENT"
               }
@@ -2526,9 +2251,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "ICS4U-M09",
@@ -2614,8 +2337,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -2626,9 +2347,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "ICS4U-M10",
@@ -2717,18 +2436,6 @@
               "Final local prototype, evidence portfolio, demonstration, and individual defence"
             ],
             "taskType": "Individual or paired offline prototype, evidence portfolio, demonstration, and defence",
-            "processCheckpoints": [
-              "Need, harm screen, data source, and no-deployment scope approval",
-              "Design review covering modules, algorithm, accessibility, and threat model",
-              "Midpoint test demonstration with one documented revision",
-              "Final local demonstration and individual technical/ethical defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -2739,12 +2446,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Need, harm screen, data source, and no-deployment scope approval",
-                  "Design review covering modules, algorithm, accessibility, and threat model",
-                  "Midpoint test demonstration with one documented revision",
-                  "Final local demonstration and individual technical/ethical defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "ICS4U-M10-ASSIGNMENT"
               }
@@ -2757,9 +2458,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 10.5,
-          "workloadLabel": "10.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "10.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "ICS4U-M11",
@@ -2833,16 +2532,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [
-              "Scope, evidence, and integrity conference",
-              "Interim artefact and source-trail review",
-              "Testing, analysis, or feasibility checkpoint",
-              "Final submission and authenticated individual defence"
-            ],
-            "authenticationEvidence": [
-              "Final culminating submission and authenticated individual defence",
-              "Supervised written examination administration record"
-            ],
             "timeMinutes": 210,
             "components": [
               {
@@ -2853,12 +2542,6 @@
                 "type": "Culminating performance and defence",
                 "weightPercent": 10,
                 "timeMinutes": 120,
-                "processCheckpoints": [
-                  "Scope, evidence, and integrity conference",
-                  "Interim artefact and source-trail review",
-                  "Testing, analysis, or feasibility checkpoint",
-                  "Final submission and authenticated individual defence"
-                ],
                 "submissionMode": "project",
                 "assignmentKey": "ICS4U-M11-CULMINATING-ASSIGNMENT"
               },
@@ -2870,7 +2553,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 15,
                 "timeMinutes": 90,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "ICS4U-M11-WRITTEN-EXAM-ASSIGNMENT"
               }
@@ -2883,9 +2565,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 3.5,
-          "workloadLabel": "3.5 h final evaluation (2 h culminating performance + 1.5 h supervised written examination)",
-          "teacherPresence": "Culminating scope and source-trail checkpoints, authenticated individual defence, exam-readiness confirmation, approved accommodations, identity check, and supervised examination administration.",
-          "evidenceToRetain": "Culminating artefact, source/work history, checkpoint feedback, authenticated defence record, supervised examination script, and administration record."
+          "workloadLabel": "3.5 h final evaluation (2 h culminating performance + 1.5 h supervised written examination)"
         }
       ],
       "gradebookItems": [
@@ -3018,13 +2698,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     },
     {
       "code": "SPH4U",
@@ -3064,19 +2738,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "SPH4U-M11-C01",
-          "componentKey": "m11-written-exam",
-          "position": 1,
-          "title": "SPH4U Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 25,
-          "timeMinutes": 150,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "SPH4U-M00",
@@ -3114,8 +2775,6 @@
               "Safety/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -3126,9 +2785,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "SPH4U-M01",
@@ -3213,8 +2870,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -3225,9 +2880,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SPH4U-M02",
@@ -3316,18 +2969,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Technical modelling report and authenticated conference",
-            "processCheckpoints": [
-              "Scenario, safety boundary, variables, and assumptions approved",
-              "Free-body diagram and component-equation review",
-              "Data-model comparison and uncertainty conference",
-              "Final technical report and individual verification"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -3338,12 +2979,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Scenario, safety boundary, variables, and assumptions approved",
-                  "Free-body diagram and component-equation review",
-                  "Data-model comparison and uncertainty conference",
-                  "Final technical report and individual verification"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SPH4U-M02-ASSIGNMENT"
               }
@@ -3356,9 +2991,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SPH4U-M03",
@@ -3443,8 +3076,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -3455,9 +3086,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SPH4U-M04",
@@ -3546,18 +3175,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Data analysis, design comparison, and individual defence",
-            "processCheckpoints": [
-              "Approve system boundary and comparison criteria",
-              "Verify graph scales, areas, units, and conservation equations",
-              "Review uncertainty and design-trade-off matrix",
-              "Submit final recommendation and complete individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -3568,12 +3185,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Approve system boundary and comparison criteria",
-                  "Verify graph scales, areas, units, and conservation equations",
-                  "Review uncertainty and design-trade-off matrix",
-                  "Submit final recommendation and complete individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SPH4U-M04-ASSIGNMENT"
               }
@@ -3586,9 +3197,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SPH4U-M05",
@@ -3673,8 +3282,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -3685,9 +3292,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SPH4U-M06",
@@ -3776,18 +3381,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Model portfolio, quantitative case analysis, and defence",
-            "processCheckpoints": [
-              "Technology and safety boundary approved",
-              "Diagram, sign convention, and equation check",
-              "Evidence-quality and uncertainty review",
-              "Final portfolio and authenticated defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -3798,12 +3391,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Technology and safety boundary approved",
-                  "Diagram, sign convention, and equation check",
-                  "Evidence-quality and uncertainty review",
-                  "Final portfolio and authenticated defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SPH4U-M06-ASSIGNMENT"
               }
@@ -3816,9 +3403,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SPH4U-M07",
@@ -3903,8 +3488,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -3915,9 +3498,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SPH4U-M08",
@@ -4006,18 +3587,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Evidence-based optical design analysis and defence",
-            "processCheckpoints": [
-              "System purpose, optical safety boundary, and evidence source approved",
-              "Diagram and variable-definition check",
-              "Quantitative model and uncertainty review",
-              "Final design brief and authenticated defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -4028,12 +3597,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "System purpose, optical safety boundary, and evidence source approved",
-                  "Diagram and variable-definition check",
-                  "Quantitative model and uncertainty review",
-                  "Final design brief and authenticated defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SPH4U-M08-ASSIGNMENT"
               }
@@ -4046,9 +3609,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SPH4U-M09",
@@ -4133,8 +3694,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -4145,9 +3704,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "SPH4U-M10",
@@ -4236,18 +3793,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Evidence synthesis, quantitative analysis, and oral defence",
-            "processCheckpoints": [
-              "Evidence set, technology, and safety boundary approved",
-              "Classical-versus-modern prediction table reviewed",
-              "Quantitative verification and source-quality conference",
-              "Final dossier and authenticated oral defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -4258,12 +3803,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Evidence set, technology, and safety boundary approved",
-                  "Classical-versus-modern prediction table reviewed",
-                  "Quantitative verification and source-quality conference",
-                  "Final dossier and authenticated oral defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "SPH4U-M10-ASSIGNMENT"
               }
@@ -4276,9 +3815,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 11.5,
-          "workloadLabel": "11.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "11.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "SPH4U-M11",
@@ -4346,8 +3883,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": 150,
             "components": [
               {
@@ -4358,7 +3893,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 25,
                 "timeMinutes": 150,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "SPH4U-M11-ASSIGNMENT"
               }
@@ -4371,9 +3905,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 2.5,
-          "workloadLabel": "2.5 h supervised written examination",
-          "teacherPresence": "Readiness confirmation, approved accommodations, identity check, supervision, and post-exam closure.",
-          "evidenceToRetain": "Supervised examination script and administration record."
+          "workloadLabel": "2.5 h supervised written examination"
         }
       ],
       "gradebookItems": [
@@ -4490,13 +4022,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     },
     {
       "code": "MHF4U",
@@ -4536,19 +4062,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "MHF4U-M11-C01",
-          "componentKey": "m11-written-exam",
-          "position": 1,
-          "title": "MHF4U Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 25,
-          "timeMinutes": 150,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "MHF4U-M00",
@@ -4586,8 +4099,6 @@
               "Tool-use/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -4598,9 +4109,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "MHF4U-M01",
@@ -4685,8 +4194,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -4697,9 +4204,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MHF4U-M02",
@@ -4788,18 +4293,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Individual modelling report with authenticated problem conference",
-            "processCheckpoints": [
-              "Teacher approves the two contexts, data source, variables, and feasible domains.",
-              "Student submits an algebra checkpoint showing model construction and one exact-to-approximate conversion.",
-              "Student explains a domain restriction and reproduces one solution without automated equation solving.",
-              "Student revises the interpretation after feedback and submits a source and technology-use record."
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -4810,12 +4303,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Teacher approves the two contexts, data source, variables, and feasible domains.",
-                  "Student submits an algebra checkpoint showing model construction and one exact-to-approximate conversion.",
-                  "Student explains a domain restriction and reproduces one solution without automated equation solving.",
-                  "Student revises the interpretation after feedback and submits a source and technology-use record."
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MHF4U-M02-ASSIGNMENT"
               }
@@ -4828,9 +4315,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MHF4U-M03",
@@ -4915,8 +4400,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -4927,9 +4410,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MHF4U-M04",
@@ -5018,18 +4499,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Modelling investigation with identity proof and equation analysis",
-            "processCheckpoints": [
-              "Teacher approves the periodic variable, feasible interval, and measurement units.",
-              "Student submits a unit-circle and parameter checkpoint before regression or slider use.",
-              "Student presents the first three lines of the identity proof and names the permitted transformations.",
-              "Student verifies equation solutions in the original relation and revises the design conclusion."
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -5040,12 +4509,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Teacher approves the periodic variable, feasible interval, and measurement units.",
-                  "Student submits a unit-circle and parameter checkpoint before regression or slider use.",
-                  "Student presents the first three lines of the identity proof and names the permitted transformations.",
-                  "Student verifies equation solutions in the original relation and revises the design conclusion."
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MHF4U-M04-ASSIGNMENT"
               }
@@ -5058,9 +4521,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MHF4U-M05",
@@ -5145,8 +4606,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -5157,9 +4616,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MHF4U-M06",
@@ -5248,18 +4705,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Multi-representation investigation and inequality decision",
-            "processCheckpoints": [
-              "Teacher approves the function pair and contextual domain.",
-              "Student submits factor and restriction analysis before graphing.",
-              "Student explains one sign-chart interval using a test value and multiplicity.",
-              "Student completes a short conference defending the difference between a hole and an intercept."
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -5270,12 +4715,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Teacher approves the function pair and contextual domain.",
-                  "Student submits factor and restriction analysis before graphing.",
-                  "Student explains one sign-chart interval using a test value and multiplicity.",
-                  "Student completes a short conference defending the difference between a hole and an intercept."
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MHF4U-M06-ASSIGNMENT"
               }
@@ -5288,9 +4727,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MHF4U-M07",
@@ -5375,8 +4812,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -5387,9 +4822,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MHF4U-M08",
@@ -5478,18 +4911,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Authenticated portfolio of multi-representation problems",
-            "processCheckpoints": [
-              "Student submits domain reasoning before graphing operation functions.",
-              "Teacher checks inverse notation and one-to-one restriction.",
-              "Student reproduces one rate calculation and explains its units in conference.",
-              "Student audits one technology-assisted result with a table, substitution, or residual."
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -5500,12 +4921,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Student submits domain reasoning before graphing operation functions.",
-                  "Teacher checks inverse notation and one-to-one restriction.",
-                  "Student reproduces one rate calculation and explains its units in conference.",
-                  "Student audits one technology-assisted result with a table, substitution, or residual."
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MHF4U-M08-ASSIGNMENT"
               }
@@ -5518,9 +4933,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MHF4U-M09",
@@ -5605,8 +5018,6 @@
               "Revision plan"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -5617,9 +5028,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MHF4U-M10",
@@ -5708,18 +5117,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Integrated modelling dossier with oral or written-interactive defence",
-            "processCheckpoints": [
-              "Teacher approves the question, dataset, and candidate function families.",
-              "Student submits raw calculations and a representation crosswalk.",
-              "Student completes an authenticated conference on one exact and one numerical solution.",
-              "Student revises the recommendation after peer or teacher challenge and records the change."
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -5730,12 +5127,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Teacher approves the question, dataset, and candidate function families.",
-                  "Student submits raw calculations and a representation crosswalk.",
-                  "Student completes an authenticated conference on one exact and one numerical solution.",
-                  "Student revises the recommendation after peer or teacher challenge and records the change."
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MHF4U-M10-ASSIGNMENT"
               }
@@ -5748,9 +5139,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 11.5,
-          "workloadLabel": "11.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "11.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MHF4U-M11",
@@ -5818,8 +5207,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": 150,
             "components": [
               {
@@ -5830,7 +5217,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 25,
                 "timeMinutes": 150,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "MHF4U-M11-ASSIGNMENT"
               }
@@ -5843,9 +5229,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 2.5,
-          "workloadLabel": "2.5 h supervised written examination",
-          "teacherPresence": "Readiness confirmation, approved accommodations, identity check, supervision, and post-exam closure.",
-          "evidenceToRetain": "Supervised examination script and administration record."
+          "workloadLabel": "2.5 h supervised written examination"
         }
       ],
       "gradebookItems": [
@@ -5962,13 +5346,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     },
     {
       "code": "MCV4U",
@@ -6008,19 +5386,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "MCV4U-M11-C01",
-          "componentKey": "m11-written-exam",
-          "position": 1,
-          "title": "MCV4U Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 25,
-          "timeMinutes": 150,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "MCV4U-M00",
@@ -6058,8 +5423,6 @@
               "Tool-use/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -6070,9 +5433,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "MCV4U-M01",
@@ -6157,8 +5518,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -6169,9 +5528,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MCV4U-M02",
@@ -6260,18 +5617,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Mathematical investigation and authenticated problem defence",
-            "processCheckpoints": [
-              "Function and interval approval",
-              "Difference-quotient reasoning conference",
-              "Derivative-rule verification review",
-              "Final graph and defence checkpoint"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -6282,12 +5627,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Function and interval approval",
-                  "Difference-quotient reasoning conference",
-                  "Derivative-rule verification review",
-                  "Final graph and defence checkpoint"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MCV4U-M02-ASSIGNMENT"
               }
@@ -6300,9 +5639,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MCV4U-M03",
@@ -6387,8 +5724,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -6399,9 +5734,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MCV4U-M04",
@@ -6490,18 +5823,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Curve-analysis, optimization, and motion portfolio",
-            "processCheckpoints": [
-              "Problem-model approval",
-              "Critical-candidate and sign-chart check",
-              "Context and sensitivity conference",
-              "Final authenticated explanation"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -6512,12 +5833,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Problem-model approval",
-                  "Critical-candidate and sign-chart check",
-                  "Context and sensitivity conference",
-                  "Final authenticated explanation"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MCV4U-M04-ASSIGNMENT"
               }
@@ -6530,9 +5845,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MCV4U-M05",
@@ -6617,8 +5930,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -6629,9 +5940,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MCV4U-M06",
@@ -6720,18 +6029,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Vector modelling, computation, and visual explanation",
-            "processCheckpoints": [
-              "Coordinate-frame approval",
-              "Component and magnitude verification",
-              "Dot/cross orientation conference",
-              "Final case-file defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -6742,12 +6039,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Coordinate-frame approval",
-                  "Component and magnitude verification",
-                  "Dot/cross orientation conference",
-                  "Final case-file defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MCV4U-M06-ASSIGNMENT"
               }
@@ -6760,9 +6051,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MCV4U-M07",
@@ -6847,8 +6136,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -6859,9 +6146,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MCV4U-M08",
@@ -6950,18 +6235,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Three-dimensional geometry investigation and bounded-context decision",
-            "processCheckpoints": [
-              "Geometry and bounds approval",
-              "Equation-construction review",
-              "Configuration and substitution conference",
-              "Final spatial recommendation defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -6972,12 +6245,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Geometry and bounds approval",
-                  "Equation-construction review",
-                  "Configuration and substitution conference",
-                  "Final spatial recommendation defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MCV4U-M08-ASSIGNMENT"
               }
@@ -6990,9 +6257,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MCV4U-M09",
@@ -7077,8 +6342,6 @@
               "Revision plan"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -7089,9 +6352,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "MCV4U-M10",
@@ -7180,18 +6441,6 @@
               "Post-submission reflection"
             ],
             "taskType": "Culminating synthesis dossier and mathematical defence",
-            "processCheckpoints": [
-              "Scope, sources, and model approval",
-              "Calculus evidence conference",
-              "Vector geometry and alignment review",
-              "Final dossier and independent defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -7202,12 +6451,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Scope, sources, and model approval",
-                  "Calculus evidence conference",
-                  "Vector geometry and alignment review",
-                  "Final dossier and independent defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "MCV4U-M10-ASSIGNMENT"
               }
@@ -7220,9 +6463,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 11.5,
-          "workloadLabel": "11.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "11.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "MCV4U-M11",
@@ -7290,8 +6531,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": 150,
             "components": [
               {
@@ -7302,7 +6541,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 25,
                 "timeMinutes": 150,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "MCV4U-M11-ASSIGNMENT"
               }
@@ -7315,9 +6553,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 2.5,
-          "workloadLabel": "2.5 h supervised written examination",
-          "teacherPresence": "Readiness confirmation, approved accommodations, identity check, supervision, and post-exam closure.",
-          "evidenceToRetain": "Supervised examination script and administration record."
+          "workloadLabel": "2.5 h supervised written examination"
         }
       ],
       "gradebookItems": [
@@ -7434,13 +6670,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     },
     {
       "code": "BBB4M",
@@ -7480,35 +6710,6 @@
         ],
         "participationEvidence": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
       },
-      "finalEvaluationComponents": [
-        {
-          "key": "BBB4M-M11-C01",
-          "componentKey": "m11-culminating",
-          "position": 1,
-          "title": "BBB4M Culminating Performance and Defence",
-          "type": "Culminating performance and defence",
-          "weightPercent": 10,
-          "timeMinutes": 120,
-          "processCheckpoints": [
-            "Scope, evidence, and integrity conference",
-            "Interim artefact and source-trail review",
-            "Testing, analysis, or feasibility checkpoint",
-            "Final submission and authenticated individual defence"
-          ],
-          "submissionMode": "project"
-        },
-        {
-          "key": "BBB4M-M11-C02",
-          "componentKey": "m11-written-exam",
-          "position": 2,
-          "title": "BBB4M Mandatory Written Examination",
-          "type": "Mandatory written examination",
-          "weightPercent": 15,
-          "timeMinutes": 90,
-          "processCheckpoints": [],
-          "submissionMode": "supervised"
-        }
-      ],
       "modules": [
         {
           "key": "BBB4M-M00",
@@ -7547,8 +6748,6 @@
               "Evidence/integrity acknowledgement"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -7559,9 +6758,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 0,
-          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time",
-          "teacherPresence": "Welcome message, diagnostic response, support routing, and navigation confirmation.",
-          "evidenceToRetain": "Navigation check, diagnostic record, and safety/integrity acknowledgement."
+          "workloadLabel": "1–2 h onboarding; not automatically recorded as credit time"
         },
         {
           "key": "BBB4M-M01",
@@ -7647,8 +6844,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -7659,9 +6854,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "BBB4M-M02",
@@ -7750,18 +6943,6 @@
               "Final decision brief and individual defence"
             ],
             "taskType": "Evidence-based international-business case analysis and authenticated defence",
-            "processCheckpoints": [
-              "Unit 1 case scope, terminology, and evidence-status check",
-              "Unit 1 calculation or comparison conference",
-              "Unit 1 stakeholder, ethics, and risk review",
-              "Unit 1 final memo and individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -7772,12 +6953,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 10,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Unit 1 case scope, terminology, and evidence-status check",
-                  "Unit 1 calculation or comparison conference",
-                  "Unit 1 stakeholder, ethics, and risk review",
-                  "Unit 1 final memo and individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "BBB4M-M02-ASSIGNMENT"
               }
@@ -7790,9 +6965,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 12,
-          "workloadLabel": "12 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "12 h lessons, application, assessment, and feedback"
         },
         {
           "key": "BBB4M-M03",
@@ -7878,8 +7051,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -7890,9 +7061,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "BBB4M-M04",
@@ -7981,18 +7150,6 @@
               "Final screen, recommendation, and individual defence"
             ],
             "taskType": "Evidence-based international-business case analysis and authenticated defence",
-            "processCheckpoints": [
-              "Unit 2 case scope, terminology, and evidence-status check",
-              "Unit 2 calculation or comparison conference",
-              "Unit 2 stakeholder, ethics, and risk review",
-              "Unit 2 final memo and individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -8003,12 +7160,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 12,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Unit 2 case scope, terminology, and evidence-status check",
-                  "Unit 2 calculation or comparison conference",
-                  "Unit 2 stakeholder, ethics, and risk review",
-                  "Unit 2 final memo and individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "BBB4M-M04-ASSIGNMENT"
               }
@@ -8021,9 +7172,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "BBB4M-M05",
@@ -8109,8 +7258,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -8121,9 +7268,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "BBB4M-M06",
@@ -8212,18 +7357,6 @@
               "Final risk review, recommendation, and individual defence"
             ],
             "taskType": "Evidence-based international-business case analysis and authenticated defence",
-            "processCheckpoints": [
-              "Unit 3 case scope, terminology, and evidence-status check",
-              "Unit 3 calculation or comparison conference",
-              "Unit 3 stakeholder, ethics, and risk review",
-              "Unit 3 final memo and individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -8234,12 +7367,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Unit 3 case scope, terminology, and evidence-status check",
-                  "Unit 3 calculation or comparison conference",
-                  "Unit 3 stakeholder, ethics, and risk review",
-                  "Unit 3 final memo and individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "BBB4M-M06-ASSIGNMENT"
               }
@@ -8252,9 +7379,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "BBB4M-M07",
@@ -8340,8 +7465,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -8352,9 +7475,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "BBB4M-M08",
@@ -8443,18 +7564,6 @@
               "Final launch plan and individual defence"
             ],
             "taskType": "Evidence-based international-business case analysis and authenticated defence",
-            "processCheckpoints": [
-              "Unit 4 case scope, terminology, and evidence-status check",
-              "Unit 4 calculation or comparison conference",
-              "Unit 4 stakeholder, ethics, and risk review",
-              "Unit 4 final memo and individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -8465,12 +7574,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 14,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Unit 4 case scope, terminology, and evidence-status check",
-                  "Unit 4 calculation or comparison conference",
-                  "Unit 4 stakeholder, ethics, and risk review",
-                  "Unit 4 final memo and individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "BBB4M-M08-ASSIGNMENT"
               }
@@ -8483,9 +7586,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 14,
-          "workloadLabel": "14 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "14 h lessons, application, assessment, and feedback"
         },
         {
           "key": "BBB4M-M09",
@@ -8571,8 +7672,6 @@
               "Correction log"
             ],
             "taskType": null,
-            "processCheckpoints": [],
-            "authenticationEvidence": [],
             "timeMinutes": null,
             "components": [],
             "required": true
@@ -8583,9 +7682,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 8,
-          "workloadLabel": "8 h core lessons and embedded checks",
-          "teacherPresence": "Targeted response to the retrieval check or correction log, plus a discussion, office-hour, or message touchpoint.",
-          "evidenceToRetain": "Annotated readings, guided practice, knowledge-check corrections, and exit ticket."
+          "workloadLabel": "8 h core lessons and embedded checks"
         },
         {
           "key": "BBB4M-M10",
@@ -8674,18 +7771,6 @@
               "Final recommendation, implementation dashboard, and individual defence"
             ],
             "taskType": "Evidence-based international-business case analysis and authenticated defence",
-            "processCheckpoints": [
-              "Unit 5 case scope, terminology, and evidence-status check",
-              "Unit 5 calculation or comparison conference",
-              "Unit 5 stakeholder, ethics, and risk review",
-              "Unit 5 final memo and individual defence"
-            ],
-            "authenticationEvidence": [
-              "Teacher-approved question, plan, or design record",
-              "Raw working, data, source notes, code, calculations, or version history",
-              "Recorded checkpoint or teacher-student conference",
-              "Independent parallel problem, explanation, demonstration, or defence"
-            ],
             "timeMinutes": null,
             "components": [
               {
@@ -8696,12 +7781,6 @@
                 "type": "Coursework assessment",
                 "weightPercent": 15,
                 "timeMinutes": null,
-                "processCheckpoints": [
-                  "Unit 5 case scope, terminology, and evidence-status check",
-                  "Unit 5 calculation or comparison conference",
-                  "Unit 5 stakeholder, ethics, and risk review",
-                  "Unit 5 final memo and individual defence"
-                ],
                 "submissionMode": "text_or_file",
                 "assignmentKey": "BBB4M-M10-ASSIGNMENT"
               }
@@ -8714,9 +7793,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 12.5,
-          "workloadLabel": "12.5 h lessons, application, assessment, and feedback",
-          "teacherPresence": "Rubric-linked process feedback, an authentication checkpoint or conference, and a documented unlock decision.",
-          "evidenceToRetain": "Evidence-file notes, staged assessment work, feedback record, final submission, and reflection or defence."
+          "workloadLabel": "12.5 h lessons, application, assessment, and feedback"
         },
         {
           "key": "BBB4M-M11",
@@ -8790,16 +7867,6 @@
               "Mandatory written examination"
             ],
             "taskType": null,
-            "processCheckpoints": [
-              "Scope, evidence, and integrity conference",
-              "Interim artefact and source-trail review",
-              "Testing, analysis, or feasibility checkpoint",
-              "Final submission and authenticated individual defence"
-            ],
-            "authenticationEvidence": [
-              "Final culminating submission and authenticated individual defence",
-              "Supervised written examination administration record"
-            ],
             "timeMinutes": 210,
             "components": [
               {
@@ -8810,12 +7877,6 @@
                 "type": "Culminating performance and defence",
                 "weightPercent": 10,
                 "timeMinutes": 120,
-                "processCheckpoints": [
-                  "Scope, evidence, and integrity conference",
-                  "Interim artefact and source-trail review",
-                  "Testing, analysis, or feasibility checkpoint",
-                  "Final submission and authenticated individual defence"
-                ],
                 "submissionMode": "project",
                 "assignmentKey": "BBB4M-M11-CULMINATING-ASSIGNMENT"
               },
@@ -8827,7 +7888,6 @@
                 "type": "Mandatory written examination",
                 "weightPercent": 15,
                 "timeMinutes": 90,
-                "processCheckpoints": [],
                 "submissionMode": "supervised",
                 "assignmentKey": "BBB4M-M11-WRITTEN-EXAM-ASSIGNMENT"
               }
@@ -8840,9 +7900,7 @@
             "overrideReasonRequired": true
           },
           "estimatedCreditHours": 3.5,
-          "workloadLabel": "3.5 h final evaluation (2 h culminating performance + 1.5 h supervised written examination)",
-          "teacherPresence": "Culminating scope and source-trail checkpoints, authenticated individual defence, exam-readiness confirmation, approved accommodations, identity check, and supervised examination administration.",
-          "evidenceToRetain": "Culminating artefact, source/work history, checkpoint feedback, authenticated defence record, supervised examination script, and administration record."
+          "workloadLabel": "3.5 h final evaluation (2 h culminating performance + 1.5 h supervised written examination)"
         }
       ],
       "gradebookItems": [
@@ -8975,13 +8033,7 @@
           "evidenceDescription": "Collected across Modules 0-11 through required teacher contact, discussions, checkpoints, conferences, timely completion, and documented use of feedback; platform clicks alone are not sufficient evidence."
         }
       ],
-      "recordedCreditHours": 110,
-      "sourceComponents": {
-        "core_lessons": "Component 01",
-        "graded_assessments": "Component 02",
-        "assessment_evidence_files": "Component 05",
-        "self_study_resources": "Components 06 and 07"
-      }
+      "recordedCreditHours": 110
     }
   ],
   "totals": {

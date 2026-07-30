@@ -1547,6 +1547,16 @@ textarea:focus-visible {
   box-shadow: 0 12px 30px rgba(6, 29, 24, 0.07);
 }
 
+.assignment-card.is-locked {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.assignment-card.is-locked:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
 .assignment-card h2 {
   margin: 4px 0 5px;
   font-family: var(--sans);
@@ -2170,6 +2180,15 @@ textarea:focus-visible {
 
 .deadline-row:last-child {
   border-bottom: 0;
+}
+
+.deadline-row.is-locked {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.deadline-row.is-locked:hover {
+  background: transparent;
 }
 
 .deadline-row p {
