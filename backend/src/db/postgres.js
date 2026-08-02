@@ -1003,6 +1003,85 @@ export class PostgresRepository {
     }));
   }
 
+  async listCourseProgress(courseCode) {
+    const result = await this.pool.query(
+      `SELECT u.public_id AS student_id, u.display_name, u.email,
+              cm.id AS module_id, cm.module_number,
+              progress.status AS recorded_status,
+              progress.started_at, progress.completed_at,
+              previous_progress.status AS previous_status,
+              override.id AS override_id,
+              override.reason AS override_reason,
+              override.expires_at AS override_expires_at
+         FROM course_enrollments enrollment
+         JOIN app_users u
+           ON u.id = enrollment.student_user_id
+          AND u.role = 'student'
+          AND u.status = 'active'
+         JOIN course_modules cm
+           ON cm.course_code = enrollment.course_code
+          AND cm.status = 'published'
+         LEFT JOIN student_module_progress progress
+           ON progress.student_user_id = u.id
+          AND progress.module_id = cm.id
+         LEFT JOIN course_modules previous_module
+           ON previous_module.course_code = cm.course_code
+          AND previous_module.module_number = cm.module_number - 1
+         LEFT JOIN student_module_progress previous_progress
+           ON previous_progress.student_user_id = u.id
+          AND previous_progress.module_id = previous_module.id
+         LEFT JOIN LATERAL (
+           SELECT id, reason, expires_at
+             FROM module_unlock_overrides unlock_override
+            WHERE unlock_override.student_user_id = u.id
+              AND unlock_override.module_id = cm.id
+              AND unlock_override.active = true
+              AND (unlock_override.expires_at IS NULL OR unlock_override.expires_at > now())
+            ORDER BY unlock_override.created_at DESC
+            LIMIT 1
+         ) override ON true
+        WHERE enrollment.course_code = $1
+          AND enrollment.status = 'active'
+        ORDER BY u.display_name, u.public_id, cm.module_number`,
+      [courseCode],
+    );
+
+    const students = [];
+    const byStudent = new Map();
+    for (const row of result.rows) {
+      let student = byStudent.get(row.student_id);
+      if (!student) {
+        student = {
+          studentId: row.student_id,
+          displayName: row.display_name,
+          email: String(row.email).toLowerCase(),
+          modules: [],
+        };
+        byStudent.set(row.student_id, student);
+        students.push(student);
+      }
+      const status = row.recorded_status ||
+        (row.module_number === 0 || row.override_id || row.previous_status === "completed"
+          ? "available"
+          : "locked");
+      student.modules.push({
+        moduleId: row.module_id,
+        moduleNumber: row.module_number,
+        status,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        override: row.override_id
+          ? {
+              active: true,
+              reason: row.override_reason,
+              expiresAt: row.override_expires_at,
+            }
+          : null,
+      });
+    }
+    return { courseCode, students };
+  }
+
   async listCourseGradebook(courseCode) {
     const [itemsResult, roster] = await Promise.all([
       this.pool.query(

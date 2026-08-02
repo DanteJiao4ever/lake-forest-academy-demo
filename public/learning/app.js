@@ -1333,6 +1333,7 @@
     studentProgress: {},
     studentGrades: {},
     teacherRosters: {},
+    teacherProgress: {},
     teacherGradebooks: {},
     errors: {},
   };
@@ -1344,6 +1345,7 @@
     platformRuntime.studentProgress = {};
     platformRuntime.studentGrades = {};
     platformRuntime.teacherRosters = {};
+    platformRuntime.teacherProgress = {};
     platformRuntime.teacherGradebooks = {};
     platformRuntime.errors = {};
     platformRequests.clear();
@@ -3014,6 +3016,7 @@
   function ensureTeacherPlatformData(course) {
     if (!course?.platformModules?.length) return;
     const rosterEndpoint = teacherCourseEndpoint(course, "roster");
+    const progressEndpoint = teacherCourseEndpoint(course, "progress");
     const gradebookEndpoint = teacherCourseEndpoint(course, "gradebook");
     const modulesEndpoint = courseModulesEndpoint(course);
     if (modulesEndpoint) {
@@ -3047,6 +3050,45 @@
           platformRuntime.teacherRosters[course.code] = Array.isArray(records)
             ? records
             : [];
+          delete platformRuntime.errors[key];
+        });
+      }
+    }
+    if (progressEndpoint) {
+      const key = teacherProgressRequestKey(course);
+      if (!platformRequests.has(key)) {
+        delete platformRuntime.teacherProgress[course.code];
+        void loadPlatformData(key, async () => {
+          const payload = await requestPlatformJson(progressEndpoint);
+          const record = platformPayloadData(payload, null);
+          if (
+            !record ||
+            typeof record !== "object" ||
+            !Array.isArray(record.students) ||
+            String(record.courseCode || "").toUpperCase() !== course.code
+          ) {
+            throw new Error(
+              "The official course progress response was not valid.",
+            );
+          }
+          platformRuntime.teacherProgress[course.code] = {
+            courseCode: course.code,
+            loadedAt: new Date().toISOString(),
+            students: record.students
+              .filter(
+                (student) => student && typeof student === "object",
+              )
+              .map((student) => ({
+                studentId: String(student.studentId || ""),
+                displayName: String(student.displayName || ""),
+                email: String(student.email || ""),
+                modules: Array.isArray(student.modules)
+                  ? student.modules.filter(
+                      (module) => module && typeof module === "object",
+                    )
+                  : [],
+              })),
+          };
           delete platformRuntime.errors[key];
         });
       }
@@ -5277,6 +5319,138 @@
     `;
   }
 
+  function officialTeacherProgress(course) {
+    const record = platformRuntime.teacherProgress[course?.code];
+    return record && Array.isArray(record.students) ? record : null;
+  }
+
+  function teacherProgressRequestKey(course) {
+    return `teacher-progress:${course?.code || ""}`;
+  }
+
+  function invalidateTeacherProgress(course) {
+    if (!course?.code) return;
+    const key = teacherProgressRequestKey(course);
+    platformRequests.delete(key);
+    delete platformRuntime.teacherProgress[course.code];
+    delete platformRuntime.errors[key];
+  }
+
+  function teacherProgressModule(student, moduleNumber) {
+    return (student?.modules || []).find(
+      (module) => Number(module?.moduleNumber) === Number(moduleNumber),
+    );
+  }
+
+  function teacherProgressStatus(record) {
+    const key = String(record?.status || "").toLowerCase();
+    const statuses = {
+      completed: { label: "Completed", className: "success" },
+      in_progress: { label: "In Progress", className: "info" },
+      available: { label: "Available", className: "warning" },
+      locked: { label: "Locked", className: "" },
+    };
+    return {
+      key: statuses[key] ? key : "unavailable",
+      ...(statuses[key] || { label: "Unavailable", className: "" }),
+    };
+  }
+
+  function teacherProgressStatusMarkup(record, includeOverride = true) {
+    const status = teacherProgressStatus(record);
+    const override = Boolean(record?.override?.active);
+    return `<span class="badge ${status.className} teacher-progress-status" data-status="${status.key}">${status.label}</span>${includeOverride && override ? '<small class="teacher-progress-override">Override active</small>' : ""}`;
+  }
+
+  function teacherProgressOverrideExpiry(value) {
+    if (!value) return "No expiry";
+    try {
+      return `Expires ${formatDate(value, true)}`;
+    } catch {
+      return "Expiry unavailable";
+    }
+  }
+
+  function teacherProgressRefreshButton(course, label = "Refresh") {
+    const connected = Boolean(teacherCourseEndpoint(course, "progress"));
+    return `<button class="button button-quiet" type="button" data-action="refresh-teacher-progress" data-course="${escapeHtml(course.id)}" ${connected ? "" : "disabled"}>${escapeHtml(label)}</button>`;
+  }
+
+  function teacherProgressToolbar(course, progress) {
+    const updated = progress?.loadedAt
+      ? `Last refreshed ${formatDate(progress.loadedAt, true)}`
+      : "Official progress has not been refreshed.";
+    return `<div class="teacher-progress-toolbar"><small>${escapeHtml(updated)}</small>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+  }
+
+  function teacherProgressPlaceholder(course) {
+    const endpoint = teacherCourseEndpoint(course, "progress");
+    const error = platformRuntime.errors[teacherProgressRequestKey(course)];
+    if (!endpoint) {
+      return `<div class="teacher-empty"><p>Connect the secure course service to view official module progress. Browser activity is not used as a faculty record.</p>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+    }
+    if (error) {
+      return `<div class="teacher-empty" role="alert"><h3>Official Progress Unavailable</h3><p>${escapeHtml(error)} No browser-only or roster-derived module status is shown.</p>${teacherProgressRefreshButton(course, "Try Again")}</div>`;
+    }
+    return '<div class="teacher-empty" role="status"><p>Loading official module progress… Only central school records will be shown.</p></div>';
+  }
+
+  function teacherProgressMatrixMarkup(course) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    const modules = [...(course.platformModules || [])].sort(
+      (left, right) => Number(left.number) - Number(right.number),
+    );
+    return `
+      <div class="teacher-gradebook-table teacher-progress-matrix" role="region" aria-label="${course.code} official progress matrix">
+        <table>
+          <thead><tr><th scope="col">Student</th>${modules.map((module) => `<th scope="col"><a class="teacher-progress-module-link" href="#/${platformModuleRoute(course, module, true)}" aria-label="Open Module ${module.number}">M${String(module.number).padStart(2, "0")}</a></th>`).join("")}</tr></thead>
+          <tbody>
+            ${progress.students
+              .map(
+                (student) => `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td>${modules.map((module) => `<td>${teacherProgressStatusMarkup(teacherProgressModule(student, module.number))}</td>`).join("")}</tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
+  function teacherModuleProgressMarkup(course, module) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    return `
+      <div class="teacher-gradebook-table teacher-progress-detail" role="region" aria-label="${course.code} Module ${module.number} official student progress">
+        <table>
+          <thead><tr><th scope="col">Student</th><th scope="col">Status</th><th scope="col">Override</th></tr></thead>
+          <tbody>
+            ${progress.students
+              .map((student) => {
+                const record = teacherProgressModule(student, module.number);
+                const override = record?.override?.active
+                  ? record.override
+                  : null;
+                const expiry = teacherProgressOverrideExpiry(
+                  override?.expiresAt,
+                );
+                return `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td><td>${teacherProgressStatusMarkup(record, false)}</td><td>${override ? `<span class="badge warning">Active Override</span><small>${escapeHtml(override.reason || "Documented faculty override")} · ${escapeHtml(expiry)}</small>` : '<span class="badge">None</span>'}</td></tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
   function teacherCourseView(course) {
     const syllabus = course.syllabus || { units: [], drive: {} };
     const drive = safeCourseDriveLinks(syllabus.drive);
@@ -5331,6 +5505,11 @@
             <div class="teacher-evaluation-strip">
               ${course.evaluation.map((item) => `<span><strong>${item.weight}%</strong>${escapeHtml(item.label)}</span>`).join("")}
             </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student × Module Matrix</h2></div><span class="badge">${course.platformModules.length} modules</span></div>
+            <p class="teacher-section-copy">Central school records are shown for each enrolled student. Select a module heading to review its status and active overrides in detail.</p>
+            ${teacherProgressMatrixMarkup(course)}
           </section>
           <section class="teacher-section">
             <div class="section-heading"><div><p class="eyebrow">Course Work</p><h2>Assignments</h2></div><span class="badge">${assignments.length}</span></div>
@@ -5422,7 +5601,7 @@
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
         </div>
         <aside>
-          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Student Progress</p><h2>Roster</h2></div><span class="badge">${roster.length}</span></div>${roster.length ? `<div class="teacher-module-roster">${roster.map((student) => `<div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules complete</small></span></div>`).join("")}</div>` : '<div class="teacher-empty"><p>Official roster progress will appear when the secure course service is connected.</p></div>'}</section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student Module Status</h2></div><span class="badge">M${String(module.number).padStart(2, "0")}</span></div>${teacherModuleProgressMarkup(course, module)}</section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Override</p><h2>Unlock Module</h2></div></div><p>Use only for an accommodation, technical barrier or documented alternative pathway. A reason is required and retained in the audit record.</p><form id="unlock-override-form" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}"><div class="form-alert" role="alert" tabindex="-1" hidden></div><label for="unlock-student">Student</label><select id="unlock-student" name="studentId" required ${!unlockReady ? "disabled" : ""}><option value="">Select a student</option>${roster.map((student) => `<option value="${escapeHtml(student.studentId || student.id || "")}">${escapeHtml(student.displayName)} · ${escapeHtml(student.email)}</option>`).join("")}</select><label for="unlock-reason">Documented reason</label><textarea id="unlock-reason" name="reason" required minlength="10" placeholder="Describe the approved accommodation, technical barrier or alternative pathway." ${!unlockReady ? "disabled" : ""}></textarea><button class="button button-primary full-width" type="submit" ${!unlockReady ? "disabled" : ""}>Create Unlock Override</button>${!unlockReady ? '<p class="teacher-security-note"><strong>Official service required.</strong> Unlocks are never stored as browser-only authority.</p>' : ""}</form></section>
         </aside>
       </section>`;
@@ -8093,6 +8272,7 @@
         event.target.reset();
         if (course) {
           platformRequests.delete(`teacher-roster:${course.code}`);
+          invalidateTeacherProgress(course);
           ensureTeacherPlatformData(course);
         }
         showToast("The documented module unlock override was created.", {
@@ -8673,6 +8853,30 @@
       } else {
         void refreshRemoteSubmissions();
       }
+    } else if (action === "refresh-teacher-progress") {
+      const course = findCourse(target.dataset.course);
+      const endpoint = course
+        ? teacherCourseEndpoint(course, "progress")
+        : "";
+      if (!course || !endpoint) {
+        showToast("The official progress service is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      const key = teacherProgressRequestKey(course);
+      target.disabled = true;
+      target.textContent = "Refreshing...";
+      invalidateTeacherProgress(course);
+      ensureTeacherPlatformData(course);
+      await platformRequests.get(key);
+      const error = platformRuntime.errors[key];
+      showToast(
+        error
+          ? `Official progress could not be refreshed. ${error}`
+          : "Official student progress was refreshed.",
+        { tone: error ? "error" : "success" },
+      );
     } else if (action === "save-grade-draft") {
       const form = target.closest("#grading-form");
       const studentKey = form?.dataset.student || "";

@@ -280,7 +280,8 @@ export class FakeRepository {
       const saved = this.moduleProgress.get(`${studentUserId}:${module.id}`);
       const previous = index ? this.moduleProgress.get(`${studentUserId}:${modules[index - 1].id}`) : null;
       const override = this.unlockOverrides.find(
-        (item) => item.studentUserId === studentUserId && item.moduleId === module.id && item.active,
+        (item) => item.studentUserId === studentUserId && item.moduleId === module.id && item.active &&
+          (!item.expiresAt || new Date(item.expiresAt) > new Date()),
       );
       return {
         courseCode,
@@ -424,6 +425,22 @@ export class FakeRepository {
           module.courseCode === courseCode && this.moduleProgress.get(`${user.id}:${module.id}`)?.status === "completed").length,
         totalModules: this.modules.filter((module) => module.courseCode === courseCode).length,
       }));
+  }
+
+  async listCourseProgress(courseCode) {
+    const roster = await this.listCourseRoster(courseCode);
+    const students = await Promise.all(
+      roster.map(async (student) => {
+        const user = this.users.find((item) => item.publicId === student.studentId);
+        return {
+          studentId: student.studentId,
+          displayName: student.displayName,
+          email: student.email,
+          modules: user ? await this.listStudentProgress(user.id, courseCode) : [],
+        };
+      }),
+    );
+    return { courseCode, students };
   }
 
   async listCourseGradebook(courseCode) {

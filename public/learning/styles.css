@@ -7013,6 +7013,73 @@ details.module[open] .module-toggle svg,
   text-align: left;
 }
 
+.teacher-progress-matrix table {
+  min-width: 1320px;
+}
+
+.teacher-progress-matrix th:first-child,
+.teacher-progress-matrix td:first-child {
+  min-width: 210px;
+}
+
+.teacher-progress-matrix th:not(:first-child),
+.teacher-progress-matrix td:not(:first-child) {
+  min-width: 92px;
+  text-align: center;
+}
+
+.teacher-progress-module-link {
+  color: var(--forest);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.teacher-progress-module-link:hover,
+.teacher-progress-module-link:focus-visible {
+  color: var(--lake);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.teacher-progress-status {
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.teacher-progress-override,
+.teacher-progress-detail td:nth-child(3) small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.teacher-progress-detail td:nth-child(2) {
+  white-space: nowrap;
+}
+
+.teacher-progress-detail td:nth-child(3) {
+  min-width: 230px;
+}
+
+.teacher-progress-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.teacher-progress-toolbar > small {
+  color: var(--muted);
+}
+
+.teacher-progress-toolbar .button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
 .direct-gradebook-list,
 .direct-grade-students {
   display: grid;
@@ -7158,6 +7225,11 @@ details.module[open] .module-toggle svg,
 }
 
 @media (max-width: 650px) {
+  .teacher-progress-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .direct-gradebook-item > summary {
     align-items: flex-start;
     flex-direction: column;

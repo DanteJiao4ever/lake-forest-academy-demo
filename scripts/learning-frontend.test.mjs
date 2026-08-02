@@ -642,6 +642,202 @@ test("faculty module details prefer staff-only API fields and normalize final ev
   assert.doesNotMatch(courseHtml, /course-chip">Unit 11/);
 });
 
+test("faculty course and module views render the official student progress matrix", async () => {
+  const app = await source("public/learning/app.js");
+  assert.match(
+    app,
+    /invalidateTeacherProgress\(course\);\s*ensureTeacherPlatformData\(course\)/,
+  );
+  const platformApiConfig = {
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+  };
+  const progress = {
+    courseCode: "SCH4U",
+    students: [
+      {
+        studentId: "student-1",
+        displayName: "Alice Ng",
+        email: "alice@example.test",
+        modules: Array.from({ length: 12 }, (_, moduleNumber) => ({
+          moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+          moduleNumber,
+          status:
+            moduleNumber === 0
+              ? "completed"
+              : moduleNumber === 1
+                ? "in_progress"
+                : moduleNumber === 2
+                  ? "available"
+                  : "locked",
+          override:
+            moduleNumber === 2
+              ? {
+                  active: true,
+                  reason: "Documented accelerated pathway",
+                  expiresAt: "2026-08-15T18:00:00.000Z",
+                }
+              : null,
+        })),
+      },
+      {
+        studentId: "student-2",
+        displayName: "Noah Patel",
+        email: "noah@example.test",
+        modules: Array.from({ length: 12 }, (_, moduleNumber) => ({
+          moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+          moduleNumber,
+          status: moduleNumber === 0 ? "available" : "locked",
+          override: null,
+        })),
+      },
+    ],
+  };
+  let progressRequests = 0;
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/teacher/courses/SCH4U/progress") {
+      progressRequests += 1;
+      return jsonResponse({ data: progress });
+    }
+    if (url.pathname.endsWith("/roster")) {
+      return jsonResponse({ data: progress.students });
+    }
+    if (url.pathname.endsWith("/gradebook")) {
+      return jsonResponse({ data: {} });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const session = {
+    email: "administrator@lakeforestacademy.ca",
+    displayName: "Academic Administrator",
+    role: "teacher_admin",
+  };
+  const courseResult = await renderPortal("#/teacher/course/sch4u", session, {
+    platformApiConfig,
+    fetch,
+    settleTurns: 14,
+    interact: async ({ listeners }) => {
+      const click = listeners.get("click")?.[0];
+      assert.equal(typeof click, "function");
+      const button = {
+        dataset: {
+          action: "refresh-teacher-progress",
+          course: "sch4u",
+        },
+        disabled: false,
+        textContent: "Refresh Official Progress",
+        closest(selector) {
+          if (selector === "[data-action], [data-route]") return button;
+          return null;
+        },
+      };
+      await click({ target: button });
+    },
+    returnHarness: true,
+  });
+  const course = courseResult.html;
+  assert.equal(progressRequests, 2);
+  assert.match(course, /Student × Module Matrix/);
+  assert.match(course, /aria-label="SCH4U official progress matrix"/);
+  assert.match(course, /Last refreshed/);
+  assert.match(course, /data-action="refresh-teacher-progress"/);
+  assert.equal(
+    (course.match(/class="teacher-progress-module-link"/g) || []).length,
+    12,
+  );
+  assert.match(course, /Alice Ng/);
+  assert.match(course, /Noah Patel/);
+  assert.match(course, /data-status="completed">Completed/);
+  assert.match(course, /data-status="in_progress">In Progress/);
+  assert.match(course, /Override active/);
+
+  const module = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M02",
+    session,
+    { platformApiConfig, fetch, settleTurns: 14 },
+  );
+  assert.match(module, /Student Module Status/);
+  assert.match(
+    module,
+    /aria-label="SCH4U Module 2 official student progress"/,
+  );
+  assert.match(module, /Alice Ng[\s\S]*?data-status="available">Available/);
+  assert.match(module, /Active Override/);
+  assert.match(module, /Documented accelerated pathway/);
+  assert.match(module, /Noah Patel[\s\S]*?data-status="locked">Locked/);
+});
+
+test("faculty progress fails closed when the central endpoint is unavailable", async () => {
+  const platformApiConfig = {
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+  };
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname.endsWith("/progress")) {
+      return jsonResponse(
+        { error: { message: "Central progress service unavailable." } },
+        503,
+      );
+    }
+    if (url.pathname.endsWith("/roster")) {
+      return jsonResponse({
+        data: [
+          {
+            studentId: "student-1",
+            displayName: "Roster Aggregate Only",
+            email: "aggregate@example.test",
+            completedModules: 12,
+            totalModules: 12,
+          },
+        ],
+      });
+    }
+    if (url.pathname.endsWith("/gradebook")) {
+      return jsonResponse({ data: {} });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const session = {
+    email: "administrator@lakeforestacademy.ca",
+    displayName: "Academic Administrator",
+    role: "teacher_admin",
+  };
+  const options = {
+    platformApiConfig,
+    fetch,
+    settleTurns: 14,
+    localStorageSeed: {
+      "lake-forest-learning-state-v1": JSON.stringify({
+        enrolledCourseIds: ["sch4u"],
+        completed: ["SCH4U-U1-L1", "SCH4U-U1-L2"],
+        guideChecks: {},
+        read: [],
+        feedbackRead: [],
+        submissions: {},
+      }),
+    },
+  };
+  const course = await renderPortal(
+    "#/teacher/course/sch4u",
+    session,
+    options,
+  );
+  assert.match(course, /Official Progress Unavailable/);
+  assert.match(course, /Central progress service unavailable/);
+  assert.match(course, /No browser-only or roster-derived module status is shown/);
+  assert.doesNotMatch(course, /aria-label="SCH4U official progress matrix"/);
+  assert.doesNotMatch(course, /class="badge [^"]*teacher-progress-status"/);
+
+  const module = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M02",
+    session,
+    options,
+  );
+  assert.match(module, /Official Progress Unavailable/);
+  assert.doesNotMatch(module, /official student progress"/);
+  assert.doesNotMatch(module, /teacher-progress-status/);
+});
+
 test("platform contracts include published grades, remote unit numbers and direct-grade concurrency headers", async () => {
   const [bootstrap, app] = await Promise.all([
     source("public/learning/bootstrap.js"),

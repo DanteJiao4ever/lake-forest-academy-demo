@@ -855,6 +855,16 @@ export async function createApp({ config, repository, drive, scanner, logger = f
   );
 
   app.get(
+    "/v1/teacher/courses/:courseCode/progress",
+    { preHandler: [requireRoles("teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+      await requireCourseAccess(request.auth.user, courseCode);
+      return { data: await repository.listCourseProgress(courseCode) };
+    },
+  );
+
+  app.get(
     "/v1/teacher/courses/:courseCode/gradebook",
     { preHandler: [requireRoles("teacher", "teacher_admin")] },
     async (request) => {

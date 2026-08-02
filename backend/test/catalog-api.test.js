@@ -229,6 +229,105 @@ describe("database-driven course catalog API", () => {
     assert.equal(gradebook.json().data.students[0].studentId, student.user.publicId);
   });
 
+  test("returns the official student-by-module progress matrix only to authorized faculty", async () => {
+    const student = await registerStudent();
+    const teacher = await addFaculty("teacher", ["MHF4U"]);
+    const admin = await addFaculty("teacher_admin", allCourses);
+
+    const studentDenied = await app.inject({
+      method: "GET",
+      url: "/v1/teacher/courses/MHF4U/progress",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(studentDenied.statusCode, 403);
+    assert.equal(studentDenied.json().error.code, "INSUFFICIENT_ROLE");
+
+    const wrongCourse = await app.inject({
+      method: "GET",
+      url: "/v1/teacher/courses/SCH4U/progress",
+      headers: { origin, cookie: teacher.cookie },
+    });
+    assert.equal(wrongCourse.statusCode, 403);
+    assert.equal(wrongCourse.json().error.code, "COURSE_ACCESS_DENIED");
+
+    const orientationActivity = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/activities/mhf4u-m00-activity",
+      headers: { origin, cookie: student.cookie, "x-csrf-token": student.csrf },
+      payload: { status: "completed", evidence: { acknowledgement: true } },
+    });
+    assert.equal(orientationActivity.statusCode, 200);
+    const orientation = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/modules/mhf4u-m00",
+      headers: { origin, cookie: student.cookie, "x-csrf-token": student.csrf },
+      payload: { status: "completed" },
+    });
+    assert.equal(orientation.statusCode, 200);
+    const started = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/modules/mhf4u-m01",
+      headers: { origin, cookie: student.cookie, "x-csrf-token": student.csrf },
+      payload: { status: "in_progress" },
+    });
+    assert.equal(started.statusCode, 200);
+
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const override = await app.inject({
+      method: "POST",
+      url: `/v1/teacher/students/${student.user.publicId}/modules/mhf4u-m02/unlock-overrides`,
+      headers: { origin, cookie: teacher.cookie, "x-csrf-token": teacher.csrf },
+      payload: {
+        reason: "Documented accelerated pathway for this module",
+        expiresAt,
+      },
+    });
+    assert.equal(override.statusCode, 201);
+    repository.unlockOverrides.push({
+      id: randomUUID(),
+      studentUserId: student.user.id,
+      studentId: student.user.publicId,
+      moduleId: "mhf4u-m11",
+      teacherUserId: teacher.user.id,
+      reason: "Expired test override",
+      expiresAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      active: true,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/teacher/courses/MHF4U/progress",
+      headers: { origin, cookie: teacher.cookie },
+    });
+    assert.equal(response.statusCode, 200);
+    const matrix = response.json().data;
+    assert.equal(matrix.courseCode, "MHF4U");
+    assert.equal(matrix.students.length, 1);
+    assert.deepEqual(
+      matrix.students[0].modules.map((module) => [module.moduleNumber, module.status]),
+      [[0, "completed"], [1, "in_progress"], [2, "available"], [11, "locked"]],
+    );
+    assert.equal(matrix.students[0].studentId, student.user.publicId);
+    assert.equal(matrix.students[0].email, student.user.email);
+    assert.equal(matrix.students[0].modules[0].completedAt !== null, true);
+    assert.deepEqual(matrix.students[0].modules[2].override, {
+      active: true,
+      reason: "Documented accelerated pathway for this module",
+      expiresAt,
+    });
+    assert.equal(matrix.students[0].modules[3].override, null);
+    assert.equal(JSON.stringify(matrix).includes(student.user.id), false);
+    assert.equal(JSON.stringify(matrix).includes(teacher.user.id), false);
+
+    const adminResponse = await app.inject({
+      method: "GET",
+      url: "/v1/teacher/courses/MHF4U/progress",
+      headers: { origin, cookie: admin.cookie },
+    });
+    assert.equal(adminResponse.statusCode, 200);
+    assert.equal(adminResponse.json().data.students[0].studentId, student.user.publicId);
+  });
+
   test("requires a published submission grade before completing weighted coursework", async () => {
     const student = await registerStudent();
     const teacher = await addFaculty("teacher");
