@@ -72,6 +72,9 @@
         window.LFA_DRIVE_CONFIG?.gradingEndpoint ||
         "",
     ).trim(),
+    uploadReady:
+      window.LFA_SUBMISSION_CONFIG?.uploadReady !== false &&
+      window.LFA_DRIVE_CONFIG?.uploadReady !== false,
   });
   const PLATFORM_API_CONFIG = Object.freeze({
     coursesEndpoint: String(
@@ -1333,6 +1336,7 @@
     studentProgress: {},
     studentGrades: {},
     teacherRosters: {},
+    teacherProgress: {},
     teacherGradebooks: {},
     errors: {},
   };
@@ -1344,6 +1348,7 @@
     platformRuntime.studentProgress = {};
     platformRuntime.studentGrades = {};
     platformRuntime.teacherRosters = {};
+    platformRuntime.teacherProgress = {};
     platformRuntime.teacherGradebooks = {};
     platformRuntime.errors = {};
     platformRequests.clear();
@@ -1418,6 +1423,83 @@
     if (!key || !gradingDrafts[key]) return;
     delete gradingDrafts[key];
     saveGradingDrafts();
+  }
+
+  function gradingRequestTarget(record, fallbackSubmissionId = "") {
+    const endpointBase = configuredDriveUrl(
+      SUBMISSION_CONFIG.gradingEndpoint,
+    );
+    const submissionId = scalarLabel(
+      record?.submission?.id || fallbackSubmissionId || record?.id,
+    );
+    return {
+      submissionId,
+      endpoint:
+        endpointBase && submissionId
+          ? new URL(
+              encodeURIComponent(submissionId),
+              `${endpointBase.replace(/\/+$/, "")}/`,
+            ).toString()
+          : "",
+    };
+  }
+
+  function applyRemoteSubmissionGrade(
+    record,
+    payload,
+    { score, feedback, publish, fallbackSubmissionId = "" },
+  ) {
+    const responseSource =
+      payload?.data?.submission ||
+      payload?.submission ||
+      payload?.data ||
+      payload;
+    const now = new Date().toISOString();
+    const returnedScore = Number(responseSource?.score);
+    const returnedVersion = Number(responseSource?.version);
+    const publishedAt = validTimestamp(
+      responseSource?.publishedAt,
+      publish ? now : "",
+    );
+    const gradedAt = validTimestamp(responseSource?.gradedAt, now);
+    const submissionId = scalarLabel(
+      responseSource?.submissionId ||
+        record?.submission?.id ||
+        fallbackSubmissionId ||
+        record?.id,
+    );
+    upsertRemoteSubmission({
+      id: record.id,
+      student: record.student,
+      assignmentId: record.assignment.id,
+      courseId: record.course.id,
+      submission: {
+        ...record.submission,
+        id: submissionId,
+        score: Number.isInteger(returnedScore) ? returnedScore : score,
+        feedback:
+          typeof responseSource?.feedback === "string"
+            ? responseSource.feedback
+            : feedback,
+        gradeEtag:
+          scalarLabel(responseSource?.etag) ||
+          record.submission.gradeEtag ||
+          "",
+        gradeVersion: Number.isInteger(returnedVersion)
+          ? returnedVersion
+          : record.submission.gradeVersion ?? null,
+        publishedAt,
+        status: publishedAt ? "graded" : "submitted",
+        gradedAt,
+        updatedAt: validTimestamp(
+          publishedAt || responseSource?.gradedAt,
+          now,
+        ),
+      },
+    });
+    remoteSubmissionsState.error = "";
+    remoteSubmissionsState.lastLoadedAt = now;
+    return { publishedAt, gradedAt };
   }
 
   function captureVisibleGradingDraft() {
@@ -2003,6 +2085,13 @@
     if (record.unmapped) {
       return { label: "Needs Mapping", className: "danger" };
     }
+    if (
+      record.submission.score != null &&
+      !record.submission.publishedAt &&
+      record.submission.status !== "graded"
+    ) {
+      return { label: "Draft Saved", className: "warning" };
+    }
     if (record.submission.status === "graded") {
       return { label: "Returned", className: "success" };
     }
@@ -2161,6 +2250,10 @@
       if (!url.searchParams.has("limit")) url.searchParams.set("limit", "100");
     }
     return url.toString();
+  }
+
+  function submissionUploadEnabled() {
+    return SUBMISSION_CONFIG.uploadReady && Boolean(submissionsEndpointUrl());
   }
 
   function nextPageUrl(currentUrl, payload) {
@@ -2439,6 +2532,10 @@
       source.updatedAt || source.gradedAt || source.grade?.updatedAt,
       "",
     );
+    const publishedAt = validTimestamp(
+      source.publishedAt || source.grade?.publishedAt,
+      "",
+    );
     const historySource = Array.isArray(source.history)
       ? source.history
       : Array.isArray(source.versions)
@@ -2506,7 +2603,9 @@
         fileSize: fallbackVersion.fileSize,
         fileType: fallbackVersion.fileType,
         fileUrl,
-        status: score != null ? "graded" : scalarLabel(source.status) || "submitted",
+        status: publishedAt
+          ? "graded"
+          : scalarLabel(source.status) || "submitted",
         score,
         feedback: scalarLabel(
           source.feedback || source.teacherFeedback || source.grade?.feedback,
@@ -2521,6 +2620,7 @@
           source.gradedAt || source.grade?.gradedAt,
           score != null ? updatedAt : "",
         ),
+        publishedAt,
         updatedAt,
         history,
       },
@@ -2630,13 +2730,21 @@
   }
 
   function submissionForAssignment(assignmentId, user = currentUser()) {
-    if (submissionsEndpointUrl()) {
-      return remoteSubmissionFor(assignmentId, user);
-    }
-    if (user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)) {
-      return loadState(user).submissions?.[assignmentId] || null;
-    }
-    return state?.submissions?.[assignmentId] || null;
+    const localSubmission =
+      user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)
+        ? loadState(user).submissions?.[assignmentId] || null
+        : state?.submissions?.[assignmentId] || null;
+    const remoteSubmission = submissionsEndpointUrl()
+      ? remoteSubmissionFor(assignmentId, user)
+      : null;
+    if (!remoteSubmission) return localSubmission;
+    if (!localSubmission) return remoteSubmission;
+    const localSubmittedAt = Date.parse(localSubmission.submittedAt || "");
+    const remoteSubmittedAt = Date.parse(remoteSubmission.submittedAt || "");
+    return Number.isFinite(localSubmittedAt) &&
+      (!Number.isFinite(remoteSubmittedAt) || localSubmittedAt > remoteSubmittedAt)
+      ? localSubmission
+      : remoteSubmission;
   }
 
   async function refreshRemoteSubmissions({ silent = false } = {}) {
@@ -2923,6 +3031,7 @@
   function ensureTeacherPlatformData(course) {
     if (!course?.platformModules?.length) return;
     const rosterEndpoint = teacherCourseEndpoint(course, "roster");
+    const progressEndpoint = teacherCourseEndpoint(course, "progress");
     const gradebookEndpoint = teacherCourseEndpoint(course, "gradebook");
     const modulesEndpoint = courseModulesEndpoint(course);
     if (modulesEndpoint) {
@@ -2956,6 +3065,45 @@
           platformRuntime.teacherRosters[course.code] = Array.isArray(records)
             ? records
             : [];
+          delete platformRuntime.errors[key];
+        });
+      }
+    }
+    if (progressEndpoint) {
+      const key = teacherProgressRequestKey(course);
+      if (!platformRequests.has(key)) {
+        delete platformRuntime.teacherProgress[course.code];
+        void loadPlatformData(key, async () => {
+          const payload = await requestPlatformJson(progressEndpoint);
+          const record = platformPayloadData(payload, null);
+          if (
+            !record ||
+            typeof record !== "object" ||
+            !Array.isArray(record.students) ||
+            String(record.courseCode || "").toUpperCase() !== course.code
+          ) {
+            throw new Error(
+              "The official course progress response was not valid.",
+            );
+          }
+          platformRuntime.teacherProgress[course.code] = {
+            courseCode: course.code,
+            loadedAt: new Date().toISOString(),
+            students: record.students
+              .filter(
+                (student) => student && typeof student === "object",
+              )
+              .map((student) => ({
+                studentId: String(student.studentId || ""),
+                displayName: String(student.displayName || ""),
+                email: String(student.email || ""),
+                modules: Array.isArray(student.modules)
+                  ? student.modules.filter(
+                      (module) => module && typeof module === "object",
+                    )
+                  : [],
+              })),
+          };
           delete platformRuntime.errors[key];
         });
       }
@@ -5186,6 +5334,138 @@
     `;
   }
 
+  function officialTeacherProgress(course) {
+    const record = platformRuntime.teacherProgress[course?.code];
+    return record && Array.isArray(record.students) ? record : null;
+  }
+
+  function teacherProgressRequestKey(course) {
+    return `teacher-progress:${course?.code || ""}`;
+  }
+
+  function invalidateTeacherProgress(course) {
+    if (!course?.code) return;
+    const key = teacherProgressRequestKey(course);
+    platformRequests.delete(key);
+    delete platformRuntime.teacherProgress[course.code];
+    delete platformRuntime.errors[key];
+  }
+
+  function teacherProgressModule(student, moduleNumber) {
+    return (student?.modules || []).find(
+      (module) => Number(module?.moduleNumber) === Number(moduleNumber),
+    );
+  }
+
+  function teacherProgressStatus(record) {
+    const key = String(record?.status || "").toLowerCase();
+    const statuses = {
+      completed: { label: "Completed", className: "success" },
+      in_progress: { label: "In Progress", className: "info" },
+      available: { label: "Available", className: "warning" },
+      locked: { label: "Locked", className: "" },
+    };
+    return {
+      key: statuses[key] ? key : "unavailable",
+      ...(statuses[key] || { label: "Unavailable", className: "" }),
+    };
+  }
+
+  function teacherProgressStatusMarkup(record, includeOverride = true) {
+    const status = teacherProgressStatus(record);
+    const override = Boolean(record?.override?.active);
+    return `<span class="badge ${status.className} teacher-progress-status" data-status="${status.key}">${status.label}</span>${includeOverride && override ? '<small class="teacher-progress-override">Override active</small>' : ""}`;
+  }
+
+  function teacherProgressOverrideExpiry(value) {
+    if (!value) return "No expiry";
+    try {
+      return `Expires ${formatDate(value, true)}`;
+    } catch {
+      return "Expiry unavailable";
+    }
+  }
+
+  function teacherProgressRefreshButton(course, label = "Refresh") {
+    const connected = Boolean(teacherCourseEndpoint(course, "progress"));
+    return `<button class="button button-quiet" type="button" data-action="refresh-teacher-progress" data-course="${escapeHtml(course.id)}" ${connected ? "" : "disabled"}>${escapeHtml(label)}</button>`;
+  }
+
+  function teacherProgressToolbar(course, progress) {
+    const updated = progress?.loadedAt
+      ? `Last refreshed ${formatDate(progress.loadedAt, true)}`
+      : "Official progress has not been refreshed.";
+    return `<div class="teacher-progress-toolbar"><small>${escapeHtml(updated)}</small>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+  }
+
+  function teacherProgressPlaceholder(course) {
+    const endpoint = teacherCourseEndpoint(course, "progress");
+    const error = platformRuntime.errors[teacherProgressRequestKey(course)];
+    if (!endpoint) {
+      return `<div class="teacher-empty"><p>Connect the secure course service to view official module progress. Browser activity is not used as a faculty record.</p>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+    }
+    if (error) {
+      return `<div class="teacher-empty" role="alert"><h3>Official Progress Unavailable</h3><p>${escapeHtml(error)} No browser-only or roster-derived module status is shown.</p>${teacherProgressRefreshButton(course, "Try Again")}</div>`;
+    }
+    return '<div class="teacher-empty" role="status"><p>Loading official module progress… Only central school records will be shown.</p></div>';
+  }
+
+  function teacherProgressMatrixMarkup(course) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    const modules = [...(course.platformModules || [])].sort(
+      (left, right) => Number(left.number) - Number(right.number),
+    );
+    return `
+      <div class="teacher-gradebook-table teacher-progress-matrix" role="region" aria-label="${course.code} official progress matrix">
+        <table>
+          <thead><tr><th scope="col">Student</th>${modules.map((module) => `<th scope="col"><a class="teacher-progress-module-link" href="#/${platformModuleRoute(course, module, true)}" aria-label="Open Module ${module.number}">M${String(module.number).padStart(2, "0")}</a></th>`).join("")}</tr></thead>
+          <tbody>
+            ${progress.students
+              .map(
+                (student) => `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td>${modules.map((module) => `<td>${teacherProgressStatusMarkup(teacherProgressModule(student, module.number))}</td>`).join("")}</tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
+  function teacherModuleProgressMarkup(course, module) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    return `
+      <div class="teacher-gradebook-table teacher-progress-detail" role="region" aria-label="${course.code} Module ${module.number} official student progress">
+        <table>
+          <thead><tr><th scope="col">Student</th><th scope="col">Status</th><th scope="col">Override</th></tr></thead>
+          <tbody>
+            ${progress.students
+              .map((student) => {
+                const record = teacherProgressModule(student, module.number);
+                const override = record?.override?.active
+                  ? record.override
+                  : null;
+                const expiry = teacherProgressOverrideExpiry(
+                  override?.expiresAt,
+                );
+                return `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td><td>${teacherProgressStatusMarkup(record, false)}</td><td>${override ? `<span class="badge warning">Active Override</span><small>${escapeHtml(override.reason || "Documented faculty override")} · ${escapeHtml(expiry)}</small>` : '<span class="badge">None</span>'}</td></tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
   function teacherCourseView(course) {
     const syllabus = course.syllabus || { units: [], drive: {} };
     const drive = safeCourseDriveLinks(syllabus.drive);
@@ -5240,6 +5520,11 @@
             <div class="teacher-evaluation-strip">
               ${course.evaluation.map((item) => `<span><strong>${item.weight}%</strong>${escapeHtml(item.label)}</span>`).join("")}
             </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student × Module Matrix</h2></div><span class="badge">${course.platformModules.length} modules</span></div>
+            <p class="teacher-section-copy">Central school records are shown for each enrolled student. Select a module heading to review its status and active overrides in detail.</p>
+            ${teacherProgressMatrixMarkup(course)}
           </section>
           <section class="teacher-section">
             <div class="section-heading"><div><p class="eyebrow">Course Work</p><h2>Assignments</h2></div><span class="badge">${assignments.length}</span></div>
@@ -5331,7 +5616,7 @@
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
         </div>
         <aside>
-          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Student Progress</p><h2>Roster</h2></div><span class="badge">${roster.length}</span></div>${roster.length ? `<div class="teacher-module-roster">${roster.map((student) => `<div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules complete</small></span></div>`).join("")}</div>` : '<div class="teacher-empty"><p>Official roster progress will appear when the secure course service is connected.</p></div>'}</section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student Module Status</h2></div><span class="badge">M${String(module.number).padStart(2, "0")}</span></div>${teacherModuleProgressMarkup(course, module)}</section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Override</p><h2>Unlock Module</h2></div></div><p>Use only for an accommodation, technical barrier or documented alternative pathway. A reason is required and retained in the audit record.</p><form id="unlock-override-form" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}"><div class="form-alert" role="alert" tabindex="-1" hidden></div><label for="unlock-student">Student</label><select id="unlock-student" name="studentId" required ${!unlockReady ? "disabled" : ""}><option value="">Select a student</option>${roster.map((student) => `<option value="${escapeHtml(student.studentId || student.id || "")}">${escapeHtml(student.displayName)} · ${escapeHtml(student.email)}</option>`).join("")}</select><label for="unlock-reason">Documented reason</label><textarea id="unlock-reason" name="reason" required minlength="10" placeholder="Describe the approved accommodation, technical barrier or alternative pathway." ${!unlockReady ? "disabled" : ""}></textarea><button class="button button-primary full-width" type="submit" ${!unlockReady ? "disabled" : ""}>Create Unlock Override</button>${!unlockReady ? '<p class="teacher-security-note"><strong>Official service required.</strong> Unlocks are never stored as browser-only authority.</p>' : ""}</form></section>
         </aside>
       </section>`;
@@ -5502,6 +5787,11 @@
     }
     const status = teacherSubmissionStatus(record);
     const gradingDraft = gradingDraftFor(record);
+    const centralDraft =
+      !gradingDraft &&
+      record.submission.score != null &&
+      !record.submission.publishedAt &&
+      record.submission.status !== "graded";
     const gradeScoreValue =
       gradingDraft?.score ??
       (record.submission.score == null ? "" : String(record.submission.score));
@@ -5623,7 +5913,7 @@
               <textarea id="grade-feedback" name="feedback" maxlength="10000" required aria-describedby="grading-form-alert grading-help" placeholder="Explain strengths and the next step for improvement.">${escapeHtml(gradeFeedbackValue)}</textarea>
               <p class="form-alert is-error" id="grading-form-alert" role="alert" tabindex="-1" hidden></p>
               <p class="grading-status ${
-                gradingDraft
+                gradingDraft || centralDraft
                   ? "is-draft"
                   : record.submission.score != null
                     ? "is-graded"
@@ -5631,6 +5921,8 @@
               }">${
                 gradingDraft
                   ? `Draft saved on this device at ${formatDate(gradingDraft.savedAt, true)} · Not published to the student.`
+                  : centralDraft
+                    ? `Draft saved to the school record${record.submission.updatedAt || record.submission.gradedAt ? ` at ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""} · Not published to the student; any earlier published result remains visible.`
                   : record.submission.score != null
                     ? `Returned at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
                     : "Awaiting grading"
@@ -5651,7 +5943,7 @@
                   : submissionsEndpointUrl() &&
                       !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
                   ? '<p class="login-help" id="grading-help">You can save a device draft now. Connect the grading service before publishing to the student.</p>'
-                  : '<p class="login-help" id="grading-help">Save Draft keeps work on this device. Publish sends the percentage and feedback to the student record.</p>'
+                  : '<p class="login-help" id="grading-help">Save Draft syncs a valid score and current feedback to the school record without showing it to the student. Publish releases the percentage and feedback.</p>'
               }
               ${
                 nextAwaitingRecord
@@ -6977,7 +7269,7 @@
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
     const submission = submissionForAssignment(assignment.id);
-    const remoteSubmissionEnabled = Boolean(submissionsEndpointUrl());
+    const remoteSubmissionEnabled = submissionUploadEnabled();
     const deliveredToLotus =
       submission?.delivery === "lotus" ||
       Boolean(submission?.driveFileId || submission?.fileUrl);
@@ -7995,6 +8287,7 @@
         event.target.reset();
         if (course) {
           platformRequests.delete(`teacher-roster:${course.code}`);
+          invalidateTeacherProgress(course);
           ensureTeacherPlatformData(course);
         }
         showToast("The documented module unlock override was created.", {
@@ -8099,17 +8392,8 @@
       }
       saveGradingDraft(record, { score: scoreText, feedback });
       const gradedAt = new Date().toISOString();
-      const gradingEndpointBase = configuredDriveUrl(
-        SUBMISSION_CONFIG.gradingEndpoint,
-      );
-      const targetSubmissionId =
-        record.submission.id || submissionId || record.id;
-      const gradingEndpoint = gradingEndpointBase
-        ? new URL(
-            encodeURIComponent(targetSubmissionId),
-            `${gradingEndpointBase.replace(/\/+$/, "")}/`,
-          ).toString()
-        : "";
+      const { endpoint: gradingEndpoint, submissionId: targetSubmissionId } =
+        gradingRequestTarget(record, submissionId);
       const submitButton = event.target.querySelector('button[type="submit"]');
       if (submissionsEndpointUrl() && !gradingEndpoint) {
         setGradingAlert(
@@ -8137,44 +8421,12 @@
               publish: true,
             }),
           });
-          const responseSource =
-            payload?.data?.submission ||
-            payload?.submission ||
-            payload?.data ||
-            payload;
-          const returnedScore = Number(responseSource?.score);
-          const returnedVersion = Number(responseSource?.version);
-          upsertRemoteSubmission({
-            id: record.id,
-            student: record.student,
-            assignmentId,
-            courseId: record.course.id,
-            submission: {
-              ...record.submission,
-              id: record.submission.id || submissionId || record.id,
-              score: Number.isFinite(returnedScore) ? returnedScore : score,
-              feedback:
-                typeof responseSource?.feedback === "string"
-                  ? responseSource.feedback
-                  : feedback,
-              gradeEtag:
-                scalarLabel(responseSource?.etag) ||
-                record.submission.gradeEtag ||
-                "",
-              gradeVersion:
-                Number.isInteger(returnedVersion)
-                  ? returnedVersion
-                  : record.submission.gradeVersion ?? null,
-              status: "graded",
-              gradedAt: validTimestamp(responseSource?.gradedAt, gradedAt),
-              updatedAt: validTimestamp(
-                responseSource?.publishedAt || responseSource?.gradedAt,
-                gradedAt,
-              ),
-            },
+          applyRemoteSubmissionGrade(record, payload, {
+            score,
+            feedback,
+            publish: true,
+            fallbackSubmissionId: submissionId,
           });
-          remoteSubmissionsState.error = "";
-          remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
         } else {
           const studentState = loadState(record.student);
           const currentSubmission =
@@ -8262,7 +8514,9 @@
       }
       const submittedAt = new Date().toISOString();
       const receiptId = receiptIdFor(id, submittedAt);
-      const remoteEndpoint = submissionsEndpointUrl();
+      const remoteEndpoint = submissionUploadEnabled()
+        ? submissionsEndpointUrl()
+        : "";
       if (remoteEndpoint) {
         const course = assignment ? findCourse(assignment.courseId) : null;
         const user = currentUser();
@@ -8474,7 +8728,7 @@
       if (statusMessage) {
         statusMessage.className = "grading-status is-draft";
         statusMessage.textContent =
-          "Unsaved grading changes. Save a device draft or publish when ready.";
+          "Unsaved grading changes. Save a draft or publish when ready.";
       }
     }
     if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
@@ -8616,6 +8870,30 @@
       } else {
         void refreshRemoteSubmissions();
       }
+    } else if (action === "refresh-teacher-progress") {
+      const course = findCourse(target.dataset.course);
+      const endpoint = course
+        ? teacherCourseEndpoint(course, "progress")
+        : "";
+      if (!course || !endpoint) {
+        showToast("The official progress service is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      const key = teacherProgressRequestKey(course);
+      target.disabled = true;
+      target.textContent = "Refreshing...";
+      invalidateTeacherProgress(course);
+      ensureTeacherPlatformData(course);
+      await platformRequests.get(key);
+      const error = platformRuntime.errors[key];
+      showToast(
+        error
+          ? `Official progress could not be refreshed. ${error}`
+          : "Official student progress was refreshed.",
+        { tone: error ? "error" : "success" },
+      );
     } else if (action === "save-grade-draft") {
       const form = target.closest("#grading-form");
       const studentKey = form?.dataset.student || "";
@@ -8631,18 +8909,85 @@
         });
         return;
       }
-      const draft = saveGradingDraft(record, {
-        score: form.elements.score?.value || "",
-        feedback: form.elements.feedback?.value || "",
-      });
+      setGradingAlert(form);
+      const scoreText = String(form.elements.score?.value || "").trim();
+      const score = Number(scoreText);
+      const feedback = String(form.elements.feedback?.value || "").trim();
+      const draft = saveGradingDraft(record, { score: scoreText, feedback });
       const statusMessage = form.querySelector(".grading-status");
       if (statusMessage && draft) {
         statusMessage.className = "grading-status is-draft";
         statusMessage.textContent = `Draft saved on this device at ${formatDate(draft.savedAt, true)} · Not published to the student.`;
       }
-      showToast("Grading draft saved on this device.", {
-        tone: "success",
-      });
+      const { endpoint, submissionId } = gradingRequestTarget(
+        record,
+        form.dataset.submission || "",
+      );
+      if (!submissionsEndpointUrl() || !endpoint) {
+        showToast("Grading draft saved on this device.", {
+          tone: "success",
+        });
+        return;
+      }
+      if (
+        !/^\d{1,3}$/.test(scoreText) ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 100
+      ) {
+        const message =
+          "Device draft saved. Enter a whole-number score from 0 to 100 before syncing it to the school record.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      if ([...feedback].length > 10000) {
+        const message =
+          "Device draft saved. Teacher feedback must be 10,000 characters or fewer before central sync.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      const originalLabel = target.textContent;
+      target.disabled = true;
+      target.textContent = "Saving...";
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "PUT",
+          headers: {
+            "Idempotency-Key": requestIdFor("grade-draft"),
+            "If-Match": record.submission.gradeEtag || '"grade-v0"',
+          },
+          body: JSON.stringify({
+            submissionId,
+            score,
+            feedback,
+            publish: false,
+          }),
+        });
+        applyRemoteSubmissionGrade(record, payload, {
+          score,
+          feedback,
+          publish: false,
+          fallbackSubmissionId: submissionId,
+        });
+        clearGradingDraft(record);
+        render(false, true);
+        showToast(
+          "Grading draft saved to the school record. It is not visible to the student.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        target.textContent = originalLabel;
+        const detail =
+          error?.name === "AbortError"
+            ? "The grading request timed out."
+            : error?.message || "The central draft could not be saved.";
+        const message = `Central save failed. Your device draft is still safe. ${detail}`;
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error", persistent: true });
+      }
     } else if (action === "clear-submission-file") {
       const form = target.closest("form");
       const input = form?.querySelector("#submission-file");

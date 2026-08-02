@@ -3,16 +3,26 @@
 
   const DEFAULT_CONFIG = Object.freeze({
     apiOrigin: "",
-    healthPath: "/health/upload-ready",
+    healthPath: "/health/ready",
+    uploadHealthPath: "/health/upload-ready",
     healthTimeoutMs: 3500,
     googleWorkspaceAuthStart: "",
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "grade12-gradebook-v2";
+  const SCRIPT_VERSION = "grade12-login-readiness-v3";
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
+      state,
+      message,
+      origin,
+      checkedAt: new Date().toISOString(),
+    });
+  }
+
+  function setUploadStatus(state, message, origin = "") {
+    window.LFA_UPLOAD_STATUS = Object.freeze({
       state,
       message,
       origin,
@@ -61,8 +71,13 @@
     }
   }
 
-  function applyEndpointConfiguration(origin, config = DEFAULT_CONFIG) {
+  function applyEndpointConfiguration(
+    origin,
+    config = DEFAULT_CONFIG,
+    options = {},
+  ) {
     const ready = Boolean(origin);
+    const uploadReady = ready && options.uploadReady === true;
     window.LFA_AUTH_CONFIG = Object.freeze({
       loginEndpoint: ready ? apiUrl(origin, "/v1/auth/login") : "",
       registrationEndpoint: ready ? apiUrl(origin, "/v1/auth/register") : "",
@@ -85,8 +100,11 @@
       rootFolderId: "1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
       rootFolderUrl:
         "https://drive.google.com/drive/folders/1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
+      uploadReady,
       materialsEndpoint: ready ? apiUrl(origin, "/v1/materials") : "",
-      syncEndpoint: ready ? optionalApiUrl(origin, config.driveSyncPath) : "",
+      syncEndpoint: uploadReady
+        ? optionalApiUrl(origin, config.driveSyncPath)
+        : "",
       submissionsEndpoint: ready ? apiUrl(origin, "/v1/submissions") : "",
       gradingEndpoint: ready ? apiUrl(origin, "/v1/grades") : "",
     });
@@ -135,16 +153,24 @@
     return { ...DEFAULT_CONFIG, ...fileConfig, ...injected };
   }
 
-  async function apiIsReady(origin, config) {
+  async function apiIsReady(
+    origin,
+    healthPath,
+    config,
+    timeoutCeilingMs = 10000,
+  ) {
     const healthUrl = optionalApiUrl(
       origin,
-      String(config.healthPath || DEFAULT_CONFIG.healthPath),
+      String(healthPath || ""),
     );
     if (!healthUrl) return false;
     const requestedTimeout = Number(config.healthTimeoutMs);
     const timeoutMs = Number.isFinite(requestedTimeout)
-      ? Math.min(10000, Math.max(1000, Math.round(requestedTimeout)))
-      : DEFAULT_CONFIG.healthTimeoutMs;
+      ? Math.min(
+          timeoutCeilingMs,
+          Math.max(1000, Math.round(requestedTimeout)),
+        )
+      : Math.min(timeoutCeilingMs, DEFAULT_CONFIG.healthTimeoutMs);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -203,26 +229,67 @@
 
     if (origin === null) {
       applyEndpointConfiguration("");
+      setUploadStatus(
+        "invalid",
+        "The school API configuration was rejected. File uploads remain disabled.",
+      );
       setApiStatus(
         "invalid",
         "The school API configuration was rejected. Secure remote features remain disabled.",
       );
     } else if (!origin) {
       applyEndpointConfiguration("");
+      setUploadStatus(
+        "disabled",
+        "File uploads are awaiting the school API deployment.",
+      );
       setApiStatus(
         "disabled",
         "Secure sign-in and registration are awaiting the school API deployment. No browser-only password is accepted.",
       );
-    } else if (await apiIsReady(origin, config)) {
-      applyEndpointConfiguration(origin, config);
-      setApiStatus("ready", "Secure school services are connected.", origin);
     } else {
-      applyEndpointConfiguration("");
-      setApiStatus(
-        "unavailable",
-        "Secure school services are temporarily unavailable. Sign-in and registration remain disabled while the public learning page stays available.",
-        origin,
-      );
+      const [coreReady, uploadReady] = await Promise.all([
+        apiIsReady(
+          origin,
+          config.healthPath || DEFAULT_CONFIG.healthPath,
+          config,
+        ),
+        apiIsReady(
+          origin,
+          config.uploadHealthPath || DEFAULT_CONFIG.uploadHealthPath,
+          config,
+          2500,
+        ),
+      ]);
+      if (coreReady) {
+        applyEndpointConfiguration(origin, config, { uploadReady });
+        setApiStatus(
+          "ready",
+          uploadReady
+            ? "Secure school services are connected."
+            : "Secure sign-in is connected. File uploads are temporarily unavailable.",
+          origin,
+        );
+        setUploadStatus(
+          uploadReady ? "ready" : "unavailable",
+          uploadReady
+            ? "Secure file uploads are connected."
+            : "Secure file uploads are temporarily unavailable. Work can still be saved as a device draft.",
+          origin,
+        );
+      } else {
+        applyEndpointConfiguration("");
+        setApiStatus(
+          "unavailable",
+          "Secure school services are temporarily unavailable. Sign-in and registration remain disabled while the public learning page stays available.",
+          origin,
+        );
+        setUploadStatus(
+          "unavailable",
+          "Secure file uploads are temporarily unavailable.",
+          origin,
+        );
+      }
     }
 
     await loadScript("course-catalog.js");

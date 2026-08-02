@@ -11,16 +11,17 @@ PostgreSQL schema, Drive adapters and deployment notes are in `backend/README.md
 
 The Pages build reads `LFA_API_ORIGIN` from a GitHub Actions repository
 variable and writes it to `learning/runtime-config.json`. Leave the variable
-empty until the production API and `/health/upload-ready` are available. Set
-`LFA_API_HEALTH_PATH=/health/upload-ready`; the learning bootstrap checks that
-endpoint before enabling login, registration, materials, submissions or
-grading, so a failed API deployment does not break the public portal.
+empty until the production API and `/health/ready` are available. Set
+`LFA_API_HEALTH_PATH=/health/ready`; the learning bootstrap checks that endpoint
+before enabling login, registration and database-backed course services. It
+checks `/health/upload-ready` separately before enabling Drive uploads, so a
+scanner or Drive outage does not unnecessarily disable sign-in.
 
 After the API is healthy, set `LFA_API_ORIGIN` to the HTTPS API origin (for
 example `https://api.lakeforestacademy.ca`) and run the Pages workflow. Optional
 repository variables are `LFA_API_HEALTH_PATH`,
-`LFA_API_HEALTH_TIMEOUT_MS`, `LFA_GOOGLE_AUTH_START` and
-`LFA_DRIVE_SYNC_PATH`.
+`LFA_API_UPLOAD_HEALTH_PATH`, `LFA_API_HEALTH_TIMEOUT_MS`,
+`LFA_GOOGLE_AUTH_START` and `LFA_DRIVE_SYNC_PATH`.
 
 ## Local commands
 

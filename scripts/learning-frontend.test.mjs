@@ -9,6 +9,142 @@ async function source(path) {
   return readFile(new URL(path, root), "utf8");
 }
 
+test("runtime configuration separates core and upload readiness", async () => {
+  const [bootstrap, runtimeConfigSource, viteConfig] = await Promise.all([
+    source("public/learning/bootstrap.js"),
+    source("public/learning/runtime-config.json"),
+    source("vite.config.ts"),
+  ]);
+  const runtimeConfig = JSON.parse(runtimeConfigSource);
+
+  assert.equal(runtimeConfig.healthPath, "/health/ready");
+  assert.equal(runtimeConfig.uploadHealthPath, "/health/upload-ready");
+  assert.match(bootstrap, /healthPath:\s*"\/health\/ready"/);
+  assert.match(
+    bootstrap,
+    /uploadHealthPath:\s*"\/health\/upload-ready"/,
+  );
+  assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
+  assert.match(
+    viteConfig,
+    /LFA_API_UPLOAD_HEALTH_PATH \|\| "\/health\/upload-ready"/,
+  );
+});
+
+async function bootstrapConfiguration({
+  coreReady = true,
+  uploadReady = true,
+} = {}) {
+  const requestedUrls = [];
+  const loadedScripts = [];
+  const window = {
+    location: { hostname: "lakeforestacademy.ca" },
+    LFA_RUNTIME_CONFIG: {
+      apiOrigin: "https://api.example.test",
+      healthPath: "/health/ready",
+      uploadHealthPath: "/health/upload-ready",
+      healthTimeoutMs: 1000,
+      driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
+    },
+    setTimeout: (...args) => {
+      const timer = setTimeout(...args);
+      timer.unref?.();
+      return timer;
+    },
+    clearTimeout,
+  };
+  const document = {
+    querySelector: () => null,
+    createElement: () => ({}),
+    head: {
+      append(script) {
+        loadedScripts.push(script.src);
+        queueMicrotask(() => script.onload?.());
+      },
+    },
+  };
+  const readinessResponse = (ready) => ({
+    ok: ready,
+    json: async () => ({ status: ready ? "ready" : "unavailable" }),
+  });
+  const fetch = async (request) => {
+    const value = String(request);
+    requestedUrls.push(value);
+    if (value.startsWith("./runtime-config.json")) {
+      return { ok: true, json: async () => ({}) };
+    }
+    const url = new URL(value);
+    if (url.pathname === "/health/ready") {
+      return readinessResponse(coreReady);
+    }
+    if (url.pathname === "/health/upload-ready") {
+      return readinessResponse(uploadReady);
+    }
+    throw new Error(`Unexpected bootstrap request: ${value}`);
+  };
+  const context = vm.createContext({
+    window,
+    document,
+    fetch,
+    URL,
+    Date,
+    AbortController,
+    Object,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Set,
+    Promise,
+  });
+
+  vm.runInContext(await source("public/learning/bootstrap.js"), context);
+  for (let turn = 0; turn < 20 && loadedScripts.length < 3; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  return { window, requestedUrls, loadedScripts };
+}
+
+test("core readiness opens sign-in while a failed upload check stays isolated", async () => {
+  const { window, requestedUrls, loadedScripts } =
+    await bootstrapConfiguration({ uploadReady: false });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_UPLOAD_STATUS.state, "unavailable");
+  assert.equal(
+    window.LFA_AUTH_CONFIG.loginEndpoint,
+    "https://api.example.test/v1/auth/login",
+  );
+  assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
+  assert.equal(window.LFA_DRIVE_CONFIG.syncEndpoint, "");
+  assert.equal(
+    window.LFA_DRIVE_CONFIG.submissionsEndpoint,
+    "https://api.example.test/v1/submissions",
+  );
+  assert.ok(requestedUrls.some((url) => url.endsWith("/health/ready")));
+  assert.ok(
+    requestedUrls.some((url) => url.endsWith("/health/upload-ready")),
+  );
+  assert.deepEqual(loadedScripts, [
+    "./course-catalog.js?v=grade12-login-readiness-v3",
+    "./platform-sequences.js?v=grade12-login-readiness-v3",
+    "./app.js?v=grade12-login-readiness-v3",
+  ]);
+});
+
+test("failed core readiness keeps password sign-in fail-closed", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: false,
+    uploadReady: true,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "unavailable");
+  assert.equal(window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.submissionsEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
+});
+
 function memoryStorage(seed = {}) {
   const records = new Map(Object.entries(seed));
   return {
@@ -20,6 +156,12 @@ function memoryStorage(seed = {}) {
 
 async function renderPortal(hash, session, options = {}) {
   const appRoot = { innerHTML: "" };
+  const listeners = new Map();
+  const windowSetTimeout = (...args) => {
+    const timer = setTimeout(...args);
+    timer.unref?.();
+    return timer;
+  };
   const classList = {
     contains: () => false,
     add() {},
@@ -35,7 +177,10 @@ async function renderPortal(hash, session, options = {}) {
       append() {},
     },
     querySelector: (selector) => (selector === "#app" ? appRoot : null),
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(listener);
+    },
     createElement: () => ({
       className: "",
       classList,
@@ -47,7 +192,9 @@ async function renderPortal(hash, session, options = {}) {
   };
   const sessionStorage = memoryStorage({
     "lake-forest-learning-session-v1": JSON.stringify(session),
+    ...(options.sessionStorageSeed || {}),
   });
+  const localStorage = memoryStorage(options.localStorageSeed || {});
   const location = {
     hash,
     hostname: "lakeforestacademy.ca",
@@ -64,11 +211,11 @@ async function renderPortal(hash, session, options = {}) {
     LFA_API_STATUS: { state: "disabled", message: "" },
     LFA_AUTH_CONFIG: {},
     LFA_DRIVE_CONFIG: {},
-    LFA_SUBMISSION_CONFIG: {},
+    LFA_SUBMISSION_CONFIG: options.submissionConfig || {},
     LFA_PLATFORM_API_CONFIG: options.platformApiConfig || {},
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     requestAnimationFrame: (callback) => callback(),
-    setTimeout,
+    setTimeout: windowSetTimeout,
     clearTimeout,
     scrollTo() {},
     addEventListener() {},
@@ -77,7 +224,7 @@ async function renderPortal(hash, session, options = {}) {
     window,
     document,
     sessionStorage,
-    localStorage: memoryStorage(options.localStorageSeed || {}),
+    localStorage,
     setTimeout,
     clearTimeout,
     URL,
@@ -98,6 +245,7 @@ async function renderPortal(hash, session, options = {}) {
     decodeURIComponent,
     structuredClone,
     AbortController,
+    FormData,
     fetch:
       options.fetch ||
       (async () => {
@@ -114,7 +262,35 @@ async function renderPortal(hash, session, options = {}) {
   for (let index = 0; index < (options.settleTurns ?? 8); index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  return appRoot.innerHTML;
+  if (options.interact) {
+    await options.interact({
+      appRoot,
+      context,
+      document,
+      listeners,
+      localStorage,
+      sessionStorage,
+      window,
+    });
+    for (
+      let index = 0;
+      index < (options.interactionSettleTurns ?? 4);
+      index += 1
+    ) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+  return options.returnHarness
+    ? {
+        html: appRoot.innerHTML,
+        context,
+        document,
+        listeners,
+        localStorage,
+        sessionStorage,
+        window,
+      }
+    : appRoot.innerHTML;
 }
 
 function jsonResponse(payload, status = 200) {
@@ -122,6 +298,7 @@ function jsonResponse(payload, status = 200) {
     ok: status >= 200 && status < 300,
     status,
     json: async () => payload,
+    text: async () => JSON.stringify(payload),
   };
 }
 
@@ -601,6 +778,202 @@ test("faculty module details prefer staff-only API fields and normalize final ev
   assert.doesNotMatch(courseHtml, /course-chip">Unit 11/);
 });
 
+test("faculty course and module views render the official student progress matrix", async () => {
+  const app = await source("public/learning/app.js");
+  assert.match(
+    app,
+    /invalidateTeacherProgress\(course\);\s*ensureTeacherPlatformData\(course\)/,
+  );
+  const platformApiConfig = {
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+  };
+  const progress = {
+    courseCode: "SCH4U",
+    students: [
+      {
+        studentId: "student-1",
+        displayName: "Alice Ng",
+        email: "alice@example.test",
+        modules: Array.from({ length: 12 }, (_, moduleNumber) => ({
+          moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+          moduleNumber,
+          status:
+            moduleNumber === 0
+              ? "completed"
+              : moduleNumber === 1
+                ? "in_progress"
+                : moduleNumber === 2
+                  ? "available"
+                  : "locked",
+          override:
+            moduleNumber === 2
+              ? {
+                  active: true,
+                  reason: "Documented accelerated pathway",
+                  expiresAt: "2026-08-15T18:00:00.000Z",
+                }
+              : null,
+        })),
+      },
+      {
+        studentId: "student-2",
+        displayName: "Noah Patel",
+        email: "noah@example.test",
+        modules: Array.from({ length: 12 }, (_, moduleNumber) => ({
+          moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+          moduleNumber,
+          status: moduleNumber === 0 ? "available" : "locked",
+          override: null,
+        })),
+      },
+    ],
+  };
+  let progressRequests = 0;
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/teacher/courses/SCH4U/progress") {
+      progressRequests += 1;
+      return jsonResponse({ data: progress });
+    }
+    if (url.pathname.endsWith("/roster")) {
+      return jsonResponse({ data: progress.students });
+    }
+    if (url.pathname.endsWith("/gradebook")) {
+      return jsonResponse({ data: {} });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const session = {
+    email: "administrator@lakeforestacademy.ca",
+    displayName: "Academic Administrator",
+    role: "teacher_admin",
+  };
+  const courseResult = await renderPortal("#/teacher/course/sch4u", session, {
+    platformApiConfig,
+    fetch,
+    settleTurns: 14,
+    interact: async ({ listeners }) => {
+      const click = listeners.get("click")?.[0];
+      assert.equal(typeof click, "function");
+      const button = {
+        dataset: {
+          action: "refresh-teacher-progress",
+          course: "sch4u",
+        },
+        disabled: false,
+        textContent: "Refresh Official Progress",
+        closest(selector) {
+          if (selector === "[data-action], [data-route]") return button;
+          return null;
+        },
+      };
+      await click({ target: button });
+    },
+    returnHarness: true,
+  });
+  const course = courseResult.html;
+  assert.equal(progressRequests, 2);
+  assert.match(course, /Student × Module Matrix/);
+  assert.match(course, /aria-label="SCH4U official progress matrix"/);
+  assert.match(course, /Last refreshed/);
+  assert.match(course, /data-action="refresh-teacher-progress"/);
+  assert.equal(
+    (course.match(/class="teacher-progress-module-link"/g) || []).length,
+    12,
+  );
+  assert.match(course, /Alice Ng/);
+  assert.match(course, /Noah Patel/);
+  assert.match(course, /data-status="completed">Completed/);
+  assert.match(course, /data-status="in_progress">In Progress/);
+  assert.match(course, /Override active/);
+
+  const module = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M02",
+    session,
+    { platformApiConfig, fetch, settleTurns: 14 },
+  );
+  assert.match(module, /Student Module Status/);
+  assert.match(
+    module,
+    /aria-label="SCH4U Module 2 official student progress"/,
+  );
+  assert.match(module, /Alice Ng[\s\S]*?data-status="available">Available/);
+  assert.match(module, /Active Override/);
+  assert.match(module, /Documented accelerated pathway/);
+  assert.match(module, /Noah Patel[\s\S]*?data-status="locked">Locked/);
+});
+
+test("faculty progress fails closed when the central endpoint is unavailable", async () => {
+  const platformApiConfig = {
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+  };
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname.endsWith("/progress")) {
+      return jsonResponse(
+        { error: { message: "Central progress service unavailable." } },
+        503,
+      );
+    }
+    if (url.pathname.endsWith("/roster")) {
+      return jsonResponse({
+        data: [
+          {
+            studentId: "student-1",
+            displayName: "Roster Aggregate Only",
+            email: "aggregate@example.test",
+            completedModules: 12,
+            totalModules: 12,
+          },
+        ],
+      });
+    }
+    if (url.pathname.endsWith("/gradebook")) {
+      return jsonResponse({ data: {} });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const session = {
+    email: "administrator@lakeforestacademy.ca",
+    displayName: "Academic Administrator",
+    role: "teacher_admin",
+  };
+  const options = {
+    platformApiConfig,
+    fetch,
+    settleTurns: 14,
+    localStorageSeed: {
+      "lake-forest-learning-state-v1": JSON.stringify({
+        enrolledCourseIds: ["sch4u"],
+        completed: ["SCH4U-U1-L1", "SCH4U-U1-L2"],
+        guideChecks: {},
+        read: [],
+        feedbackRead: [],
+        submissions: {},
+      }),
+    },
+  };
+  const course = await renderPortal(
+    "#/teacher/course/sch4u",
+    session,
+    options,
+  );
+  assert.match(course, /Official Progress Unavailable/);
+  assert.match(course, /Central progress service unavailable/);
+  assert.match(course, /No browser-only or roster-derived module status is shown/);
+  assert.doesNotMatch(course, /aria-label="SCH4U official progress matrix"/);
+  assert.doesNotMatch(course, /class="badge [^"]*teacher-progress-status"/);
+
+  const module = await renderPortal(
+    "#/teacher/course/sch4u/module/SCH4U-M02",
+    session,
+    options,
+  );
+  assert.match(module, /Official Progress Unavailable/);
+  assert.doesNotMatch(module, /official student progress"/);
+  assert.doesNotMatch(module, /teacher-progress-status/);
+});
+
 test("platform contracts include published grades, remote unit numbers and direct-grade concurrency headers", async () => {
   const [bootstrap, app] = await Promise.all([
     source("public/learning/bootstrap.js"),
@@ -636,6 +1009,162 @@ test("platform contracts include published grades, remote unit numbers and direc
   );
 });
 
+test("submission grading drafts sync centrally and remain unpublished", async () => {
+  const submissionId = "11111111-1111-4111-8111-111111111111";
+  const submittedAt = "2026-08-01T14:00:00.000Z";
+  const gradedAt = "2026-08-02T03:30:00.000Z";
+  let gradeRequest = null;
+  let interactionState = null;
+  const fetch = async (request, init = {}) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/submissions") {
+      return jsonResponse({
+        data: [
+          {
+            id: submissionId,
+            submissionId,
+            student: {
+              id: "student-1",
+              displayName: "Sample Student",
+              email: "student@example.test",
+            },
+            courseCode: "SCH4U",
+            assignmentId: "sch4u-m02-assignment",
+            assignmentTitle: "Safer Organic Product Reformulation Dossier",
+            unitNumber: 1,
+            unit: "Unit 1",
+            status: "submitted",
+            submittedAt,
+            updatedAt: gradedAt,
+            receiptId: submissionId,
+            score: 73,
+            feedback: "Central draft feedback.",
+            gradedAt,
+            version: 2,
+            etag: '"grade-v2"',
+            grade: {
+              score: 73,
+              feedback: "Central draft feedback.",
+              gradedAt,
+              publishedAt: null,
+              version: 2,
+              etag: '"grade-v2"',
+            },
+          },
+        ],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    if (url.pathname === `/v1/grades/${submissionId}`) {
+      gradeRequest = { init, url };
+      return jsonResponse({
+        data: {
+          submissionId,
+          score: 81,
+          feedback: "Updated central draft feedback.",
+          gradedAt: "2026-08-02T04:00:00.000Z",
+          publishedAt: null,
+          version: 3,
+          etag: '"grade-v3"',
+        },
+      });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const result = await renderPortal(
+    "#/teacher/submission/student%40example.test/sch4u-m02-assignment",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    {
+      submissionConfig: {
+        submissionsEndpoint: "https://api.example.test/v1/submissions",
+        gradingEndpoint: "https://api.example.test/v1/grades",
+      },
+      fetch,
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "csrf-grade-draft-test",
+      },
+      settleTurns: 14,
+      interact: async ({ listeners }) => {
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        const score = {
+          value: "81",
+          removeAttribute() {},
+          setAttribute() {},
+        };
+        const feedback = {
+          value: "Updated central draft feedback.",
+          removeAttribute() {},
+          setAttribute() {},
+        };
+        const alert = {
+          className: "form-alert is-error",
+          hidden: true,
+          textContent: "",
+          focus() {},
+        };
+        const status = { className: "grading-status", textContent: "" };
+        const form = {
+          dataset: {
+            assignment: "sch4u-m02-assignment",
+            student: "student@example.test",
+            submission: submissionId,
+          },
+          elements: { feedback, score },
+          querySelector(selector) {
+            if (selector === "#grading-form-alert") return alert;
+            if (selector === ".grading-status") return status;
+            return null;
+          },
+        };
+        const button = {
+          dataset: { action: "save-grade-draft" },
+          disabled: false,
+          textContent: "Save Draft",
+          closest(selector) {
+            if (selector === "[data-action], [data-route]") return button;
+            if (selector === "#grading-form") return form;
+            return null;
+          },
+        };
+        await click({ target: button });
+        interactionState = { alert, button, status };
+      },
+      returnHarness: true,
+    },
+  );
+  assert.ok(gradeRequest, JSON.stringify(interactionState));
+  assert.equal(gradeRequest.init.method, "PUT");
+  assert.equal(gradeRequest.init.credentials, "include");
+  assert.equal(gradeRequest.init.headers["If-Match"], '"grade-v2"');
+  assert.equal(
+    gradeRequest.init.headers["X-CSRF-Token"],
+    "csrf-grade-draft-test",
+  );
+  assert.match(gradeRequest.init.headers["Idempotency-Key"], /^grade-draft-/);
+  assert.deepEqual(JSON.parse(gradeRequest.init.body), {
+    submissionId,
+    score: 81,
+    feedback: "Updated central draft feedback.",
+    publish: false,
+  });
+  assert.equal(
+    result.sessionStorage.getItem(
+      "lake-forest-learning-grading-drafts-v1",
+    ),
+    "{}",
+  );
+  assert.match(result.html, /Draft Saved/);
+  assert.match(result.html, /Draft saved to the school record/);
+  assert.match(result.html, /value="81"/);
+  assert.match(result.html, />Updated central draft feedback\.<\/textarea>/);
+  assert.doesNotMatch(result.html, /Returned at 81%/);
+});
+
 test("project submissions require a new file and final-evaluation uploads omit empty unit numbers", async () => {
   const app = await source("public/learning/app.js");
   const project = await renderPortal(
@@ -655,6 +1184,141 @@ test("project submissions require a new file and final-evaluation uploads omit e
     app,
     /Number\.isInteger\(unitNumber\)[\s\S]{0,180}upload\.set\("unitNumber", String\(unitNumber\)\)/,
   );
+});
+
+test("an upload dependency outage preserves submission records but uses device drafts", async () => {
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+  const submissionsEndpoint = "https://api.example.test/v1/submissions";
+  const uploadPaused = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+    },
+  );
+  const uploadConnected = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+    },
+  );
+  const savedDraft = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+      localStorageSeed: {
+        "lake-forest-learning-state-v1": JSON.stringify({
+          enrolledCourseIds: ["ics4u"],
+          completed: [],
+          guideChecks: {},
+          read: [],
+          feedbackRead: [],
+          submissions: {
+            "ics4u-m11-culminating-assignment": {
+              delivery: "device",
+              fileName: "culminating-project.pdf",
+              submittedAt: "2026-08-02T08:00:00.000Z",
+              receiptId: "LFA-DEVICE-DRAFT-1",
+              history: [],
+            },
+          },
+        }),
+      },
+    },
+  );
+  const localDraftState = (fileName, submittedAt) => ({
+    "lake-forest-learning-state-v1": JSON.stringify({
+      enrolledCourseIds: ["ics4u"],
+      completed: [],
+      guideChecks: {},
+      read: [],
+      feedbackRead: [],
+      submissions: {
+        "ics4u-m11-culminating-assignment": {
+          delivery: "device",
+          fileName,
+          submittedAt,
+          receiptId: `LFA-${fileName}`,
+          history: [],
+        },
+      },
+    }),
+  });
+  const remoteSubmissionFetch = (fileName, submittedAt) => async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname !== "/v1/submissions") {
+      return jsonResponse({ data: [] });
+    }
+    return jsonResponse({
+      data: [
+        {
+          id: `remote-${fileName}`,
+          submissionId: `remote-${fileName}`,
+          student: {
+            displayName: "Student",
+            email: session.email,
+          },
+          courseCode: "ICS4U",
+          assignmentId: "ics4u-m11-culminating-assignment",
+          assignmentTitle: "Culminating Programming Project",
+          status: "submitted",
+          submittedAt,
+          receiptId: `REMOTE-${fileName}`,
+          fileName,
+        },
+      ],
+      page: { nextCursor: null, limit: 100 },
+    });
+  };
+  const newerLocal = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: localDraftState(
+        "newer-device-draft.pdf",
+        "2026-08-02T10:00:00.000Z",
+      ),
+      fetch: remoteSubmissionFetch(
+        "older-remote-version.pdf",
+        "2026-08-02T09:00:00.000Z",
+      ),
+      settleTurns: 14,
+    },
+  );
+  const newerRemote = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+      localStorageSeed: localDraftState(
+        "stale-device-draft.pdf",
+        "2026-08-02T09:00:00.000Z",
+      ),
+      fetch: remoteSubmissionFetch(
+        "newer-remote-version.pdf",
+        "2026-08-02T10:00:00.000Z",
+      ),
+      settleTurns: 14,
+    },
+  );
+
+  assert.match(uploadPaused, /Device-Only Draft Mode/);
+  assert.match(uploadPaused, /Save Draft on This Device/);
+  assert.doesNotMatch(uploadPaused, /Connected to Lotus Drive/);
+  assert.match(uploadConnected, /Connected to Lotus Drive/);
+  assert.match(uploadConnected, /> Submit to Lotus Drive</);
+  assert.match(savedDraft, /Saved on This Device/);
+  assert.match(savedDraft, /culminating-project\.pdf/);
+  assert.match(newerLocal, /newer-device-draft\.pdf/);
+  assert.doesNotMatch(newerLocal, /older-remote-version\.pdf/);
+  assert.match(newerRemote, /newer-remote-version\.pdf/);
+  assert.doesNotMatch(newerRemote, /stale-device-draft\.pdf/);
 });
 
 test("catalog and module links expose only credential-free HTTPS destinations", async () => {
