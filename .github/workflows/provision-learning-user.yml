@@ -1,0 +1,128 @@
+name: Provision learning faculty account
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_changes:
+        description: Create the faculty account in production
+        type: boolean
+        required: true
+        default: false
+      email:
+        description: Lake Forest Academy faculty email
+        type: string
+        required: true
+      first_name:
+        description: First name
+        type: string
+        required: true
+      last_name:
+        description: Last name
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: learning-faculty-provisioning
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: ${{ inputs.apply_changes }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+      SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      MIGRATION_SA: ${{ vars.GCP_MIGRATION_SERVICE_ACCOUNT }}
+      DB_MIGRATION_SECRET: ${{ vars.GCP_DB_MIGRATION_SECRET }}
+      CSRF_SECRET: ${{ vars.GCP_CSRF_SECRET }}
+      VPC_NETWORK: ${{ vars.GCP_VPC_NETWORK }}
+      VPC_SUBNET: ${{ vars.GCP_VPC_SUBNET }}
+      WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      USER_EMAIL: ${{ inputs.email }}
+      USER_FIRST_NAME: ${{ inputs.first_name }}
+      USER_LAST_NAME: ${{ inputs.last_name }}
+      LFA_USER_PASSWORD: ${{ secrets.LFA_TEST_USER_PASSWORD }}
+      JOB_NAME: lfa-user-${{ github.run_id }}
+    steps:
+      - name: Validate the protected request
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in PROJECT_ID REGION SERVICE SQL_INSTANCE MIGRATION_SA DB_MIGRATION_SECRET CSRF_SECRET VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA LFA_USER_PASSWORD; do
+            test -n "${!name:-}" || { echo "Missing production configuration: ${name}" >&2; exit 1; }
+          done
+          [[ "$USER_EMAIL" =~ ^[A-Za-z0-9._%+-]+@lakeforestacademy\.ca$ ]] || { echo "Faculty email must use lakeforestacademy.ca." >&2; exit 1; }
+          [[ "$USER_FIRST_NAME" =~ ^[A-Za-z][A-Za-z\ .'-]{0,49}$ ]] || { echo "Invalid first name." >&2; exit 1; }
+          [[ "$USER_LAST_NAME" =~ ^[A-Za-z][A-Za-z\ .'-]{0,49}$ ]] || { echo "Invalid last name." >&2; exit 1; }
+          [[ "$LFA_USER_PASSWORD" != *,* ]] || { echo "The injected password cannot contain a comma." >&2; exit 1; }
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Create the faculty account through an isolated job
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            gcloud run jobs delete "$JOB_NAME" \
+              --project "$PROJECT_ID" \
+              --region "$REGION" \
+              --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          image="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.template.spec.containers[0].image)')"
+          test -n "$image"
+
+          args="scripts/create-user.js,--email,${USER_EMAIL},--first,${USER_FIRST_NAME},--last,${USER_LAST_NAME},--role,teacher"
+          gcloud run jobs create "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$image" \
+            --service-account "$MIGRATION_SA" \
+            --set-cloudsql-instances "$SQL_INSTANCE" \
+            --network "$VPC_NETWORK" \
+            --subnet "$VPC_SUBNET" \
+            --vpc-egress private-ranges-only \
+            --set-env-vars "NODE_ENV=production,DATABASE_SSL=false,DATABASE_POOL_MAX=5,INSTANCE_UNIX_SOCKET=/cloudsql/${SQL_INSTANCE},LFA_USER_PASSWORD=${LFA_USER_PASSWORD}" \
+            --set-secrets "DATABASE_URL=${DB_MIGRATION_SECRET}:latest,CSRF_SECRET=${CSRF_SECRET}:latest" \
+            --command node \
+            --args "$args" \
+            --tasks 1 \
+            --max-retries 0 \
+            --task-timeout 10m \
+            --quiet
+
+          gcloud run jobs execute "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --wait
+
+      - name: Record the provisioned access scope
+        run: |
+          {
+            echo "### Faculty account provisioned"
+            echo "- Email: \`$USER_EMAIL\`"
+            echo "- Role: \`teacher\`"
+            echo "- Courses: SCH4U, ICS4U, SPH4U, MHF4U, MCV4U, BBB4M"
+            echo "- The isolated Cloud Run job and its password-bearing configuration were deleted."
+          } >> "$GITHUB_STEP_SUMMARY"
