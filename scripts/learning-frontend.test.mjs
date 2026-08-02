@@ -20,6 +20,12 @@ function memoryStorage(seed = {}) {
 
 async function renderPortal(hash, session, options = {}) {
   const appRoot = { innerHTML: "" };
+  const listeners = new Map();
+  const windowSetTimeout = (...args) => {
+    const timer = setTimeout(...args);
+    timer.unref?.();
+    return timer;
+  };
   const classList = {
     contains: () => false,
     add() {},
@@ -35,7 +41,10 @@ async function renderPortal(hash, session, options = {}) {
       append() {},
     },
     querySelector: (selector) => (selector === "#app" ? appRoot : null),
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(listener);
+    },
     createElement: () => ({
       className: "",
       classList,
@@ -47,7 +56,9 @@ async function renderPortal(hash, session, options = {}) {
   };
   const sessionStorage = memoryStorage({
     "lake-forest-learning-session-v1": JSON.stringify(session),
+    ...(options.sessionStorageSeed || {}),
   });
+  const localStorage = memoryStorage(options.localStorageSeed || {});
   const location = {
     hash,
     hostname: "lakeforestacademy.ca",
@@ -64,11 +75,11 @@ async function renderPortal(hash, session, options = {}) {
     LFA_API_STATUS: { state: "disabled", message: "" },
     LFA_AUTH_CONFIG: {},
     LFA_DRIVE_CONFIG: {},
-    LFA_SUBMISSION_CONFIG: {},
+    LFA_SUBMISSION_CONFIG: options.submissionConfig || {},
     LFA_PLATFORM_API_CONFIG: options.platformApiConfig || {},
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     requestAnimationFrame: (callback) => callback(),
-    setTimeout,
+    setTimeout: windowSetTimeout,
     clearTimeout,
     scrollTo() {},
     addEventListener() {},
@@ -77,7 +88,7 @@ async function renderPortal(hash, session, options = {}) {
     window,
     document,
     sessionStorage,
-    localStorage: memoryStorage(options.localStorageSeed || {}),
+    localStorage,
     setTimeout,
     clearTimeout,
     URL,
@@ -98,6 +109,7 @@ async function renderPortal(hash, session, options = {}) {
     decodeURIComponent,
     structuredClone,
     AbortController,
+    FormData,
     fetch:
       options.fetch ||
       (async () => {
@@ -114,7 +126,35 @@ async function renderPortal(hash, session, options = {}) {
   for (let index = 0; index < (options.settleTurns ?? 8); index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  return appRoot.innerHTML;
+  if (options.interact) {
+    await options.interact({
+      appRoot,
+      context,
+      document,
+      listeners,
+      localStorage,
+      sessionStorage,
+      window,
+    });
+    for (
+      let index = 0;
+      index < (options.interactionSettleTurns ?? 4);
+      index += 1
+    ) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+  return options.returnHarness
+    ? {
+        html: appRoot.innerHTML,
+        context,
+        document,
+        listeners,
+        localStorage,
+        sessionStorage,
+        window,
+      }
+    : appRoot.innerHTML;
 }
 
 function jsonResponse(payload, status = 200) {
@@ -122,6 +162,7 @@ function jsonResponse(payload, status = 200) {
     ok: status >= 200 && status < 300,
     status,
     json: async () => payload,
+    text: async () => JSON.stringify(payload),
   };
 }
 
@@ -634,6 +675,162 @@ test("platform contracts include published grades, remote unit numbers and direc
     app,
     /platformEndpoint\(\s*PLATFORM_API_CONFIG\.activityProgressEndpoint,\s*encodeURIComponent\(activityId\)/,
   );
+});
+
+test("submission grading drafts sync centrally and remain unpublished", async () => {
+  const submissionId = "11111111-1111-4111-8111-111111111111";
+  const submittedAt = "2026-08-01T14:00:00.000Z";
+  const gradedAt = "2026-08-02T03:30:00.000Z";
+  let gradeRequest = null;
+  let interactionState = null;
+  const fetch = async (request, init = {}) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/submissions") {
+      return jsonResponse({
+        data: [
+          {
+            id: submissionId,
+            submissionId,
+            student: {
+              id: "student-1",
+              displayName: "Sample Student",
+              email: "student@example.test",
+            },
+            courseCode: "SCH4U",
+            assignmentId: "sch4u-m02-assignment",
+            assignmentTitle: "Safer Organic Product Reformulation Dossier",
+            unitNumber: 1,
+            unit: "Unit 1",
+            status: "submitted",
+            submittedAt,
+            updatedAt: gradedAt,
+            receiptId: submissionId,
+            score: 73,
+            feedback: "Central draft feedback.",
+            gradedAt,
+            version: 2,
+            etag: '"grade-v2"',
+            grade: {
+              score: 73,
+              feedback: "Central draft feedback.",
+              gradedAt,
+              publishedAt: null,
+              version: 2,
+              etag: '"grade-v2"',
+            },
+          },
+        ],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    if (url.pathname === `/v1/grades/${submissionId}`) {
+      gradeRequest = { init, url };
+      return jsonResponse({
+        data: {
+          submissionId,
+          score: 81,
+          feedback: "Updated central draft feedback.",
+          gradedAt: "2026-08-02T04:00:00.000Z",
+          publishedAt: null,
+          version: 3,
+          etag: '"grade-v3"',
+        },
+      });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const result = await renderPortal(
+    "#/teacher/submission/student%40example.test/sch4u-m02-assignment",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    {
+      submissionConfig: {
+        submissionsEndpoint: "https://api.example.test/v1/submissions",
+        gradingEndpoint: "https://api.example.test/v1/grades",
+      },
+      fetch,
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "csrf-grade-draft-test",
+      },
+      settleTurns: 14,
+      interact: async ({ listeners }) => {
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        const score = {
+          value: "81",
+          removeAttribute() {},
+          setAttribute() {},
+        };
+        const feedback = {
+          value: "Updated central draft feedback.",
+          removeAttribute() {},
+          setAttribute() {},
+        };
+        const alert = {
+          className: "form-alert is-error",
+          hidden: true,
+          textContent: "",
+          focus() {},
+        };
+        const status = { className: "grading-status", textContent: "" };
+        const form = {
+          dataset: {
+            assignment: "sch4u-m02-assignment",
+            student: "student@example.test",
+            submission: submissionId,
+          },
+          elements: { feedback, score },
+          querySelector(selector) {
+            if (selector === "#grading-form-alert") return alert;
+            if (selector === ".grading-status") return status;
+            return null;
+          },
+        };
+        const button = {
+          dataset: { action: "save-grade-draft" },
+          disabled: false,
+          textContent: "Save Draft",
+          closest(selector) {
+            if (selector === "[data-action], [data-route]") return button;
+            if (selector === "#grading-form") return form;
+            return null;
+          },
+        };
+        await click({ target: button });
+        interactionState = { alert, button, status };
+      },
+      returnHarness: true,
+    },
+  );
+  assert.ok(gradeRequest, JSON.stringify(interactionState));
+  assert.equal(gradeRequest.init.method, "PUT");
+  assert.equal(gradeRequest.init.credentials, "include");
+  assert.equal(gradeRequest.init.headers["If-Match"], '"grade-v2"');
+  assert.equal(
+    gradeRequest.init.headers["X-CSRF-Token"],
+    "csrf-grade-draft-test",
+  );
+  assert.match(gradeRequest.init.headers["Idempotency-Key"], /^grade-draft-/);
+  assert.deepEqual(JSON.parse(gradeRequest.init.body), {
+    submissionId,
+    score: 81,
+    feedback: "Updated central draft feedback.",
+    publish: false,
+  });
+  assert.equal(
+    result.sessionStorage.getItem(
+      "lake-forest-learning-grading-drafts-v1",
+    ),
+    "{}",
+  );
+  assert.match(result.html, /Draft Saved/);
+  assert.match(result.html, /Draft saved to the school record/);
+  assert.match(result.html, /value="81"/);
+  assert.match(result.html, />Updated central draft feedback\.<\/textarea>/);
+  assert.doesNotMatch(result.html, /Returned at 81%/);
 });
 
 test("project submissions require a new file and final-evaluation uploads omit empty unit numbers", async () => {

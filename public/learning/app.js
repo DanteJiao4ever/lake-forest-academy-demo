@@ -1420,6 +1420,83 @@
     saveGradingDrafts();
   }
 
+  function gradingRequestTarget(record, fallbackSubmissionId = "") {
+    const endpointBase = configuredDriveUrl(
+      SUBMISSION_CONFIG.gradingEndpoint,
+    );
+    const submissionId = scalarLabel(
+      record?.submission?.id || fallbackSubmissionId || record?.id,
+    );
+    return {
+      submissionId,
+      endpoint:
+        endpointBase && submissionId
+          ? new URL(
+              encodeURIComponent(submissionId),
+              `${endpointBase.replace(/\/+$/, "")}/`,
+            ).toString()
+          : "",
+    };
+  }
+
+  function applyRemoteSubmissionGrade(
+    record,
+    payload,
+    { score, feedback, publish, fallbackSubmissionId = "" },
+  ) {
+    const responseSource =
+      payload?.data?.submission ||
+      payload?.submission ||
+      payload?.data ||
+      payload;
+    const now = new Date().toISOString();
+    const returnedScore = Number(responseSource?.score);
+    const returnedVersion = Number(responseSource?.version);
+    const publishedAt = validTimestamp(
+      responseSource?.publishedAt,
+      publish ? now : "",
+    );
+    const gradedAt = validTimestamp(responseSource?.gradedAt, now);
+    const submissionId = scalarLabel(
+      responseSource?.submissionId ||
+        record?.submission?.id ||
+        fallbackSubmissionId ||
+        record?.id,
+    );
+    upsertRemoteSubmission({
+      id: record.id,
+      student: record.student,
+      assignmentId: record.assignment.id,
+      courseId: record.course.id,
+      submission: {
+        ...record.submission,
+        id: submissionId,
+        score: Number.isInteger(returnedScore) ? returnedScore : score,
+        feedback:
+          typeof responseSource?.feedback === "string"
+            ? responseSource.feedback
+            : feedback,
+        gradeEtag:
+          scalarLabel(responseSource?.etag) ||
+          record.submission.gradeEtag ||
+          "",
+        gradeVersion: Number.isInteger(returnedVersion)
+          ? returnedVersion
+          : record.submission.gradeVersion ?? null,
+        publishedAt,
+        status: publishedAt ? "graded" : "submitted",
+        gradedAt,
+        updatedAt: validTimestamp(
+          publishedAt || responseSource?.gradedAt,
+          now,
+        ),
+      },
+    });
+    remoteSubmissionsState.error = "";
+    remoteSubmissionsState.lastLoadedAt = now;
+    return { publishedAt, gradedAt };
+  }
+
   function captureVisibleGradingDraft() {
     const form = document.querySelector("#grading-form");
     if (!form) return null;
@@ -2003,6 +2080,13 @@
     if (record.unmapped) {
       return { label: "Needs Mapping", className: "danger" };
     }
+    if (
+      record.submission.score != null &&
+      !record.submission.publishedAt &&
+      record.submission.status !== "graded"
+    ) {
+      return { label: "Draft Saved", className: "warning" };
+    }
     if (record.submission.status === "graded") {
       return { label: "Returned", className: "success" };
     }
@@ -2439,6 +2523,10 @@
       source.updatedAt || source.gradedAt || source.grade?.updatedAt,
       "",
     );
+    const publishedAt = validTimestamp(
+      source.publishedAt || source.grade?.publishedAt,
+      "",
+    );
     const historySource = Array.isArray(source.history)
       ? source.history
       : Array.isArray(source.versions)
@@ -2506,7 +2594,9 @@
         fileSize: fallbackVersion.fileSize,
         fileType: fallbackVersion.fileType,
         fileUrl,
-        status: score != null ? "graded" : scalarLabel(source.status) || "submitted",
+        status: publishedAt
+          ? "graded"
+          : scalarLabel(source.status) || "submitted",
         score,
         feedback: scalarLabel(
           source.feedback || source.teacherFeedback || source.grade?.feedback,
@@ -2521,6 +2611,7 @@
           source.gradedAt || source.grade?.gradedAt,
           score != null ? updatedAt : "",
         ),
+        publishedAt,
         updatedAt,
         history,
       },
@@ -5502,6 +5593,11 @@
     }
     const status = teacherSubmissionStatus(record);
     const gradingDraft = gradingDraftFor(record);
+    const centralDraft =
+      !gradingDraft &&
+      record.submission.score != null &&
+      !record.submission.publishedAt &&
+      record.submission.status !== "graded";
     const gradeScoreValue =
       gradingDraft?.score ??
       (record.submission.score == null ? "" : String(record.submission.score));
@@ -5623,7 +5719,7 @@
               <textarea id="grade-feedback" name="feedback" maxlength="10000" required aria-describedby="grading-form-alert grading-help" placeholder="Explain strengths and the next step for improvement.">${escapeHtml(gradeFeedbackValue)}</textarea>
               <p class="form-alert is-error" id="grading-form-alert" role="alert" tabindex="-1" hidden></p>
               <p class="grading-status ${
-                gradingDraft
+                gradingDraft || centralDraft
                   ? "is-draft"
                   : record.submission.score != null
                     ? "is-graded"
@@ -5631,6 +5727,8 @@
               }">${
                 gradingDraft
                   ? `Draft saved on this device at ${formatDate(gradingDraft.savedAt, true)} · Not published to the student.`
+                  : centralDraft
+                    ? `Draft saved to the school record${record.submission.updatedAt || record.submission.gradedAt ? ` at ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""} · Not published to the student; any earlier published result remains visible.`
                   : record.submission.score != null
                     ? `Returned at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
                     : "Awaiting grading"
@@ -5651,7 +5749,7 @@
                   : submissionsEndpointUrl() &&
                       !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
                   ? '<p class="login-help" id="grading-help">You can save a device draft now. Connect the grading service before publishing to the student.</p>'
-                  : '<p class="login-help" id="grading-help">Save Draft keeps work on this device. Publish sends the percentage and feedback to the student record.</p>'
+                  : '<p class="login-help" id="grading-help">Save Draft syncs a valid score and current feedback to the school record without showing it to the student. Publish releases the percentage and feedback.</p>'
               }
               ${
                 nextAwaitingRecord
@@ -8099,17 +8197,8 @@
       }
       saveGradingDraft(record, { score: scoreText, feedback });
       const gradedAt = new Date().toISOString();
-      const gradingEndpointBase = configuredDriveUrl(
-        SUBMISSION_CONFIG.gradingEndpoint,
-      );
-      const targetSubmissionId =
-        record.submission.id || submissionId || record.id;
-      const gradingEndpoint = gradingEndpointBase
-        ? new URL(
-            encodeURIComponent(targetSubmissionId),
-            `${gradingEndpointBase.replace(/\/+$/, "")}/`,
-          ).toString()
-        : "";
+      const { endpoint: gradingEndpoint, submissionId: targetSubmissionId } =
+        gradingRequestTarget(record, submissionId);
       const submitButton = event.target.querySelector('button[type="submit"]');
       if (submissionsEndpointUrl() && !gradingEndpoint) {
         setGradingAlert(
@@ -8137,44 +8226,12 @@
               publish: true,
             }),
           });
-          const responseSource =
-            payload?.data?.submission ||
-            payload?.submission ||
-            payload?.data ||
-            payload;
-          const returnedScore = Number(responseSource?.score);
-          const returnedVersion = Number(responseSource?.version);
-          upsertRemoteSubmission({
-            id: record.id,
-            student: record.student,
-            assignmentId,
-            courseId: record.course.id,
-            submission: {
-              ...record.submission,
-              id: record.submission.id || submissionId || record.id,
-              score: Number.isFinite(returnedScore) ? returnedScore : score,
-              feedback:
-                typeof responseSource?.feedback === "string"
-                  ? responseSource.feedback
-                  : feedback,
-              gradeEtag:
-                scalarLabel(responseSource?.etag) ||
-                record.submission.gradeEtag ||
-                "",
-              gradeVersion:
-                Number.isInteger(returnedVersion)
-                  ? returnedVersion
-                  : record.submission.gradeVersion ?? null,
-              status: "graded",
-              gradedAt: validTimestamp(responseSource?.gradedAt, gradedAt),
-              updatedAt: validTimestamp(
-                responseSource?.publishedAt || responseSource?.gradedAt,
-                gradedAt,
-              ),
-            },
+          applyRemoteSubmissionGrade(record, payload, {
+            score,
+            feedback,
+            publish: true,
+            fallbackSubmissionId: submissionId,
           });
-          remoteSubmissionsState.error = "";
-          remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
         } else {
           const studentState = loadState(record.student);
           const currentSubmission =
@@ -8474,7 +8531,7 @@
       if (statusMessage) {
         statusMessage.className = "grading-status is-draft";
         statusMessage.textContent =
-          "Unsaved grading changes. Save a device draft or publish when ready.";
+          "Unsaved grading changes. Save a draft or publish when ready.";
       }
     }
     if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
@@ -8631,18 +8688,85 @@
         });
         return;
       }
-      const draft = saveGradingDraft(record, {
-        score: form.elements.score?.value || "",
-        feedback: form.elements.feedback?.value || "",
-      });
+      setGradingAlert(form);
+      const scoreText = String(form.elements.score?.value || "").trim();
+      const score = Number(scoreText);
+      const feedback = String(form.elements.feedback?.value || "").trim();
+      const draft = saveGradingDraft(record, { score: scoreText, feedback });
       const statusMessage = form.querySelector(".grading-status");
       if (statusMessage && draft) {
         statusMessage.className = "grading-status is-draft";
         statusMessage.textContent = `Draft saved on this device at ${formatDate(draft.savedAt, true)} · Not published to the student.`;
       }
-      showToast("Grading draft saved on this device.", {
-        tone: "success",
-      });
+      const { endpoint, submissionId } = gradingRequestTarget(
+        record,
+        form.dataset.submission || "",
+      );
+      if (!submissionsEndpointUrl() || !endpoint) {
+        showToast("Grading draft saved on this device.", {
+          tone: "success",
+        });
+        return;
+      }
+      if (
+        !/^\d{1,3}$/.test(scoreText) ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 100
+      ) {
+        const message =
+          "Device draft saved. Enter a whole-number score from 0 to 100 before syncing it to the school record.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      if ([...feedback].length > 10000) {
+        const message =
+          "Device draft saved. Teacher feedback must be 10,000 characters or fewer before central sync.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      const originalLabel = target.textContent;
+      target.disabled = true;
+      target.textContent = "Saving...";
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "PUT",
+          headers: {
+            "Idempotency-Key": requestIdFor("grade-draft"),
+            "If-Match": record.submission.gradeEtag || '"grade-v0"',
+          },
+          body: JSON.stringify({
+            submissionId,
+            score,
+            feedback,
+            publish: false,
+          }),
+        });
+        applyRemoteSubmissionGrade(record, payload, {
+          score,
+          feedback,
+          publish: false,
+          fallbackSubmissionId: submissionId,
+        });
+        clearGradingDraft(record);
+        render(false, true);
+        showToast(
+          "Grading draft saved to the school record. It is not visible to the student.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        target.textContent = originalLabel;
+        const detail =
+          error?.name === "AbortError"
+            ? "The grading request timed out."
+            : error?.message || "The central draft could not be saved.";
+        const message = `Central save failed. Your device draft is still safe. ${detail}`;
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error", persistent: true });
+      }
     } else if (action === "clear-submission-file") {
       const form = target.closest("form");
       const input = form?.querySelector("#submission-file");
