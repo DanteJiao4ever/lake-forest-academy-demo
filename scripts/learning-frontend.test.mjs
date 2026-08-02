@@ -9,6 +9,142 @@ async function source(path) {
   return readFile(new URL(path, root), "utf8");
 }
 
+test("runtime configuration separates core and upload readiness", async () => {
+  const [bootstrap, runtimeConfigSource, viteConfig] = await Promise.all([
+    source("public/learning/bootstrap.js"),
+    source("public/learning/runtime-config.json"),
+    source("vite.config.ts"),
+  ]);
+  const runtimeConfig = JSON.parse(runtimeConfigSource);
+
+  assert.equal(runtimeConfig.healthPath, "/health/ready");
+  assert.equal(runtimeConfig.uploadHealthPath, "/health/upload-ready");
+  assert.match(bootstrap, /healthPath:\s*"\/health\/ready"/);
+  assert.match(
+    bootstrap,
+    /uploadHealthPath:\s*"\/health\/upload-ready"/,
+  );
+  assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
+  assert.match(
+    viteConfig,
+    /LFA_API_UPLOAD_HEALTH_PATH \|\| "\/health\/upload-ready"/,
+  );
+});
+
+async function bootstrapConfiguration({
+  coreReady = true,
+  uploadReady = true,
+} = {}) {
+  const requestedUrls = [];
+  const loadedScripts = [];
+  const window = {
+    location: { hostname: "lakeforestacademy.ca" },
+    LFA_RUNTIME_CONFIG: {
+      apiOrigin: "https://api.example.test",
+      healthPath: "/health/ready",
+      uploadHealthPath: "/health/upload-ready",
+      healthTimeoutMs: 1000,
+      driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
+    },
+    setTimeout: (...args) => {
+      const timer = setTimeout(...args);
+      timer.unref?.();
+      return timer;
+    },
+    clearTimeout,
+  };
+  const document = {
+    querySelector: () => null,
+    createElement: () => ({}),
+    head: {
+      append(script) {
+        loadedScripts.push(script.src);
+        queueMicrotask(() => script.onload?.());
+      },
+    },
+  };
+  const readinessResponse = (ready) => ({
+    ok: ready,
+    json: async () => ({ status: ready ? "ready" : "unavailable" }),
+  });
+  const fetch = async (request) => {
+    const value = String(request);
+    requestedUrls.push(value);
+    if (value.startsWith("./runtime-config.json")) {
+      return { ok: true, json: async () => ({}) };
+    }
+    const url = new URL(value);
+    if (url.pathname === "/health/ready") {
+      return readinessResponse(coreReady);
+    }
+    if (url.pathname === "/health/upload-ready") {
+      return readinessResponse(uploadReady);
+    }
+    throw new Error(`Unexpected bootstrap request: ${value}`);
+  };
+  const context = vm.createContext({
+    window,
+    document,
+    fetch,
+    URL,
+    Date,
+    AbortController,
+    Object,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Set,
+    Promise,
+  });
+
+  vm.runInContext(await source("public/learning/bootstrap.js"), context);
+  for (let turn = 0; turn < 20 && loadedScripts.length < 3; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  return { window, requestedUrls, loadedScripts };
+}
+
+test("core readiness opens sign-in while a failed upload check stays isolated", async () => {
+  const { window, requestedUrls, loadedScripts } =
+    await bootstrapConfiguration({ uploadReady: false });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_UPLOAD_STATUS.state, "unavailable");
+  assert.equal(
+    window.LFA_AUTH_CONFIG.loginEndpoint,
+    "https://api.example.test/v1/auth/login",
+  );
+  assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
+  assert.equal(window.LFA_DRIVE_CONFIG.syncEndpoint, "");
+  assert.equal(
+    window.LFA_DRIVE_CONFIG.submissionsEndpoint,
+    "https://api.example.test/v1/submissions",
+  );
+  assert.ok(requestedUrls.some((url) => url.endsWith("/health/ready")));
+  assert.ok(
+    requestedUrls.some((url) => url.endsWith("/health/upload-ready")),
+  );
+  assert.deepEqual(loadedScripts, [
+    "./course-catalog.js?v=grade12-login-readiness-v3",
+    "./platform-sequences.js?v=grade12-login-readiness-v3",
+    "./app.js?v=grade12-login-readiness-v3",
+  ]);
+});
+
+test("failed core readiness keeps password sign-in fail-closed", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: false,
+    uploadReady: true,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "unavailable");
+  assert.equal(window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.submissionsEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
+});
+
 function memoryStorage(seed = {}) {
   const records = new Map(Object.entries(seed));
   return {
@@ -1048,6 +1184,141 @@ test("project submissions require a new file and final-evaluation uploads omit e
     app,
     /Number\.isInteger\(unitNumber\)[\s\S]{0,180}upload\.set\("unitNumber", String\(unitNumber\)\)/,
   );
+});
+
+test("an upload dependency outage preserves submission records but uses device drafts", async () => {
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+  const submissionsEndpoint = "https://api.example.test/v1/submissions";
+  const uploadPaused = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+    },
+  );
+  const uploadConnected = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+    },
+  );
+  const savedDraft = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+      localStorageSeed: {
+        "lake-forest-learning-state-v1": JSON.stringify({
+          enrolledCourseIds: ["ics4u"],
+          completed: [],
+          guideChecks: {},
+          read: [],
+          feedbackRead: [],
+          submissions: {
+            "ics4u-m11-culminating-assignment": {
+              delivery: "device",
+              fileName: "culminating-project.pdf",
+              submittedAt: "2026-08-02T08:00:00.000Z",
+              receiptId: "LFA-DEVICE-DRAFT-1",
+              history: [],
+            },
+          },
+        }),
+      },
+    },
+  );
+  const localDraftState = (fileName, submittedAt) => ({
+    "lake-forest-learning-state-v1": JSON.stringify({
+      enrolledCourseIds: ["ics4u"],
+      completed: [],
+      guideChecks: {},
+      read: [],
+      feedbackRead: [],
+      submissions: {
+        "ics4u-m11-culminating-assignment": {
+          delivery: "device",
+          fileName,
+          submittedAt,
+          receiptId: `LFA-${fileName}`,
+          history: [],
+        },
+      },
+    }),
+  });
+  const remoteSubmissionFetch = (fileName, submittedAt) => async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname !== "/v1/submissions") {
+      return jsonResponse({ data: [] });
+    }
+    return jsonResponse({
+      data: [
+        {
+          id: `remote-${fileName}`,
+          submissionId: `remote-${fileName}`,
+          student: {
+            displayName: "Student",
+            email: session.email,
+          },
+          courseCode: "ICS4U",
+          assignmentId: "ics4u-m11-culminating-assignment",
+          assignmentTitle: "Culminating Programming Project",
+          status: "submitted",
+          submittedAt,
+          receiptId: `REMOTE-${fileName}`,
+          fileName,
+        },
+      ],
+      page: { nextCursor: null, limit: 100 },
+    });
+  };
+  const newerLocal = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: localDraftState(
+        "newer-device-draft.pdf",
+        "2026-08-02T10:00:00.000Z",
+      ),
+      fetch: remoteSubmissionFetch(
+        "older-remote-version.pdf",
+        "2026-08-02T09:00:00.000Z",
+      ),
+      settleTurns: 14,
+    },
+  );
+  const newerRemote = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: false },
+      localStorageSeed: localDraftState(
+        "stale-device-draft.pdf",
+        "2026-08-02T09:00:00.000Z",
+      ),
+      fetch: remoteSubmissionFetch(
+        "newer-remote-version.pdf",
+        "2026-08-02T10:00:00.000Z",
+      ),
+      settleTurns: 14,
+    },
+  );
+
+  assert.match(uploadPaused, /Device-Only Draft Mode/);
+  assert.match(uploadPaused, /Save Draft on This Device/);
+  assert.doesNotMatch(uploadPaused, /Connected to Lotus Drive/);
+  assert.match(uploadConnected, /Connected to Lotus Drive/);
+  assert.match(uploadConnected, /> Submit to Lotus Drive</);
+  assert.match(savedDraft, /Saved on This Device/);
+  assert.match(savedDraft, /culminating-project\.pdf/);
+  assert.match(newerLocal, /newer-device-draft\.pdf/);
+  assert.doesNotMatch(newerLocal, /older-remote-version\.pdf/);
+  assert.match(newerRemote, /newer-remote-version\.pdf/);
+  assert.doesNotMatch(newerRemote, /stale-device-draft\.pdf/);
 });
 
 test("catalog and module links expose only credential-free HTTPS destinations", async () => {

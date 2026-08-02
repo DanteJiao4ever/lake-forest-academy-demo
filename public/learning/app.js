@@ -72,6 +72,9 @@
         window.LFA_DRIVE_CONFIG?.gradingEndpoint ||
         "",
     ).trim(),
+    uploadReady:
+      window.LFA_SUBMISSION_CONFIG?.uploadReady !== false &&
+      window.LFA_DRIVE_CONFIG?.uploadReady !== false,
   });
   const PLATFORM_API_CONFIG = Object.freeze({
     coursesEndpoint: String(
@@ -2249,6 +2252,10 @@
     return url.toString();
   }
 
+  function submissionUploadEnabled() {
+    return SUBMISSION_CONFIG.uploadReady && Boolean(submissionsEndpointUrl());
+  }
+
   function nextPageUrl(currentUrl, payload) {
     const cursor = scalarLabel(
       payload?.page?.nextCursor ||
@@ -2723,13 +2730,21 @@
   }
 
   function submissionForAssignment(assignmentId, user = currentUser()) {
-    if (submissionsEndpointUrl()) {
-      return remoteSubmissionFor(assignmentId, user);
-    }
-    if (user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)) {
-      return loadState(user).submissions?.[assignmentId] || null;
-    }
-    return state?.submissions?.[assignmentId] || null;
+    const localSubmission =
+      user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)
+        ? loadState(user).submissions?.[assignmentId] || null
+        : state?.submissions?.[assignmentId] || null;
+    const remoteSubmission = submissionsEndpointUrl()
+      ? remoteSubmissionFor(assignmentId, user)
+      : null;
+    if (!remoteSubmission) return localSubmission;
+    if (!localSubmission) return remoteSubmission;
+    const localSubmittedAt = Date.parse(localSubmission.submittedAt || "");
+    const remoteSubmittedAt = Date.parse(remoteSubmission.submittedAt || "");
+    return Number.isFinite(localSubmittedAt) &&
+      (!Number.isFinite(remoteSubmittedAt) || localSubmittedAt > remoteSubmittedAt)
+      ? localSubmission
+      : remoteSubmission;
   }
 
   async function refreshRemoteSubmissions({ silent = false } = {}) {
@@ -7254,7 +7269,7 @@
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
     const submission = submissionForAssignment(assignment.id);
-    const remoteSubmissionEnabled = Boolean(submissionsEndpointUrl());
+    const remoteSubmissionEnabled = submissionUploadEnabled();
     const deliveredToLotus =
       submission?.delivery === "lotus" ||
       Boolean(submission?.driveFileId || submission?.fileUrl);
@@ -8499,7 +8514,9 @@
       }
       const submittedAt = new Date().toISOString();
       const receiptId = receiptIdFor(id, submittedAt);
-      const remoteEndpoint = submissionsEndpointUrl();
+      const remoteEndpoint = submissionUploadEnabled()
+        ? submissionsEndpointUrl()
+        : "";
       if (remoteEndpoint) {
         const course = assignment ? findCourse(assignment.courseId) : null;
         const user = currentUser();

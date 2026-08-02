@@ -20,7 +20,9 @@ function learningRuntimeConfigPlugin(
       const requestedTimeout = Number(values.LFA_API_HEALTH_TIMEOUT_MS);
       const runtimeConfig = {
         apiOrigin: values.LFA_API_ORIGIN || "",
-        healthPath: values.LFA_API_HEALTH_PATH || "/health/upload-ready",
+        healthPath: values.LFA_API_HEALTH_PATH || "/health/ready",
+        uploadHealthPath:
+          values.LFA_API_UPLOAD_HEALTH_PATH || "/health/upload-ready",
         healthTimeoutMs: Number.isFinite(requestedTimeout)
           ? Math.min(10000, Math.max(1000, Math.round(requestedTimeout)))
           : 3500,

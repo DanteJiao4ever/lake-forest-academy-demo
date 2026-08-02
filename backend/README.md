@@ -222,9 +222,10 @@ script uses an advisory lock, but a dedicated release job gives clearer failure
 and rollback behavior.
 
 Do not set the production browser configuration to the API host until Cloud Run,
-Cloud SQL, the Drive identity, ClamAV, HTTPS, CORS and all three health checks
-are working. Configure the browser bootstrap to use `/health/upload-ready` for
-its cutover check.
+Cloud SQL, HTTPS, CORS and `/health/ready` are working. Configure the browser
+bootstrap to use `/health/ready` for authentication and database-backed course
+services, and `/health/upload-ready` as the independent Drive-upload check. The
+latter also verifies the Drive identity, ClamAV and submission root.
 Use `COOKIE_NAME=__Host-lfa_session`, `COOKIE_SECURE=true`, and a 32-byte-or-longer
 secret-manager value for `CSRF_SECRET` in the production revision.
 
