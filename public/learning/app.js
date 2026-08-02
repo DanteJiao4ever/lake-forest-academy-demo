@@ -3728,6 +3728,7 @@
     try {
       const session = await requestAuthEndpoint(endpoint.toString(), {
         timeout: 5000,
+        skipSessionExpiry: true,
       });
       const account = authenticatedUserFrom(session);
       if (!account) {
