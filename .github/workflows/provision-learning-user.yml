@@ -58,6 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "::add-mask::$LFA_USER_PASSWORD"
           for name in PROJECT_ID REGION SERVICE SQL_INSTANCE MIGRATION_SA DB_MIGRATION_SECRET CSRF_SECRET VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA LFA_USER_PASSWORD; do
             test -n "${!name:-}" || { echo "Missing production configuration: ${name}" >&2; exit 1; }
           done
@@ -116,6 +117,15 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --wait
+
+      - name: Remove the isolated job if it remains
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          gcloud run jobs delete "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet >/dev/null 2>&1 || true
 
       - name: Record the provisioned access scope
         run: |
