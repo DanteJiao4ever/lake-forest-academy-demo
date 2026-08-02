@@ -302,6 +302,41 @@ function jsonResponse(payload, status = 200) {
   };
 }
 
+test("anonymous session checks preserve the selected faculty sign-in portal", async () => {
+  const result = await renderPortal("#/signin/faculty", null, {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = {
+        loginEndpoint: "https://api.example.test/v1/auth/login",
+        registrationEndpoint: "https://api.example.test/v1/auth/register",
+        workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+        workspaceLogoutEndpoint: "https://api.example.test/v1/auth/logout",
+      };
+    },
+    fetch: async (request) => {
+      const url = new URL(String(request));
+      if (url.pathname === "/v1/auth/session") {
+        return jsonResponse(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Sign in required.",
+            },
+          },
+          401,
+        );
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    },
+    settleTurns: 14,
+    returnHarness: true,
+  });
+
+  assert.equal(result.window.location.hash, "#/signin/faculty");
+  assert.match(result.html, /<p class="eyebrow">Faculty Portal<\/p>/);
+  assert.match(result.html, /type="submit"[^>]*>Faculty Sign In/);
+  assert.doesNotMatch(result.html, /type="submit"[^>]*>Student Sign In/);
+});
+
 const studentPlatformApiConfig = {
   coursesEndpoint: "https://api.example.test/v1/courses",
   studentProgressEndpoint: "https://api.example.test/v1/me/progress",
