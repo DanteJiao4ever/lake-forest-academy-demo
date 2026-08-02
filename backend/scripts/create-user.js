@@ -36,7 +36,7 @@ assertStrongPassword(password, email);
 const config = loadConfig();
 const repository = new PostgresRepository(createPool(config));
 try {
-  const user = await repository.createUser({
+  const userData = {
     publicId: publicId(role),
     email: normalizeEmail(email),
     passwordHash: await hashPassword(password, config.bcryptCost),
@@ -44,13 +44,16 @@ try {
     lastName,
     displayName: `${firstName} ${lastName}`,
     role,
-  });
+  };
+  let user;
   if (["teacher", "teacher_admin"].includes(role)) {
     const courses = String(args.courses || "SCH4U,ICS4U,SPH4U,MHF4U,MCV4U,BBB4M")
       .split(",")
       .map((code) => code.trim().toUpperCase())
       .filter(Boolean);
-    await repository.setTeacherCourses(user.id, courses);
+    user = await repository.createFacultyWithCourses(userData, courses);
+  } else {
+    user = await repository.createUser(userData);
   }
   process.stdout.write(`Created ${user.role} ${user.email} (${user.publicId}).\n`);
 } finally {
