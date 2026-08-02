@@ -274,6 +274,44 @@ export class PostgresRepository {
     }
   }
 
+  async createFacultyWithCourses(user, courseCodes) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query(
+        `INSERT INTO app_users
+          (public_id, email, password_hash, first_name, last_name, display_name, role)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          user.publicId,
+          user.email,
+          user.passwordHash,
+          user.firstName,
+          user.lastName,
+          user.displayName,
+          user.role,
+        ],
+      );
+      for (const code of courseCodes) {
+        await client.query(
+          "INSERT INTO teacher_course_access (teacher_user_id, course_code) VALUES ($1, $2)",
+          [inserted.rows[0].id, code],
+        );
+      }
+      await client.query("COMMIT");
+      return mapUser(inserted.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error?.code === "23505" && error?.constraint?.includes("email")) {
+        throw new ApiError(409, "EMAIL_ALREADY_REGISTERED", "An account already exists for this email address.");
+      }
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
   async findUserByEmail(email) {
     const result = await this.pool.query(
       "SELECT * FROM app_users WHERE email = $1 LIMIT 1",

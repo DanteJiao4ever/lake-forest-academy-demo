@@ -21,6 +21,7 @@ Drive file ID or access token.
 
    For non-interactive secret-manager deployments, set `LFA_USER_PASSWORD` to
    the injected secret immediately before the command and unset it afterwards.
+   Faculty creation and course grants are committed in one database transaction.
 
 5. Run `pnpm dev`. Process and database checks are available at `/health/live`
    and `/health/ready`; `/health/upload-ready` additionally verifies ClamAV and
