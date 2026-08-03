@@ -562,6 +562,10 @@ export async function createApp({
     await resetMailer.ready();
     return { status: "ready" };
   });
+  app.get("/health/account-security-ready", async () => {
+    await repository.ready();
+    return { status: "ready" };
+  });
   app.get("/health/catalog-ready", async (request) => {
     await repository.ready();
     const counts = await repository.catalogReady();

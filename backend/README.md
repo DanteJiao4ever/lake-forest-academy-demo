@@ -25,8 +25,9 @@ Drive file ID or access token.
 
 5. Run `pnpm dev`. Process and database checks are available at `/health/live`
    and `/health/ready`; `/health/upload-ready` additionally verifies ClamAV and
-   the configured Drive submission root. `/health/password-reset-ready`
-   verifies that the configured Gmail sender can obtain an access token.
+   the configured Drive submission root. `/health/account-security-ready`
+   advertises the compatible password-change API, while
+   `/health/password-reset-ready` verifies the delegated Gmail mailbox.
 
 No user or default password is embedded in this repository. Public student
 registration always creates the `student` role. Teacher and administrator roles

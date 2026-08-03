@@ -243,6 +243,7 @@ jobs:
           probe "/health/catalog-ready" "catalog-ready"
           probe "/health/drive-catalog-ready" "drive-catalog-ready"
           probe "/health/upload-ready" "upload-ready"
+          probe "/health/account-security-ready" "account-security-ready"
           if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
             probe "/health/password-reset-ready" "password-reset-ready"
           fi
@@ -274,6 +275,11 @@ jobs:
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 10 --max-time 30 \
             "$public_url/health/upload-ready" \
+            | jq -e '.status == "ready"' >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
+            "$public_url/health/account-security-ready" \
             | jq -e '.status == "ready"' >/dev/null
           if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
             curl --fail-with-body --silent --show-error \

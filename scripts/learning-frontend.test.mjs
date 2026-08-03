@@ -32,6 +32,10 @@ test("runtime configuration separates core and upload readiness", async () => {
     bootstrap,
     /passwordResetHealthPath:\s*"\/health\/password-reset-ready"/,
   );
+  assert.match(
+    bootstrap,
+    /accountSecurityHealthPath:\s*"\/health\/account-security-ready"/,
+  );
   assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
   assert.match(
     viteConfig,
@@ -54,6 +58,10 @@ test("production deployment gates email recovery on delegated Gmail readiness", 
     workflow,
     /probe "\/health\/password-reset-ready" "password-reset-ready"/,
   );
+  assert.match(
+    workflow,
+    /probe "\/health\/account-security-ready" "account-security-ready"/,
+  );
 });
 
 async function bootstrapConfiguration({
@@ -61,6 +69,7 @@ async function bootstrapConfiguration({
   uploadReady = true,
   driveCatalogReady = true,
   passwordResetReady = true,
+  accountSecurityReady = true,
 } = {}) {
   const requestedUrls = [];
   const loadedScripts = [];
@@ -72,6 +81,7 @@ async function bootstrapConfiguration({
       uploadHealthPath: "/health/upload-ready",
       driveCatalogHealthPath: "/health/drive-catalog-ready",
       passwordResetHealthPath: "/health/password-reset-ready",
+      accountSecurityHealthPath: "/health/account-security-ready",
       healthTimeoutMs: 1000,
       driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
     },
@@ -114,6 +124,9 @@ async function bootstrapConfiguration({
     }
     if (url.pathname === "/health/password-reset-ready") {
       return readinessResponse(passwordResetReady);
+    }
+    if (url.pathname === "/health/account-security-ready") {
+      return readinessResponse(accountSecurityReady);
     }
     throw new Error(`Unexpected bootstrap request: ${value}`);
   };
@@ -191,6 +204,11 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
       url.endsWith("/health/password-reset-ready"),
     ),
   );
+  assert.ok(
+    requestedUrls.some((url) =>
+      url.endsWith("/health/account-security-ready"),
+    ),
+  );
   assert.deepEqual(loadedScripts, [
     "./course-catalog.js?v=account-security-v1",
     "./platform-sequences.js?v=account-security-v1",
@@ -211,6 +229,17 @@ test("password recovery stays hidden until its email sender is ready", async () 
     window.LFA_AUTH_CONFIG.passwordChangeEndpoint,
     "https://api.example.test/v1/auth/password-change",
   );
+});
+
+test("password change stays hidden until the new account-security API is ready", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: true,
+    accountSecurityReady: false,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_AUTH_CONFIG.passwordChangeEndpoint, "");
+  assert.notEqual(window.LFA_AUTH_CONFIG.loginEndpoint, "");
 });
 
 test("failed core readiness keeps password sign-in fail-closed", async () => {

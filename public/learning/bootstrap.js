@@ -7,6 +7,7 @@
     uploadHealthPath: "/health/upload-ready",
     driveCatalogHealthPath: "/health/drive-catalog-ready",
     passwordResetHealthPath: "/health/password-reset-ready",
+    accountSecurityHealthPath: "/health/account-security-ready",
     healthTimeoutMs: 3500,
     googleWorkspaceAuthStart: "",
     driveSyncPath: "",
@@ -93,6 +94,8 @@
       ready && options.driveCatalogReady === true;
     const passwordResetReady =
       ready && options.passwordResetReady === true;
+    const accountSecurityReady =
+      ready && options.accountSecurityReady === true;
     const syncEndpoint = ready
       ? optionalApiUrl(origin, config.driveSyncPath)
       : "";
@@ -105,7 +108,7 @@
       passwordResetEndpoint: passwordResetReady
         ? apiUrl(origin, "/v1/auth/password-resets")
         : "",
-      passwordChangeEndpoint: ready
+      passwordChangeEndpoint: accountSecurityReady
         ? apiUrl(origin, "/v1/auth/password-change")
         : "",
       enrollmentsEndpoint: ready
@@ -293,6 +296,7 @@
         uploadReady,
         driveCatalogHealthReady,
         passwordResetReady,
+        accountSecurityReady,
       ] = await Promise.all([
         apiIsReady(
           origin,
@@ -319,6 +323,13 @@
           config,
           2500,
         ),
+        apiIsReady(
+          origin,
+          config.accountSecurityHealthPath ||
+            DEFAULT_CONFIG.accountSecurityHealthPath,
+          config,
+          2500,
+        ),
       ]);
       if (coreReady) {
         const driveCatalogReady = driveCatalogHealthReady === true;
@@ -326,6 +337,7 @@
           uploadReady,
           driveCatalogReady,
           passwordResetReady,
+          accountSecurityReady,
         });
         setApiStatus(
           "ready",

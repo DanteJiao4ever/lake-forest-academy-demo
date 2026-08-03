@@ -89,6 +89,16 @@ describe("password recovery and password change", () => {
     };
   }
 
+  test("reports account-security readiness for compatible frontends", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/health/account-security-ready",
+      headers: { origin },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { status: "ready" });
+  });
+
   test("returns the same accepted response for known and unknown email addresses", async () => {
     const readiness = await app.inject({
       method: "GET",
