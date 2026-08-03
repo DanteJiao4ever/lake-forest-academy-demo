@@ -27,6 +27,21 @@
   const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
   const FILE_STORE_NAME = "submission-files";
   const MAX_SUBMISSION_BYTES = 25 * 1024 * 1024;
+  const SUBMISSION_FILE_EXTENSIONS = Object.freeze([
+    "pdf",
+    "docx",
+    "xlsx",
+    "pptx",
+    "txt",
+    "png",
+    "jpg",
+    "jpeg",
+  ]);
+  const SUBMISSION_FILE_ACCEPT = SUBMISSION_FILE_EXTENSIONS.map(
+    (extension) => `.${extension}`,
+  ).join(",");
+  const SUBMISSION_FILE_TYPE_LABEL =
+    "PDF, DOCX, XLSX, PPTX, TXT, PNG or JPEG";
   const ACCESS_EMAIL = "student@lakeforestacademy.ca";
   const TEACHER_EMAIL = "james.whitmore@lakeforestacademy.ca";
   const AUTH_CONFIG = {
@@ -2240,6 +2255,22 @@
     return `${(value / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  function submissionFileExtension(fileName) {
+    return String(fileName || "")
+      .trim()
+      .toLowerCase()
+      .match(/\.([a-z0-9]+)$/)?.[1] || "";
+  }
+
+  function submissionFileIsSupported(file) {
+    return Boolean(
+      file?.name &&
+        SUBMISSION_FILE_EXTENSIONS.includes(
+          submissionFileExtension(file.name),
+        ),
+    );
+  }
+
   function safeDecode(value) {
     try {
       return decodeURIComponent(value);
@@ -2442,13 +2473,19 @@
       : fallback;
   }
 
+  function positiveAttemptNumber(value) {
+    if (value == null || String(value).trim() === "") return null;
+    const attemptNumber = Number(value);
+    return Number.isInteger(attemptNumber) && attemptNumber >= 1
+      ? attemptNumber
+      : null;
+  }
+
   function normalizeSubmissionVersion(raw, fallback = {}) {
     const version = raw && typeof raw === "object" ? raw : {};
-    const attemptNumber = Number.isInteger(Number(version.attemptNumber))
-      ? Math.max(1, Number(version.attemptNumber))
-      : Number.isInteger(Number(fallback.attemptNumber))
-        ? Math.max(1, Number(fallback.attemptNumber))
-        : null;
+    const attemptNumber =
+      positiveAttemptNumber(version.attemptNumber) ||
+      positiveAttemptNumber(fallback.attemptNumber);
     const submittedAt = validTimestamp(
       version.submittedAt || version.createdAt,
       fallback.submittedAt || new Date().toISOString(),
@@ -2556,9 +2593,9 @@
             message.sent_at,
           "",
         ),
-        attemptNumber: Number.isInteger(Number(message.attemptNumber))
-          ? Math.max(1, Number(message.attemptNumber))
-          : fallbackAttemptNumber,
+        attemptNumber:
+          positiveAttemptNumber(message.attemptNumber) ||
+          positiveAttemptNumber(fallbackAttemptNumber),
       }))
       .filter((message) => message.body);
   }
@@ -2684,6 +2721,11 @@
       configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
         window.location.href,
     );
+    const historySource = Array.isArray(source.history)
+      ? source.history
+      : Array.isArray(source.versions)
+        ? source.versions
+        : [];
     const rawScore = source.score ?? source.grade?.score;
     const numericScore =
       rawScore === "" || rawScore == null ? null : Number(rawScore);
@@ -2693,9 +2735,14 @@
       numericScore <= 100
         ? numericScore
         : null;
-    const attemptNumber = Number.isInteger(Number(source.attemptNumber))
-      ? Math.max(1, Number(source.attemptNumber))
-      : 1;
+    const historyAttemptNumbers = historySource
+      .map((version) => positiveAttemptNumber(version?.attemptNumber))
+      .filter(Boolean);
+    const attemptNumber =
+      positiveAttemptNumber(source.attemptNumber) ||
+      (historyAttemptNumbers.length
+        ? Math.max(...historyAttemptNumbers)
+        : Math.max(historySource.length, 1));
     const rawMaximumAttempts = Number(
       source.maxAttempts ?? source.max_attempts ?? source.assignment?.maxAttempts,
     );
@@ -2733,11 +2780,6 @@
       source.resubmissionAllowed === true ||
       source.resubmission_allowed === true ||
       workflowStatus === "revision_requested";
-    const historySource = Array.isArray(source.history)
-      ? source.history
-      : Array.isArray(source.versions)
-        ? source.versions
-        : [];
     const fallbackVersion = {
       attemptNumber,
       fileName,
@@ -2754,9 +2796,35 @@
       ),
       fileUrl,
     };
-    const history = (
-      historySource.length ? historySource : [fallbackVersion]
-    ).map((version) => normalizeSubmissionVersion(version, fallbackVersion));
+    const history = (historySource.length ? historySource : [fallbackVersion])
+      .map((version) =>
+        normalizeSubmissionVersion(version, {
+          ...fallbackVersion,
+          attemptNumber: null,
+        }),
+      )
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.submittedAt || "");
+        const rightTime = Date.parse(right.submittedAt || "");
+        if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+          return leftTime - rightTime;
+        }
+        return 0;
+      })
+      .map((version, versionIndex) => {
+        const versionAttemptNumber =
+          positiveAttemptNumber(version.attemptNumber) || versionIndex + 1;
+        return {
+          ...version,
+          attemptNumber: versionAttemptNumber,
+          messages: (version.messages || []).map((message) => ({
+            ...message,
+            attemptNumber:
+              positiveAttemptNumber(message.attemptNumber) ||
+              versionAttemptNumber,
+          })),
+        };
+      });
     const messages = [
       ...new Map(
         [...history.flatMap((version) => version.messages || []), ...currentMessages].map(
@@ -2809,7 +2877,10 @@
         id:
           scalarLabel(source.submissionId || source.id) ||
           scalarLabel(source.receiptId),
-        delivery: "central",
+        delivery:
+          fileName || fallbackVersion.fileReceiptId || fileUrl
+            ? "lotus"
+            : "central",
         attemptNumber,
         maxAttempts,
         text: scalarLabel(source.note || source.text || source.comment),
@@ -2857,6 +2928,23 @@
         )
         .filter(Boolean),
     };
+  }
+
+  function submissionVersionNumber(submission) {
+    const history = Array.isArray(submission?.history)
+      ? submission.history
+      : [];
+    const numberedAttempts = [
+      positiveAttemptNumber(submission?.attemptNumber),
+      ...history.map((version) =>
+        positiveAttemptNumber(version?.attemptNumber),
+      ),
+    ].filter(Boolean);
+    return Math.max(
+      numberedAttempts.length ? Math.max(...numberedAttempts) : 0,
+      history.length,
+      1,
+    );
   }
 
   async function requestSubmissionEndpoint(endpoint, options = {}) {
@@ -3053,8 +3141,8 @@
       if (platformSessionMatches(requestGeneration, scopeKey)) {
         submissionsRequestInFlight = false;
         captureVisibleGradingDraft();
-        render(false, true);
-        if (focusedFieldId) {
+        const rendered = renderAfterBackgroundRefresh();
+        if (rendered && focusedFieldId) {
           window.requestAnimationFrame(() =>
             document.querySelector(`#${focusedFieldId}`)?.focus(),
           );
@@ -3289,7 +3377,7 @@
     } finally {
       if (platformSessionMatches(requestGeneration, requestScopeKey)) {
         platformRuntime.notificationsLoading = false;
-        render(false, true);
+        renderAfterBackgroundRefresh();
       }
     }
   }
@@ -3432,7 +3520,7 @@
       .finally(() => {
         if (!platformSessionMatches(requestGeneration, requestScopeKey)) return;
         platformRequests.set(key, Promise.resolve());
-        render(false, true);
+        renderAfterBackgroundRefresh();
       });
     platformRequests.set(key, request);
     return request;
@@ -8602,7 +8690,9 @@
         deliveredToSchoolRecord
           ? "Your work and submission receipt are recorded."
           : remoteSubmissionEnabled
-            ? "Attach your completed work and submit it securely to your teacher."
+            ? requiresSubmissionFile
+              ? "Attach your completed work and submit it securely to your teacher."
+              : "Add a note for the school record, with an attachment if your work includes a file."
             : "This draft remains in this browser until the Lotus submission service is connected.",
       ],
       ["Under Review", "Your instructor is reviewing the submission."],
@@ -8700,8 +8790,8 @@
               <div class="submission-destination ${remoteSubmissionEnabled ? "is-connected" : "is-local"}">
                 <span>${icon(remoteSubmissionEnabled ? "check" : "file", 18)}</span>
                 <span>
-                  <strong>${remoteSubmissionEnabled ? "Connected to Lotus Drive" : "Device-Only Draft Mode"}</strong>
-                  <small>${remoteSubmissionEnabled ? "A successful upload will be available to your teacher." : "The submission service is not connected yet. Work saved here remains in this browser and is not sent to your teacher."}</small>
+                  <strong>${remoteSubmissionEnabled ? (requiresSubmissionFile ? "Lotus Drive Upload Ready" : "School Submission Service Ready") : "Device-Only Draft Mode"}</strong>
+                  <small>${remoteSubmissionEnabled ? (requiresSubmissionFile ? "Your attached file will be stored in Lotus Drive and available to your teacher." : "A note-only submission is saved to the central school record. If you attach a file, it is stored in Lotus Drive and made available to your teacher.") : "The submission service is not connected yet. Work saved here remains in this browser and is not sent to your teacher."}</small>
                 </span>
               </div>
               ${
@@ -8718,7 +8808,7 @@
                         <div><dt>Receipt ID</dt><dd>${escapeHtml(submission.receiptId)}</dd></div>
                         <div><dt>${deliveredToSchoolRecord ? "Submitted" : "Saved"}</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
                         <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
-                        <div><dt>Version</dt><dd>${submission.history?.length || 1}</dd></div>
+                        <div><dt>Version</dt><dd>${submissionVersionNumber(submission)}</dd></div>
                         <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
                         <div><dt>Grading</dt><dd>${score == null ? "Awaiting grading" : `${score}% · Returned`}</dd></div>
                         ${
@@ -8769,7 +8859,7 @@
                     </div>
                   `
                   : `
-                    <form class="assignment-form" id="assignment-form" data-id="${assignment.id}">
+                    <form class="assignment-form" id="assignment-form" data-id="${assignment.id}" data-requires-file="${requiresSubmissionFile ? "true" : "false"}" data-replacement="${remoteSubmission ? "true" : "false"}">
                       <div class="form-alert" id="assignment-form-alert" role="alert" tabindex="-1" hidden></div>
                       ${
                         resumedDeviceDraft
@@ -8781,8 +8871,8 @@
                       <label for="submission-note">Submission Note</label>
                       <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(formSubmission?.text || "")}</textarea>
                       <label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
-                      <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
-                      <p class="field-help" id="submission-file-help">PDF, Word, PowerPoint or Excel · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
+                      <input id="submission-file" name="file" type="file" accept="${SUBMISSION_FILE_ACCEPT}" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
+                      <p class="field-help" id="submission-file-help">${SUBMISSION_FILE_TYPE_LABEL} · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
                       <div class="file-preview" id="submission-file-preview" hidden>
                         <span>${icon("file", 18)}</span>
                         <span><strong data-file-name></strong><small data-file-meta></small></span>
@@ -8793,7 +8883,7 @@
                         <input id="submission-integrity" name="integrity" type="checkbox" value="confirmed" />
                         <span>I confirm that this is my own work and that I have credited all sources.</span>
                       </label>
-                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (remoteSubmission ? "Submit New Version to Lotus Drive" : "Submit to Lotus Drive") : "Save Draft on This Device"}</button>
+                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (requiresSubmissionFile ? (remoteSubmission ? "Submit New Version to Lotus Drive" : "Upload to Lotus Drive") : "Submit to School Record") : "Save Draft on This Device"}</button>
                       ${submission || resumedDeviceDraft ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
                     </form>
                   `
@@ -9092,6 +9182,23 @@
         silent: teacherRoute[1] !== "submissions",
       });
     }
+  }
+
+  function assignmentFormHasUnsavedWork() {
+    const form = document.querySelector("#assignment-form");
+    if (!form) return false;
+    return Boolean(
+      form.dataset.dirty === "true" ||
+        String(form.elements?.note?.value || "").length ||
+        form.elements?.integrity?.checked ||
+        form.elements?.file?.files?.length,
+    );
+  }
+
+  function renderAfterBackgroundRefresh() {
+    if (assignmentFormHasUnsavedWork()) return false;
+    render(false, true);
+    return true;
   }
 
   function render(shouldFocusMain = false, preserveScroll = false) {
@@ -10156,6 +10263,7 @@
 
     if (event.target.id === "assignment-form") {
       event.preventDefault();
+      event.target.dataset.dirty = "true";
       const id = event.target.dataset.id;
       setFormAlert(event.target);
       const form = new FormData(event.target);
@@ -10177,6 +10285,14 @@
         (remoteEndpoint && isResumingDeviceDraft
           ? ""
           : existing?.fileName || "");
+      if (newFileName && !submissionFileIsSupported(file)) {
+        setFormAlert(
+          event.target,
+          `${file.name} is not a supported file type. Choose ${SUBMISSION_FILE_TYPE_LABEL}.`,
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
       if (newFileName && file.size > MAX_SUBMISSION_BYTES) {
         setFormAlert(
           event.target,
@@ -10250,7 +10366,9 @@
         );
         if (submitButton) {
           submitButton.disabled = true;
-          submitButton.textContent = "Uploading to Lotus Drive…";
+          submitButton.textContent = newFileName
+            ? "Uploading to Lotus Drive…"
+            : "Saving to School Record…";
         }
         try {
           const payload = await requestSubmissionEndpoint(remoteEndpoint, {
@@ -10266,15 +10384,32 @@
             payload?.submission ||
             payload?.data ||
             payload;
+          const responseFile = Array.isArray(responseSource?.files)
+            ? responseSource.files[0]
+            : responseSource?.file;
+          const officialSubmissionId =
+            scalarLabel(
+              responseSource?.submissionId || responseSource?.id,
+            ) || receiptId;
+          const officialReceiptId =
+            scalarLabel(responseSource?.receiptId) || officialSubmissionId;
+          const officialFileReceiptId = scalarLabel(
+            responseSource?.driveFileId ||
+              responseSource?.fileId ||
+              responseFile?.id,
+          );
+          const responseHasOfficialHistory = Boolean(
+            (Array.isArray(responseSource?.history) &&
+              responseSource.history.length) ||
+              (Array.isArray(responseSource?.versions) &&
+                responseSource.versions.length),
+          );
           const normalized =
             extracted.records[0] ||
             normalizeRemoteSubmission(responseSource, 0, user);
           const fallbackRecord = normalizeRemoteSubmission(
             {
-              submissionId:
-                scalarLabel(
-                  responseSource?.submissionId || responseSource?.id,
-                ) || receiptId,
+              submissionId: officialSubmissionId,
               assignmentId: id,
               courseId: course?.id || "",
               courseCode: course?.code || "",
@@ -10286,21 +10421,21 @@
               fileType:
                 (newFileName ? file.type : "") ||
                 "application/octet-stream",
+              attemptNumber,
               submittedAt,
-              receiptId:
-                scalarLabel(responseSource?.receiptId) || receiptId,
-              driveFileId: scalarLabel(
-                responseSource?.driveFileId || responseSource?.fileId,
-              ),
+              receiptId: officialReceiptId,
+              driveFileId: officialFileReceiptId,
               fileUrl:
                 responseSource?.fileUrl ||
                 responseSource?.webViewLink ||
                 responseSource?.openUrl ||
+                responseFile?.openUrl ||
                 "",
               status: "submitted",
               history: [
                 ...(remoteExisting?.history || []),
                 {
+                  attemptNumber,
                   fileName,
                   fileSize: newFileName
                     ? file.size
@@ -10309,7 +10444,14 @@
                     (newFileName ? file.type : "") ||
                     "application/octet-stream",
                   submittedAt,
-                  receiptId,
+                  receiptId: officialReceiptId,
+                  fileReceiptId: officialFileReceiptId,
+                  fileUrl:
+                    responseSource?.fileUrl ||
+                    responseSource?.webViewLink ||
+                    responseSource?.openUrl ||
+                    responseFile?.openUrl ||
+                    "",
                 },
               ],
             },
@@ -10340,27 +10482,13 @@
           ) {
             storedRecord.submission.messages = existingMessages;
           }
-          const mergedHistory = new Map();
-          for (const version of [
-            ...(fallbackRecord.submission.history || []),
-            ...(storedRecord.submission.history || []),
-          ]) {
-            const key =
-              scalarLabel(version.receiptId || version.fileReceiptId) ||
-              `attempt-${version.attemptNumber || "unknown"}-${
-                version.submittedAt || version.fileName || mergedHistory.size
-              }`;
-            mergedHistory.set(key, {
-              ...(mergedHistory.get(key) || {}),
-              ...version,
-            });
+          if (!responseHasOfficialHistory) {
+            storedRecord.submission.history =
+              fallbackRecord.submission.history;
           }
-          storedRecord.submission.history = [...mergedHistory.values()].sort(
-            (a, b) =>
-              Number(a.attemptNumber || 0) - Number(b.attemptNumber || 0) ||
-              Date.parse(a.submittedAt || 0) - Date.parse(b.submittedAt || 0),
-          );
-          storedRecord.submission.delivery = "lotus";
+          storedRecord.submission.delivery = newFileName
+            ? "lotus"
+            : "central";
           upsertRemoteSubmission(storedRecord);
           remoteSubmissionsState.error = "";
           remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
@@ -10373,7 +10501,7 @@
           resumingDeviceDraftId = null;
           render(true);
           showToast(
-            `Submission uploaded to Lotus Drive. Receipt ${
+            `${newFileName ? "File uploaded to Lotus Drive" : "Submission saved to the school record"}. Receipt ${
               storedRecord?.submission.receiptId ||
               receiptId
             }.`,
@@ -10381,9 +10509,11 @@
         } catch (error) {
           if (submitButton) {
             submitButton.disabled = false;
-            submitButton.textContent = remoteExisting
-              ? "Submit New Version to Lotus Drive"
-              : "Submit to Lotus Drive";
+            submitButton.textContent = newFileName
+              ? remoteExisting
+                ? "Submit New Version to Lotus Drive"
+                : "Upload to Lotus Drive"
+              : "Submit to School Record";
           }
           const message =
             error?.name === "AbortError"
@@ -10459,6 +10589,8 @@
   });
 
   document.addEventListener("input", (event) => {
+    const assignmentForm = event.target.closest?.("#assignment-form");
+    if (assignmentForm) assignmentForm.dataset.dirty = "true";
     const interactionForm = event.target.closest(
       "#submission-message-form, #revision-request-form",
     );
@@ -10492,25 +10624,47 @@
   });
 
   document.addEventListener("change", (event) => {
+    const assignmentForm = event.target.closest?.("#assignment-form");
+    if (assignmentForm) assignmentForm.dataset.dirty = "true";
     if (event.target.id !== "submission-file") return;
-    const form = event.target.closest("form");
+    const form = assignmentForm || event.target.closest("form");
     const preview = form?.querySelector("#submission-file-preview");
     const file = event.target.files?.[0];
     setFormAlert(form);
     if (!preview) return;
     if (!file) {
       preview.hidden = true;
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton && form.dataset.requiresFile !== "true") {
+        submitButton.textContent = "Submit to School Record";
+      }
       return;
     }
     preview.hidden = false;
-    preview.classList.toggle("is-error", file.size > MAX_SUBMISSION_BYTES);
+    const supported = submissionFileIsSupported(file);
+    preview.classList.toggle(
+      "is-error",
+      !supported || file.size > MAX_SUBMISSION_BYTES,
+    );
     const name = preview.querySelector("[data-file-name]");
     const meta = preview.querySelector("[data-file-meta]");
     if (name) name.textContent = file.name;
     if (meta) {
       meta.textContent = `${formatFileSize(file.size)} · ${file.type || "File"}`;
     }
-    if (file.size > MAX_SUBMISSION_BYTES) {
+    const submitButton = form?.querySelector('button[type="submit"]');
+    if (submitButton) {
+      submitButton.textContent =
+        form.dataset.replacement === "true"
+          ? "Submit New Version to Lotus Drive"
+          : "Upload to Lotus Drive";
+    }
+    if (!supported) {
+      setFormAlert(
+        form,
+        `${file.name} is not a supported file type. Choose ${SUBMISSION_FILE_TYPE_LABEL}.`,
+      );
+    } else if (file.size > MAX_SUBMISSION_BYTES) {
       setFormAlert(
         form,
         `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
@@ -10808,10 +10962,20 @@
       }
     } else if (action === "clear-submission-file") {
       const form = target.closest("form");
+      if (form) form.dataset.dirty = "true";
       const input = form?.querySelector("#submission-file");
       if (input) input.value = "";
       const preview = form?.querySelector("#submission-file-preview");
       if (preview) preview.hidden = true;
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.textContent =
+          form.dataset.requiresFile === "true"
+            ? form.dataset.replacement === "true"
+              ? "Submit New Version to Lotus Drive"
+              : "Upload to Lotus Drive"
+            : "Submit to School Record";
+      }
       setFormAlert(form);
       input?.focus();
     } else if (action === "google-workspace-signin") {
