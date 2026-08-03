@@ -6,7 +6,7 @@ import { createPool, PostgresRepository } from "../src/db/postgres.js";
 const runtimeDatabaseUrl = process.env.RUNTIME_DATABASE_URL || "";
 
 test(
-  "least-privileged runtime can start Orientation without catalog write access",
+  "least-privileged runtime supports progress, file submission, feedback, and grading",
   { skip: !runtimeDatabaseUrl },
   async () => {
     const pool = createPool({
@@ -70,7 +70,23 @@ test(
       assert.equal(progress.moduleId, "ics4u-m00");
       assert.equal(progress.status, "in_progress");
 
+      const submissionTarget = await repository.createSubmissionTarget(
+        {
+          displayName: `CI submission target ${suffix}`,
+          driveKind: "my_drive",
+          driveId: null,
+          rootFolderId: `ci-submissions-${suffix}`,
+          rootFolderName: "CI Student Submissions",
+          credentialType: "service_account",
+          credentialRef: `ci-secret-${suffix}`,
+        },
+        user.id,
+      );
+      const activeSubmissionTarget = await repository.getActiveSubmissionTarget();
+      assert.equal(activeSubmissionTarget.id, submissionTarget.id);
+
       const submissionId = randomUUID();
+      const submissionFileId = randomUUID();
       const submission = await repository.createSubmission(
         {
           id: submissionId,
@@ -91,9 +107,27 @@ test(
           idempotencyKey: `ci-submission-${suffix}`,
           requestFingerprint: "a".repeat(64),
         },
-        [],
+        [
+          {
+            id: submissionFileId,
+            targetId: activeSubmissionTarget.id,
+            driveFileId: `ci-drive-file-${suffix}`,
+            driveParentFolderId: `ci-drive-parent-${suffix}`,
+            originalName: "ci-submission.pdf",
+            storedName: `${submissionFileId}.pdf`,
+            relativePath: `CI Student Submissions/ICS4U/${user.publicId}/Unit 1/ics4u-m02-assignment/Attempt 1/${submissionFileId}.pdf`,
+            mimeType: "application/pdf",
+            sizeBytes: 128,
+            sha256: "e".repeat(64),
+            webViewLink: "https://drive.google.com/file/d/ci-test/view",
+            createdAt: new Date(),
+            modifiedAt: new Date(),
+          },
+        ],
       );
       assert.equal(submission.id, submissionId);
+      assert.equal(submission.files.length, 1);
+      assert.equal(submission.files[0].id, submissionFileId);
 
       const message = await repository.createSubmissionMessage({
         submissionId,
@@ -132,6 +166,8 @@ test(
         "student",
       );
       assert.equal(studentDraftView.grade, null);
+      assert.equal(studentDraftView.files.length, 1);
+      assert.equal(studentDraftView.files[0].id, submissionFileId);
       assert.equal(studentDraftView.messages.length, 1);
       assert.equal(studentDraftView.messages[0].id, message.id);
 
