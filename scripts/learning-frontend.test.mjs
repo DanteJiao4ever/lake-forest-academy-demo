@@ -336,7 +336,10 @@ async function renderPortal(hash, session, options = {}) {
       style: { removeProperty() {} },
       append() {},
     },
-    querySelector: (selector) => (selector === "#app" ? appRoot : null),
+    querySelector: (selector) =>
+      selector === "#app"
+        ? appRoot
+        : options.querySelector?.(selector) || null,
     addEventListener(type, listener) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(listener);
@@ -407,6 +410,7 @@ async function renderPortal(hash, session, options = {}) {
     structuredClone,
     AbortController,
     FormData: options.FormData || FormData,
+    File: options.File || class BrowserFile {},
     fetch:
       options.fetch ||
       (async () => {
@@ -687,6 +691,29 @@ class TestFormData {
   }
 }
 
+class SubmissionTestFormData {
+  constructor(form) {
+    this.values = new Map(Object.entries(form?.formValues || {}));
+  }
+
+  get(name) {
+    return this.values.get(name) ?? null;
+  }
+
+  set(name, value) {
+    this.values.set(name, value);
+  }
+}
+
+class SubmissionTestFile {
+  constructor(name, type, size = 2048) {
+    this.name = name;
+    this.type = type;
+    this.size = size;
+    this.lastModified = Date.parse("2026-08-03T10:00:00.000Z");
+  }
+}
+
 function interactiveForm(id, dataset, formValues) {
   const alert = {
     className: "form-alert",
@@ -706,8 +733,16 @@ function interactiveForm(id, dataset, formValues) {
     resetCalled: false,
     querySelector(selector) {
       if (selector === "#assignment-form-alert, .form-alert") return alert;
-      if (selector === '[type="submit"]') return button;
+      if (
+        selector === '[type="submit"]' ||
+        selector === 'button[type="submit"]'
+      ) {
+        return button;
+      }
       return null;
+    },
+    matches() {
+      return false;
     },
     reset() {
       this.resetCalled = true;
@@ -2529,6 +2564,13 @@ test("an upload dependency outage preserves submission records but uses device d
       submissionConfig: { submissionsEndpoint, uploadReady: true },
     },
   );
+  const noteOrFileConnected = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+    },
+  );
   const savedDraft = await renderPortal(
     "#/assignment/ics4u-m11-culminating-assignment",
     session,
@@ -2702,12 +2744,72 @@ test("an upload dependency outage preserves submission records but uses device d
       settleTurns: 14,
     },
   );
+  const remoteFileBacked = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    {
+      email: "drive-file@example.test",
+      firstName: "Drive",
+      displayName: "Drive File Student",
+      role: "student",
+    },
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: studentStateStorage("drive-file@example.test"),
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname !== "/v1/submissions") {
+          return jsonResponse({ data: [] });
+        }
+        return jsonResponse({
+          data: [
+            {
+              id: "drive-file-submission",
+              submissionId: "drive-file-submission",
+              student: {
+                displayName: "Drive File Student",
+                email: "drive-file@example.test",
+              },
+              courseCode: "SCH4U",
+              assignmentId: "sch4u-m02-assignment",
+              assignmentTitle: "Safer Organic Product Reformulation Dossier",
+              status: "submitted",
+              submittedAt: "2026-08-02T12:30:00.000Z",
+              receiptId: "DRIVE-FILE-RECEIPT",
+              files: [
+                {
+                  id: "drive-file-id",
+                  name: "reformulation-dossier.pdf",
+                  mimeType: "application/pdf",
+                  sizeBytes: 4096,
+                  openUrl:
+                    "/v1/submissions/drive-file-submission/files/drive-file-id/open",
+                },
+              ],
+            },
+          ],
+          page: { nextCursor: null, limit: 100 },
+        });
+      },
+      settleTurns: 14,
+    },
+  );
 
   assert.match(uploadPaused, /Device-Only Draft Mode/);
   assert.match(uploadPaused, /Save Draft on This Device/);
-  assert.doesNotMatch(uploadPaused, /Connected to Lotus Drive/);
-  assert.match(uploadConnected, /Connected to Lotus Drive/);
-  assert.match(uploadConnected, /> Submit to Lotus Drive</);
+  assert.doesNotMatch(uploadPaused, /Lotus Drive Upload Ready/);
+  assert.match(uploadConnected, /Lotus Drive Upload Ready/);
+  assert.match(uploadConnected, /> Upload to Lotus Drive</);
+  assert.match(
+    uploadConnected,
+    /accept="\.pdf,\.docx,\.xlsx,\.pptx,\.txt,\.png,\.jpg,\.jpeg"/,
+  );
+  assert.doesNotMatch(uploadConnected, /accept="[^"]*\.(?:doc|ppt|xls)(?:,|")/);
+  assert.match(noteOrFileConnected, /School Submission Service Ready/);
+  assert.match(noteOrFileConnected, /> Submit to School Record</);
+  assert.match(
+    noteOrFileConnected,
+    /A note-only submission is saved to the central school record/,
+  );
   assert.match(savedDraft, /Saved on This Device/);
   assert.match(savedDraft, /culminating-project\.pdf/);
   assert.match(newerLocal, /older-remote-version\.pdf/);
@@ -2722,6 +2824,229 @@ test("an upload dependency outage preserves submission records but uses device d
   );
   assert.match(remoteNoteOnly, /Submitted to School Record/);
   assert.doesNotMatch(remoteNoteOnly, /Device-Only Draft|Local Draft/);
+  assert.match(remoteFileBacked, /Submitted to Lotus Drive/);
+  assert.match(remoteFileBacked, /reformulation-dossier\.pdf/);
+  assert.doesNotMatch(remoteFileBacked, /Submitted to School Record/);
+});
+
+test("legacy submission histories receive stable chronological version numbers", async () => {
+  const email = "legacy-history@example.test";
+  const submissionsEndpoint = "https://api.example.test/v1/submissions";
+  const result = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    {
+      email,
+      displayName: "Legacy History Student",
+      role: "student",
+    },
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: studentStateStorage(email),
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname !== "/v1/submissions") {
+          return jsonResponse({ data: [] });
+        }
+        return jsonResponse({
+          data: [
+            {
+              id: "legacy-history-current",
+              submissionId: "legacy-history-current",
+              student: {
+                displayName: "Legacy History Student",
+                email,
+              },
+              courseCode: "SCH4U",
+              assignmentId: "sch4u-m02-assignment",
+              status: "submitted",
+              submittedAt: "2026-08-03T11:00:00.000Z",
+              receiptId: "LEGACY-V2",
+              history: [
+                {
+                  submittedAt: "2026-08-02T11:00:00.000Z",
+                  receiptId: "LEGACY-V1",
+                },
+                {
+                  submittedAt: "2026-08-03T11:00:00.000Z",
+                  receiptId: "LEGACY-V2",
+                },
+              ],
+            },
+          ],
+          page: { nextCursor: null, limit: 100 },
+        });
+      },
+      settleTurns: 14,
+    },
+  );
+
+  assert.match(result, /<dt>Version<\/dt><dd>2<\/dd>/);
+  assert.equal((result.match(/<strong>Version 2<\/strong>/g) || []).length, 1);
+  assert.equal((result.match(/<strong>Version 1<\/strong>/g) || []).length, 1);
+});
+
+test("background refreshes do not replace a dirty assignment upload form", async () => {
+  let resolveNotifications;
+  const assignmentForm = {
+    dataset: {},
+    querySelector() {
+      return null;
+    },
+  };
+  const field = (id) => ({
+    id,
+    closest(selector) {
+      return selector === "#assignment-form" ? assignmentForm : null;
+    },
+  });
+  const sentinel = "assignment note, integrity choice and file preview remain mounted";
+  const result = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    {
+      email: "draft-preservation@example.test",
+      displayName: "Draft Preservation Student",
+      role: "student",
+    },
+    {
+      platformApiConfig: {
+        notificationsEndpoint:
+          "https://api.example.test/v1/me/notifications",
+      },
+      localStorageSeed: studentStateStorage(
+        "draft-preservation@example.test",
+      ),
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname !== "/v1/me/notifications") {
+          throw new Error(`Unexpected draft-preservation request: ${url.pathname}`);
+        }
+        return new Promise((resolve) => {
+          resolveNotifications = resolve;
+        });
+      },
+      querySelector(selector) {
+        return selector === "#assignment-form" ? assignmentForm : null;
+      },
+      settleTurns: 0,
+      interactionSettleTurns: 8,
+      interact: async ({ appRoot, listeners }) => {
+        const input = listeners.get("input")?.[0];
+        const change = listeners.get("change")?.[0];
+        assert.equal(typeof input, "function");
+        assert.equal(typeof change, "function");
+        input({ target: field("submission-note") });
+        assignmentForm.dataset.dirty = "false";
+        change({ target: field("submission-integrity") });
+        assert.equal(assignmentForm.dataset.dirty, "true");
+        appRoot.innerHTML = sentinel;
+        resolveNotifications(
+          jsonResponse({ data: [], unreadCount: 0 }),
+        );
+      },
+      returnHarness: true,
+    },
+  );
+
+  assert.equal(result.html, sentinel);
+});
+
+test("note-only submissions stay central while attachments are identified as Lotus Drive uploads", async () => {
+  const submit = async (file) => {
+    const email = file
+      ? "attachment-delivery@example.test"
+      : "note-delivery@example.test";
+    let postedForm = null;
+    const responseId = file
+      ? "51111111-1111-4111-8111-111111111111"
+      : "52222222-2222-4222-8222-222222222222";
+    const result = await renderPortal(
+      "#/assignment/sch4u-m02-assignment",
+      { email, displayName: "Delivery Test Student", role: "student" },
+      {
+        FormData: SubmissionTestFormData,
+        File: SubmissionTestFile,
+        submissionConfig: {
+          submissionsEndpoint: "https://api.example.test/v1/submissions",
+          uploadReady: true,
+        },
+        sessionStorageSeed: {
+          "lake-forest-learning-csrf-v1": "csrf-delivery-test",
+        },
+        localStorageSeed: studentStateStorage(email),
+        fetch: async (request, init = {}) => {
+          const url = new URL(String(request));
+          if (url.pathname !== "/v1/submissions") {
+            throw new Error(`Unexpected delivery request: ${url.pathname}`);
+          }
+          if (init.method !== "POST") {
+            return jsonResponse({
+              data: [],
+              page: { nextCursor: null, limit: 100 },
+            });
+          }
+          postedForm = init.body;
+          return jsonResponse(
+            {
+              data: {
+                submission: {
+                  id: responseId,
+                  submissionId: responseId,
+                  assignmentId: "sch4u-m02-assignment",
+                  courseCode: "SCH4U",
+                  student: {
+                    email,
+                    displayName: "Delivery Test Student",
+                  },
+                  note: "Ready for teacher review.",
+                  fileName: file?.name || "",
+                  submittedAt: "2026-08-03T10:00:00.000Z",
+                  receiptId: responseId,
+                  status: "submitted",
+                },
+              },
+            },
+            201,
+          );
+        },
+        settleTurns: 12,
+        interact: async ({ listeners }) => {
+          const submitListener = listeners.get("submit")?.[0];
+          assert.equal(typeof submitListener, "function");
+          await submitListener({
+            target: interactiveForm(
+              "assignment-form",
+              { id: "sch4u-m02-assignment" },
+              {
+                note: "Ready for teacher review.",
+                file,
+                integrity: "confirmed",
+              },
+            ),
+            preventDefault() {},
+          });
+        },
+        returnHarness: true,
+      },
+    );
+    return { result, postedForm };
+  };
+
+  const noteOnly = await submit(null);
+  assert.equal(noteOnly.postedForm.get("files"), null);
+  assert.match(noteOnly.result.html, /Submitted to School Record/);
+  assert.doesNotMatch(noteOnly.result.html, /Submitted to Lotus Drive/);
+  assert.equal(
+    (noteOnly.result.html.match(/<strong>Version 1<\/strong>/g) || []).length,
+    1,
+  );
+
+  const attachment = new SubmissionTestFile(
+    "evidence.pdf",
+    "application/pdf",
+  );
+  const withAttachment = await submit(attachment);
+  assert.equal(withAttachment.postedForm.get("files"), attachment);
+  assert.match(withAttachment.result.html, /Submitted to Lotus Drive/);
 });
 
 test("catalog and module links expose only credential-free HTTPS destinations", async () => {
