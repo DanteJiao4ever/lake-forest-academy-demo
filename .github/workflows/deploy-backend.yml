@@ -57,6 +57,7 @@ jobs:
       DB_RUNTIME_SECRET: ${{ vars.GCP_DB_RUNTIME_SECRET }}
       DB_MIGRATION_SECRET: ${{ vars.GCP_DB_MIGRATION_SECRET }}
       CSRF_SECRET: ${{ vars.GCP_CSRF_SECRET }}
+      CURRICULUM_DRIVE_ROOT_ID: ${{ vars.CURRICULUM_DRIVE_ROOT_ID }}
       CLAMAV_HOST: ${{ vars.GCP_CLAMAV_HOST }}
       VPC_NETWORK: ${{ vars.GCP_VPC_NETWORK }}
       VPC_SUBNET: ${{ vars.GCP_VPC_SUBNET }}
@@ -69,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
+          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CURRICULUM_DRIVE_ROOT_ID CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
             test -n "${!name:-}" || { echo "Missing production variable: ${name}" >&2; exit 1; }
           done
       - id: auth
@@ -111,6 +112,7 @@ jobs:
             DATABASE_SSL=false
             DATABASE_POOL_MAX=5
             INSTANCE_UNIX_SOCKET=/cloudsql/${{ env.SQL_INSTANCE }}
+            CURRICULUM_DRIVE_ROOT_ID=${{ env.CURRICULUM_DRIVE_ROOT_ID }}
           secrets: DATABASE_URL=${{ env.DB_MIGRATION_SECRET }}:latest,CSRF_SECRET=${{ env.CSRF_SECRET }}:latest
           flags: >-
             --service-account=${{ env.MIGRATION_SA }}
@@ -145,6 +147,7 @@ jobs:
             ALLOWED_ORIGINS=https://lakeforestacademy.ca\,https://www.lakeforestacademy.ca
             COOKIE_NAME=__Host-lfa_session
             COOKIE_SECURE=true
+            CURRICULUM_DRIVE_ROOT_ID=${{ env.CURRICULUM_DRIVE_ROOT_ID }}
             CLAMAV_HOST=${{ env.CLAMAV_HOST }}
             CLAMAV_PORT=3310
             CLAMAV_REQUIRED=true
@@ -208,6 +211,7 @@ jobs:
           }
           probe "/health/ready" "core-ready"
           probe "/health/catalog-ready" "catalog-ready"
+          probe "/health/drive-catalog-ready" "drive-catalog-ready"
           probe "/health/upload-ready" "upload-ready"
       - name: Promote the verified candidate revision
         env:
@@ -231,6 +235,11 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 10 --max-time 30 \
+            "$public_url/health/drive-catalog-ready" \
+            | jq -e '.status == "ready"' >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
             "$public_url/health/upload-ready" \
             | jq -e '.status == "ready"' >/dev/null
       - name: Remove the temporary candidate URL
@@ -241,4 +250,4 @@ jobs:
           --region "$REGION"
           --remove-tags "$CANDIDATE_TAG"
       - name: Deployment summary
-        run: echo "Learning API candidate passed core, course-catalog, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Learning API candidate passed core, course-catalog, Drive-catalog, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"

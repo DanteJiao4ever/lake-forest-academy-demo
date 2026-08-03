@@ -5,6 +5,7 @@
     apiOrigin: "",
     healthPath: "/health/ready",
     uploadHealthPath: "/health/upload-ready",
+    driveCatalogHealthPath: "/health/drive-catalog-ready",
     healthTimeoutMs: 3500,
     googleWorkspaceAuthStart: "",
     driveSyncPath: "",
@@ -23,6 +24,15 @@
 
   function setUploadStatus(state, message, origin = "") {
     window.LFA_UPLOAD_STATUS = Object.freeze({
+      state,
+      message,
+      origin,
+      checkedAt: new Date().toISOString(),
+    });
+  }
+
+  function setDriveCatalogStatus(state, message, origin = "") {
+    window.LFA_DRIVE_CATALOG_STATUS = Object.freeze({
       state,
       message,
       origin,
@@ -78,6 +88,11 @@
   ) {
     const ready = Boolean(origin);
     const uploadReady = ready && options.uploadReady === true;
+    const driveCatalogReady =
+      ready && options.driveCatalogReady === true;
+    const syncEndpoint = ready
+      ? optionalApiUrl(origin, config.driveSyncPath)
+      : "";
     window.LFA_AUTH_CONFIG = Object.freeze({
       loginEndpoint: ready ? apiUrl(origin, "/v1/auth/login") : "",
       registrationEndpoint: ready ? apiUrl(origin, "/v1/auth/register") : "",
@@ -97,14 +112,15 @@
     });
     window.LFA_DRIVE_CONFIG = Object.freeze({
       sourceName: "Lotus Grade 12 Six-Course Library",
-      rootFolderId: "1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
-      rootFolderUrl:
-        "https://drive.google.com/drive/folders/1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
+      sourceConfigured: Boolean(syncEndpoint),
       uploadReady,
-      materialsEndpoint: ready ? apiUrl(origin, "/v1/materials") : "",
-      syncEndpoint: uploadReady
-        ? optionalApiUrl(origin, config.driveSyncPath)
+      catalogReady: driveCatalogReady,
+      materialsEndpoint: driveCatalogReady
+        ? apiUrl(origin, "/v1/materials")
         : "",
+      // An administrator must be able to run the first protected verification
+      // before the read catalogue can report ready.
+      syncEndpoint,
       submissionsEndpoint: ready ? apiUrl(origin, "/v1/submissions") : "",
       gradingEndpoint: ready ? apiUrl(origin, "/v1/grades") : "",
     });
@@ -223,6 +239,10 @@
       "checking",
       "Checking whether secure school services are ready.",
     );
+    setDriveCatalogStatus(
+      "checking",
+      "Checking whether the secure course-material catalogue is ready.",
+    );
     const config = await readRuntimeConfig();
     const requestedOrigin = config.apiOrigin || localApiOrigin();
     const origin = secureApiOrigin(requestedOrigin);
@@ -232,6 +252,10 @@
       setUploadStatus(
         "invalid",
         "The school API configuration was rejected. File uploads remain disabled.",
+      );
+      setDriveCatalogStatus(
+        "invalid",
+        "The course-material service configuration was rejected.",
       );
       setApiStatus(
         "invalid",
@@ -243,12 +267,16 @@
         "disabled",
         "File uploads are awaiting the school API deployment.",
       );
+      setDriveCatalogStatus(
+        "disabled",
+        "Course materials are awaiting the school API deployment.",
+      );
       setApiStatus(
         "disabled",
         "Secure sign-in and registration are awaiting the school API deployment. No browser-only password is accepted.",
       );
     } else {
-      const [coreReady, uploadReady] = await Promise.all([
+      const [coreReady, uploadReady, driveCatalogHealthReady] = await Promise.all([
         apiIsReady(
           origin,
           config.healthPath || DEFAULT_CONFIG.healthPath,
@@ -260,9 +288,20 @@
           config,
           2500,
         ),
+        apiIsReady(
+          origin,
+          config.driveCatalogHealthPath ||
+            DEFAULT_CONFIG.driveCatalogHealthPath,
+          config,
+          2500,
+        ),
       ]);
       if (coreReady) {
-        applyEndpointConfiguration(origin, config, { uploadReady });
+        const driveCatalogReady = driveCatalogHealthReady === true;
+        applyEndpointConfiguration(origin, config, {
+          uploadReady,
+          driveCatalogReady,
+        });
         setApiStatus(
           "ready",
           uploadReady
@@ -277,6 +316,13 @@
             : "Secure file uploads are temporarily unavailable. Work can still be saved as a device draft.",
           origin,
         );
+        setDriveCatalogStatus(
+          driveCatalogReady ? "ready" : "unavailable",
+          driveCatalogReady
+            ? "Secure course materials are connected."
+            : "Course materials are temporarily unavailable. Courses and other learning tools remain available.",
+          origin,
+        );
       } else {
         applyEndpointConfiguration("");
         setApiStatus(
@@ -287,6 +333,11 @@
         setUploadStatus(
           "unavailable",
           "Secure file uploads are temporarily unavailable.",
+          origin,
+        );
+        setDriveCatalogStatus(
+          "unavailable",
+          "Course materials are temporarily unavailable.",
           origin,
         );
       }

@@ -18,7 +18,6 @@
     overview,
     evaluation,
     units,
-    drive,
   }) => ({
     id,
     code,
@@ -48,7 +47,6 @@
       description: overview,
       units,
       evaluation,
-      drive,
     },
     lessons: units.map((unit, index) => ({
       id: `${id}-u${index + 1}-overview`,
@@ -63,7 +61,7 @@
         "Use teacher feedback and verification checkpoints before final submission.",
       ],
       content: [
-        `This orientation introduces the ${unit.hours}-hour learning plan for ${unit.title}. Open the linked Lotus coursebook for the full readings, worked examples, practice and evidence tables.`,
+        `This orientation introduces the ${unit.hours}-hour learning plan for ${unit.title}. Use the approved readings, worked examples, practice and evidence tables in the secure course index.`,
         "Keep drafts, calculations, source records and feedback as evidence of your learning process. Your teacher may schedule a conference or parallel task to verify understanding and authorship.",
       ],
     })),
@@ -94,16 +92,6 @@
         { title: "Chemical Systems and Equilibrium", hours: 22 },
         { title: "Electrochemistry", hours: 22 },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/1h8rfMCSbWHMmOT0lnUKlE7eHjCpGQ5F0",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1ibKA6xO9ykj3PD2ZF0dDX8K0-rBsKnvf/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/1Hbshpt7D1lpkxGqd81vsW_1SY3vRe0Es/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1DvH37GLYl1oyydGx1BtUCsuDAHbIQOu3/view",
-      },
     }),
     createCourse({
       id: "ics4u",
@@ -134,16 +122,6 @@
           hours: 22,
         },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/1H-ELcyymQdeMci2Ck0WR322ihS1fdm0k",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1ruGTXKidVcKVXgMT0St_210UdrTKjdET/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/19nRcyg8gVk0WaNga4zaZSpPU52WRv0XJ/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1Z30J66OOjUIA3c9frMDqYcGT817jRzpL/view",
-      },
     }),
     createCourse({
       id: "sph4u",
@@ -176,16 +154,6 @@
           hours: 22,
         },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/1RvUeLK1TLU96OpfEC4Q2hT6XzEjdC8e4",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1Tj-CqBTEoLd1plNTYoke5Oi_eQGFPZee/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/1VV9pplD6VgTKd3vozmpVjeoOIBlkpf8M/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1VmOITXMoZplZA_hvoHDJAzyPcDVPAaHB/view",
-      },
     }),
     createCourse({
       id: "mhf4u",
@@ -215,16 +183,6 @@
           hours: 22,
         },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/1AZ2HaaWeJH8vVH73oGnls_vuyggMZmLC",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1dJqooy1JPitLWz8idZw7plac3QIlLcgU/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/1icAn97-9TujjoO1tZHFrHhDiarg21_4s/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1HvMDUkPgpyUGuztLGpU3GnxHHZtFTFk_/view",
-      },
     }),
     createCourse({
       id: "mcv4u",
@@ -256,16 +214,6 @@
           hours: 22,
         },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/1jhAefDynRG18ovK4GeFI7bMJ4KfjvLO6",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1Ogb_U_Qo7yHcMNq6kJpsN1ydnwVgkVHp/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/1AONXddrn74Ajhq9xPNhZ6DOs05n71OGG/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1RMaBh_U3Cx2OW28JyakgvU737-tZul_v/view",
-      },
     }),
     createCourse({
       id: "bbb4m",
@@ -292,16 +240,6 @@
         { title: "International Marketing and Distribution", hours: 22 },
         { title: "Ethics, Operations, and Market-Entry Plan", hours: 24 },
       ],
-      drive: {
-        studentMaterialsFolderUrl:
-          "https://drive.google.com/drive/folders/18K2Me1laOV9jFJqIp543MNMZvuDphIRy",
-        coursebookUrl:
-          "https://drive.google.com/file/d/1DNXO-AMqAJE35sNg-YsvbugqX141Gc1d/view",
-        assessmentUrl:
-          "https://drive.google.com/file/d/15i2K0F8WnJ--FtsMBWcqqH6MlsPSMXtz/view",
-        curriculumMapUrl:
-          "https://drive.google.com/file/d/1jRt1pQIjY8KFCSRravoG3LI__Bg5KA-w/view",
-      },
     }),
   ];
 

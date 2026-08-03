@@ -6,6 +6,14 @@
     state: String(window.LFA_API_STATUS?.state || "disabled"),
     message: String(window.LFA_API_STATUS?.message || "").trim(),
   });
+  const DRIVE_CATALOG_STATUS = Object.freeze({
+    state: String(
+      window.LFA_DRIVE_CATALOG_STATUS?.state || "disabled",
+    ).trim(),
+    message: String(
+      window.LFA_DRIVE_CATALOG_STATUS?.message || "",
+    ).trim(),
+  });
   const STATE_KEY = "lake-forest-learning-state-v1";
   const SESSION_KEY = "lake-forest-learning-session-v1";
   const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
@@ -48,15 +56,8 @@
     sourceName: String(
       window.LFA_DRIVE_CONFIG?.sourceName || "Lotus Google Drive",
     ).trim(),
-    rootFolderId: String(
-      window.LFA_DRIVE_CONFIG?.rootFolderId || "",
-    ).trim(),
-    rootFolderUrl: String(
-      window.LFA_DRIVE_CONFIG?.rootFolderUrl || "",
-    ).trim(),
-    materialsEndpoint: String(
-      window.LFA_DRIVE_CONFIG?.materialsEndpoint || "",
-    ).trim(),
+    sourceConfigured:
+      window.LFA_DRIVE_CONFIG?.sourceConfigured === true,
     syncEndpoint: String(
       window.LFA_DRIVE_CONFIG?.syncEndpoint || "",
     ).trim(),
@@ -1316,6 +1317,8 @@
   let driveMaterialsState = loadDriveMaterialsCache();
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
+  let driveSessionGeneration = 0;
+  const expandedCourseMaterials = new Set();
   let remoteSubmissionsState = {
     records: [],
     error: "",
@@ -1352,6 +1355,7 @@
     platformRuntime.teacherGradebooks = {};
     platformRuntime.errors = {};
     platformRequests.clear();
+    expandedCourseMaterials.clear();
   }
   let drawerScrollY = 0;
   let remoteSessionValidated = !AUTH_CONFIG.workspaceSessionEndpoint;
@@ -1568,6 +1572,7 @@
       const session = JSON.parse(saved);
       if (!session || typeof session.email !== "string") return null;
       return {
+        publicId: String(session.publicId || session.id || "").trim(),
         email: normalizeEmail(session.email),
         role: ["teacher", "teacher_admin"].includes(session.role)
           ? session.role
@@ -1613,6 +1618,7 @@
     sessionStorage.setItem(
       SESSION_KEY,
       JSON.stringify({
+        publicId: scalarLabel(account.publicId || account.id || account.userId),
         email: normalizeEmail(account.email),
         role: ["teacher", "teacher_admin"].includes(account.role)
           ? account.role
@@ -1632,6 +1638,7 @@
     };
     submissionsEndpointCheckedFor = "";
     resetPlatformRuntime();
+    resetDriveMaterialsForSession();
   }
 
   function expireRemoteSession() {
@@ -1646,6 +1653,7 @@
     };
     submissionsEndpointCheckedFor = "";
     resetPlatformRuntime();
+    resetDriveMaterialsForSession();
     state = initialStateForUser(null);
     signInNotice = "Your secure session expired. Please sign in again.";
     const destination = facultySession
@@ -1672,6 +1680,10 @@
 
   function isTeacher(user = currentUser()) {
     return ["teacher", "teacher_admin"].includes(user?.role);
+  }
+
+  function isTeacherAdmin(user = currentUser()) {
+    return user?.role === "teacher_admin";
   }
 
   function userInitials(user = currentUser()) {
@@ -2202,21 +2214,10 @@
     }
   }
 
-  function safeCourseDriveLinks(drive = {}) {
-    return {
-      coursebookUrl: safeExternalHttpsUrl(drive.coursebookUrl),
-      assessmentUrl: safeExternalHttpsUrl(drive.assessmentUrl),
-      curriculumMapUrl: safeExternalHttpsUrl(drive.curriculumMapUrl),
-      studentMaterialsFolderUrl: safeExternalHttpsUrl(
-        drive.studentMaterialsFolderUrl,
-      ),
-    };
-  }
-
   function safeProtectedResourceUrl(value) {
     if (!value) return "";
     const configuredBase = configuredDriveUrl(
-      PLATFORM_API_CONFIG.coursesEndpoint || DRIVE_CONFIG.materialsEndpoint,
+      PLATFORM_API_CONFIG.coursesEndpoint,
     );
     if (!configuredBase) return "";
     try {
@@ -3322,12 +3323,21 @@
     }
   }
 
-  function driveRootFolderUrl() {
-    const configured = configuredDriveUrl(DRIVE_CONFIG.rootFolderUrl);
-    if (configured) return configured;
-    return DRIVE_CONFIG.rootFolderId
-      ? `https://drive.google.com/drive/folders/${encodeURIComponent(DRIVE_CONFIG.rootFolderId)}`
-      : "";
+  function driveMaterialsReadReady() {
+    return (
+      DRIVE_CATALOG_STATUS.state === "ready" &&
+      Boolean(configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint))
+    );
+  }
+
+  function driveCatalogUnavailableMessage() {
+    if (DRIVE_CATALOG_STATUS.state === "checking") {
+      return "The secure course-material service is still being checked.";
+    }
+    return (
+      DRIVE_CATALOG_STATUS.message ||
+      "Course materials are temporarily unavailable. Courses and other learning tools remain available."
+    );
   }
 
   function scalarLabel(value) {
@@ -3371,7 +3381,7 @@
     return { found: false, items: [] };
   }
 
-  function normalizeDriveMaterial(raw, index) {
+  function normalizeDriveMaterial(raw, index, fallbackCourse = null) {
     if (!raw || typeof raw !== "object") return null;
     const path = String(raw.path || raw.folderPath || raw.relativePath || "");
     const pathParts = path
@@ -3379,7 +3389,7 @@
       .map((part) => part.trim())
       .filter(Boolean);
     const courseId = canonicalCourseId(
-      raw.courseId || raw.courseCode || raw.course,
+      raw.courseId || raw.courseCode || raw.course || fallbackCourse?.code,
       path,
     );
     const course = findCourse(courseId);
@@ -3387,16 +3397,7 @@
       raw.name || raw.title || raw.fileName || raw.displayName,
     );
     if (!name) return null;
-    const fileUrl = configuredDriveUrl(
-      raw.webViewLink ||
-        raw.openUrl ||
-        raw.webUrl ||
-        raw.url ||
-        raw.link ||
-        raw.alternateLink,
-      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint) ||
-        window.location.href,
-    );
+    const fileUrl = safeProtectedResourceUrl(raw.openUrl);
     const pathUnit =
       pathParts.find((part) => /^unit\s+\d+/i.test(part)) || "";
     const pathCategory =
@@ -3405,11 +3406,21 @@
           part.toLowerCase(),
         ),
       ) || "";
+    const explicitUnit = scalarLabel(
+      raw.unitName || raw.unitTitle || raw.unit,
+    );
+    const rawUnitNumber = raw.unitNumber ?? raw.unit_number;
+    const normalizedUnitNumber =
+      rawUnitNumber !== null &&
+      rawUnitNumber !== undefined &&
+      String(rawUnitNumber).trim() !== "" &&
+      Number.isInteger(Number(rawUnitNumber)) &&
+      Number(rawUnitNumber) > 0
+        ? Number(rawUnitNumber)
+        : null;
     const rawUnit =
-      scalarLabel(raw.unitName || raw.unitTitle || raw.unit) ||
-      (Number.isInteger(Number(raw.unitNumber))
-        ? `Unit ${Number(raw.unitNumber)}`
-        : "") ||
+      (explicitUnit && explicitUnit !== "0" ? explicitUnit : "") ||
+      (normalizedUnitNumber ? `Unit ${normalizedUnitNumber}` : "") ||
       pathUnit ||
       "Course Resources";
     const rawCategory =
@@ -3430,6 +3441,7 @@
       courseCode:
         scalarLabel(raw.courseCode) ||
         course?.code ||
+        fallbackCourse?.code ||
         scalarLabel(raw.course) ||
         "Unassigned",
       unit: rawUnit,
@@ -3447,7 +3459,7 @@
     };
   }
 
-  function normalizeDrivePayload(payload) {
+  function normalizeDrivePayload(payload, fallbackCourse = null) {
     const extracted = extractDriveMaterialItems(payload);
     const metadata =
       payload && typeof payload === "object" && !Array.isArray(payload)
@@ -3467,7 +3479,9 @@
     return {
       found: extracted.found,
       records: extracted.items
-        .map((item, index) => normalizeDriveMaterial(item, index))
+        .map((item, index) =>
+          normalizeDriveMaterial(item, index, fallbackCourse),
+        )
         .filter(Boolean),
       lastSyncedAt:
         syncValue && !Number.isNaN(new Date(syncValue).getTime())
@@ -3477,16 +3491,22 @@
   }
 
   function driveSourceCacheKey() {
-    return (
-      DRIVE_CONFIG.rootFolderId ||
-      DRIVE_CONFIG.rootFolderUrl ||
-      DRIVE_CONFIG.sourceName
-    );
+    const sourceKey = DRIVE_CONFIG.sourceName;
+    const session = readSession();
+    const accountKey =
+      session?.publicId || normalizeEmail(session?.email) || "anonymous";
+    const role = ["student", "teacher", "teacher_admin"].includes(
+      session?.role,
+    )
+      ? session.role
+      : "anonymous";
+    return `${sourceKey}::${role}:${accountKey}`;
   }
 
   function loadDriveMaterialsCache() {
     const fallback = {
       records: [],
+      courseMetadata: {},
       lastSyncedAt: "",
       lastLoadedAt: "",
       error: "",
@@ -3504,6 +3524,10 @@
         records: saved.records
           .map((item, index) => normalizeDriveMaterial(item, index))
           .filter(Boolean),
+        courseMetadata:
+          saved.courseMetadata && typeof saved.courseMetadata === "object"
+            ? saved.courseMetadata
+            : {},
         lastSyncedAt:
           saved.lastSyncedAt &&
           !Number.isNaN(new Date(saved.lastSyncedAt).getTime())
@@ -3524,6 +3548,7 @@
     const cache = {
       sourceKey: driveSourceCacheKey(),
       records: driveMaterialsState.records,
+      courseMetadata: driveMaterialsState.courseMetadata || {},
       lastSyncedAt: driveMaterialsState.lastSyncedAt,
       lastLoadedAt: driveMaterialsState.lastLoadedAt,
     };
@@ -3532,6 +3557,13 @@
     } catch {
       // The in-memory material index remains available if storage is restricted.
     }
+  }
+
+  function resetDriveMaterialsForSession() {
+    driveSessionGeneration += 1;
+    driveRequestInFlight = false;
+    driveEndpointChecked = false;
+    driveMaterialsState = loadDriveMaterialsCache();
   }
 
   async function requestDriveJson(endpoint, options = {}) {
@@ -3570,78 +3602,163 @@
     }
   }
 
+  function normalizeCourseMaterialsCatalog(payload) {
+    const rows = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
+    return Object.fromEntries(
+      rows
+        .map((row) => {
+          const code = scalarLabel(row?.code || row?.courseCode).toUpperCase();
+          const course = COURSES.find((candidate) => candidate.code === code);
+          const materials = row?.materials;
+          if (!course || !materials || typeof materials !== "object") return null;
+          const lastSyncedAt = String(materials.lastSyncedAt || "").trim();
+          return [
+            course.code,
+            {
+              count: Math.max(0, Number(materials.count) || 0),
+              lastSyncedAt:
+                lastSyncedAt &&
+                !Number.isNaN(new Date(lastSyncedAt).getTime())
+                  ? lastSyncedAt
+                  : "",
+              href: safeProtectedResourceUrl(materials.href),
+            },
+          ];
+        })
+        .filter(Boolean),
+    );
+  }
+
+  function latestDriveTimestamp(values) {
+    return values
+      .filter((value) => value && !Number.isNaN(new Date(value).getTime()))
+      .sort(
+        (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+      )[0] || "";
+  }
+
+  async function readDriveMaterialPages(endpoint, fallbackCourse = null) {
+    const firstUrl = new URL(configuredDriveUrl(endpoint));
+    if (!firstUrl.searchParams.has("limit")) {
+      firstUrl.searchParams.set("limit", "100");
+    }
+    let pageUrl = firstUrl.toString();
+    let pageCount = 0;
+    let lastSyncedAt = "";
+    const records = [];
+    while (pageUrl && pageCount < 50) {
+      const payload = await requestDriveJson(pageUrl);
+      const normalized = normalizeDrivePayload(payload, fallbackCourse);
+      if (!normalized.found) {
+        throw new Error(
+          "The materials endpoint returned an unsupported response.",
+        );
+      }
+      records.push(...normalized.records);
+      lastSyncedAt = normalized.lastSyncedAt || lastSyncedAt;
+      pageUrl = nextPageUrl(pageUrl, payload);
+      pageCount += 1;
+    }
+    return { records, lastSyncedAt };
+  }
+
   async function refreshDriveMaterials({ silent = false } = {}) {
+    const catalogEndpoint = configuredDriveUrl(
+      PLATFORM_API_CONFIG.coursesEndpoint,
+    );
     if (
       driveRequestInFlight ||
-      !configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+      !driveMaterialsReadReady() ||
+      !catalogEndpoint
     ) {
       return false;
     }
+    const requestGeneration = driveSessionGeneration;
     driveRequestInFlight = true;
     driveEndpointChecked = true;
-    if (!silent && isTeacher()) render();
+    driveMaterialsState.error = "";
+    if (!silent) render(false, true);
     try {
-      const firstUrl = new URL(
-        configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint),
-      );
-      if (!firstUrl.searchParams.has("limit")) {
-        firstUrl.searchParams.set("limit", "100");
-      }
-      let pageUrl = firstUrl.toString();
-      let pageCount = 0;
-      let lastSyncedAt = "";
-      const records = [];
-      while (pageUrl && pageCount < 50) {
-        const payload = await requestDriveJson(pageUrl);
-        const normalized = normalizeDrivePayload(payload);
-        if (!normalized.found) {
-          throw new Error(
-            "The materials endpoint returned an unsupported response.",
+      let courseMetadata = {};
+      let pageResults = [];
+      if (catalogEndpoint) {
+        const catalogPayload = await requestDriveJson(catalogEndpoint);
+        courseMetadata = normalizeCourseMaterialsCatalog(catalogPayload);
+        const targets = Object.entries(courseMetadata)
+          .filter(([, metadata]) => metadata.href)
+          .map(([courseCode, metadata]) => ({
+            course: COURSES.find((candidate) => candidate.code === courseCode),
+            endpoint: metadata.href,
+          }))
+          .filter((target) => target.course);
+        if (targets.length) {
+          pageResults = await Promise.all(
+            targets.map((target) =>
+              readDriveMaterialPages(target.endpoint, target.course),
+            ),
           );
         }
-        records.push(...normalized.records);
-        lastSyncedAt = normalized.lastSyncedAt || lastSyncedAt;
-        pageUrl = nextPageUrl(pageUrl, payload);
-        pageCount += 1;
       }
+      const records = pageResults.flatMap((result) => result.records);
+      const lastSyncedAt = latestDriveTimestamp([
+        ...Object.values(courseMetadata).map(
+          (metadata) => metadata.lastSyncedAt,
+        ),
+        ...pageResults.map((result) => result.lastSyncedAt),
+      ]);
+      if (requestGeneration !== driveSessionGeneration) return false;
       driveMaterialsState = {
         records: [
           ...new Map(records.map((record) => [record.id, record])).values(),
         ],
+        courseMetadata,
         lastSyncedAt:
-          lastSyncedAt || driveMaterialsState.lastSyncedAt,
+          lastSyncedAt ||
+          (Object.keys(courseMetadata).length
+            ? ""
+            : driveMaterialsState.lastSyncedAt),
         lastLoadedAt: new Date().toISOString(),
         error: "",
       };
       saveDriveMaterialsCache();
       return true;
     } catch (error) {
+      if (requestGeneration !== driveSessionGeneration) return false;
       driveMaterialsState.error =
         error?.name === "AbortError"
           ? "The Drive service did not respond within 8 seconds."
           : error?.message || "The Drive materials could not be loaded.";
       return false;
     } finally {
-      driveRequestInFlight = false;
-      const route = routeParts();
-      if (
-        (isTeacher() && route[1] === "materials") ||
-        (!isTeacher() && route[0] === "course")
-      ) {
-        render();
+      if (requestGeneration === driveSessionGeneration) {
+        driveRequestInFlight = false;
+        const route = routeParts();
+        if (
+          (isTeacher() &&
+            ["course", "courses", "materials"].includes(route[1])) ||
+          (!isTeacher() &&
+            ["course", "courses", "guide", "syllabus"].includes(route[0]))
+        ) {
+          render(false, true);
+        }
       }
     }
   }
 
   async function syncDriveMaterials() {
     if (
-      !isTeacher() ||
-      !driveRootFolderUrl() ||
+      !isTeacherAdmin() ||
+      !DRIVE_CONFIG.sourceConfigured ||
       !configuredDriveUrl(DRIVE_CONFIG.syncEndpoint) ||
       driveRequestInFlight
     ) {
       return;
     }
+    const requestGeneration = driveSessionGeneration;
     driveRequestInFlight = true;
     driveMaterialsState.error = "";
     render();
@@ -3652,23 +3769,29 @@
         body: JSON.stringify({ mode: "incremental" }),
         timeoutMs: 120000,
       });
+      if (requestGeneration !== driveSessionGeneration) return;
       const normalized = normalizeDrivePayload(payload);
       const syncStatus = scalarLabel(
         payload?.data?.status || payload?.status,
       ).toLowerCase();
       if (["queued", "running"].includes(syncStatus)) {
         showToast(
-          `Sync started for ${DRIVE_CONFIG.sourceName}. The material index will refresh shortly.`,
+          driveMaterialsReadReady()
+            ? `Sync started for ${DRIVE_CONFIG.sourceName}. The material index will refresh shortly.`
+            : `Verification started for ${DRIVE_CONFIG.sourceName}. Course materials will open after the protected catalogue passes its readiness check.`,
         );
-        window.setTimeout(
-          () => void refreshDriveMaterials({ silent: true }),
-          3000,
-        );
+        if (driveMaterialsReadReady()) {
+          window.setTimeout(
+            () => void refreshDriveMaterials({ silent: true }),
+            3000,
+          );
+        }
         return;
       }
       if (normalized.found) {
         driveMaterialsState = {
           records: normalized.records,
+          courseMetadata: driveMaterialsState.courseMetadata || {},
           lastSyncedAt: normalized.lastSyncedAt || new Date().toISOString(),
           lastLoadedAt: new Date().toISOString(),
           error: "",
@@ -3678,10 +3801,19 @@
         driveMaterialsState.lastSyncedAt =
           normalized.lastSyncedAt || new Date().toISOString();
       }
+      if (
+        !driveMaterialsReadReady() &&
+        ["success", "succeeded", "completed"].includes(syncStatus)
+      ) {
+        showToast(
+          `Verification completed for ${DRIVE_CONFIG.sourceName}. Reload the portal after the readiness check updates to open course materials.`,
+        );
+        return;
+      }
       driveRequestInFlight = false;
       const refreshed =
         normalized.found ||
-        (configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+        (driveMaterialsReadReady()
           ? await refreshDriveMaterials({ silent: true })
           : false);
       if (!refreshed && !normalized.found) {
@@ -3691,14 +3823,17 @@
         `Synced ${plural(driveMaterialsState.records.length, "material")} from ${DRIVE_CONFIG.sourceName}.`,
       );
     } catch (error) {
+      if (requestGeneration !== driveSessionGeneration) return;
       driveMaterialsState.error =
         error?.name === "AbortError"
           ? "The Drive sync did not respond within two minutes."
           : error?.message || "Drive sync could not be completed.";
       showToast(driveMaterialsState.error);
     } finally {
-      driveRequestInFlight = false;
-      if (isTeacher() && routeParts()[1] === "materials") render();
+      if (requestGeneration === driveSessionGeneration) {
+        driveRequestInFlight = false;
+        if (isTeacher() && routeParts()[1] === "materials") render();
+      }
     }
   }
 
@@ -4935,6 +5070,75 @@
       .join("");
   }
 
+  function courseDriveMaterials(course) {
+    return driveMaterialsState.records.filter(
+      (record) => record.courseId === course?.id,
+    );
+  }
+
+  function courseDriveMaterialCount(course, records = courseDriveMaterials(course)) {
+    const metadata = driveMaterialsState.courseMetadata?.[course?.code] || {};
+    return Math.max(records.length, Number(metadata.count) || 0);
+  }
+
+  function courseMaterialsBody(course, noun = "Materials") {
+    const records = courseDriveMaterials(course);
+    if (!driveMaterialsReadReady()) {
+      const checking = DRIVE_CATALOG_STATUS.state === "checking";
+      return `<div class="course-materials-status ${checking ? "is-loading" : "is-error"}" role="status">${icon(checking ? "clock" : "file", 18)}<span><strong>${checking ? `Checking ${noun.toLowerCase()}` : `${noun} temporarily unavailable`}</strong><small>${escapeHtml(driveCatalogUnavailableMessage())}</small></span></div>`;
+    }
+    if (driveRequestInFlight && !records.length) {
+      return `<div class="course-materials-status is-loading" role="status">${icon("clock", 18)}<span><strong>Loading ${noun.toLowerCase()}</strong><small>Reading the secure course index.</small></span></div>`;
+    }
+    if (driveMaterialsState.error) {
+      return `<div class="course-materials-status is-error" role="alert">${icon("file", 18)}<span><strong>${noun} could not be loaded</strong><small>${escapeHtml(driveMaterialsState.error)}</small></span><button class="button button-secondary" type="button" data-action="refresh-course-materials">Try Again</button></div>`;
+    }
+    if (!driveEndpointChecked) {
+      return `<div class="course-materials-status is-loading" role="status">${icon("clock", 18)}<span><strong>Connecting ${noun.toLowerCase()}</strong><small>Waiting for the secure course index.</small></span></div>`;
+    }
+    if (!records.length) {
+      return `<div class="course-materials-status" role="status">${icon("file", 18)}<span><strong>No ${noun.toLowerCase()} published yet</strong><small>New course files will appear here after the approved Drive source is synced.</small></span></div>`;
+    }
+    return driveUnitTree(records);
+  }
+
+  function courseMaterialsDisclosure(course, context = "student") {
+    const records = courseDriveMaterials(course);
+    const metadata = driveMaterialsState.courseMetadata?.[course.code] || {};
+    const materialCount = courseDriveMaterialCount(course, records);
+    const disclosureKey = `${context}:${course.id}`;
+    const expanded = expandedCourseMaterials.has(disclosureKey);
+    const panelId = `${context}-${course.id}-materials`;
+    const noun = context === "teacher" ? "Resources" : "Materials";
+    if (!driveMaterialsReadReady()) {
+      return {
+        count: 0,
+        expanded: false,
+        button: `<button class="button button-secondary course-materials-toggle" type="button" disabled aria-disabled="true" aria-expanded="false" title="${escapeHtml(driveCatalogUnavailableMessage())}">${noun} Temporarily Unavailable</button>`,
+        panel: "",
+      };
+    }
+    const countLabel =
+      (driveEndpointChecked && !driveRequestInFlight) || materialCount
+      ? ` (${materialCount})`
+      : "";
+    const buttonLabel = expanded
+      ? `Hide ${noun}`
+      : driveRequestInFlight
+        ? `Loading ${noun}...`
+        : `View ${noun}${countLabel}`;
+    const body = courseMaterialsBody(course, noun);
+
+    return {
+      count: materialCount,
+      expanded,
+      button: `<button class="button button-secondary course-materials-toggle" type="button" data-action="toggle-course-materials" data-course="${course.id}" data-context="${context}" aria-expanded="${expanded}" aria-controls="${panelId}">${escapeHtml(buttonLabel)}</button>`,
+      panel: expanded
+        ? `<section class="course-card-materials" id="${panelId}" aria-label="${course.code} ${noun.toLowerCase()}" aria-live="polite"><header><span><span class="course-code">Secure Course Index</span><strong>${course.code} ${noun}</strong>${metadata.lastSyncedAt ? `<small>Synced ${escapeHtml(driveTimestampLabel(metadata.lastSyncedAt))}</small>` : ""}</span><span class="badge">${plural(materialCount, "item")}</span></header>${body}</section>`
+        : "",
+    };
+  }
+
   function teacherDriveMaterialTree(records) {
     if (!records.length) {
       return `
@@ -4967,59 +5171,82 @@
   }
 
   function teacherMaterialsView() {
-    const folderUrl = driveRootFolderUrl();
-    const folderConfigured = Boolean(folderUrl);
-    const materialsEndpointReady = Boolean(
-      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint),
-    );
+    const materialsEndpointReady = driveMaterialsReadReady();
     const syncEndpointReady = Boolean(
       configuredDriveUrl(DRIVE_CONFIG.syncEndpoint),
     );
+    const sourceConfigured =
+      DRIVE_CONFIG.sourceConfigured && syncEndpointReady;
+    const canSyncDrive = isTeacherAdmin();
+    const retryVerification = ["invalid", "unavailable"].includes(
+      DRIVE_CATALOG_STATUS.state,
+    );
     let connection = {
-      label: "Awaiting Lotus folder",
+      label: "Awaiting protected source",
       className: "warning",
       detail:
-        "The platform administrator still needs to connect the approved Lotus folder and school data service.",
+        "The backend administrator still needs to configure the protected course source and verification endpoint.",
     };
-    if (!folderConfigured) {
-      connection.detail = driveMaterialsState.records.length
-        ? `The Lotus folder is not configured. Showing ${plural(driveMaterialsState.records.length, "cached material")} until a folder is supplied.`
-        : connection.detail;
+    if (!sourceConfigured) {
+      // Keep the source location private; the browser only needs to know
+      // whether the protected backend adapter is configured.
+    } else if (driveRequestInFlight) {
+      connection = {
+        label: materialsEndpointReady ? "Syncing" : "Verifying",
+        className: "info",
+        detail: materialsEndpointReady
+          ? `Refreshing the protected ${DRIVE_CONFIG.sourceName} index.`
+          : `Running a protected verification of ${DRIVE_CONFIG.sourceName}.`,
+      };
+    } else if (!materialsEndpointReady) {
+      connection = {
+        label: retryVerification
+          ? "Verification required"
+          : "Initial verification pending",
+        className: "warning",
+        detail: canSyncDrive
+          ? retryVerification
+            ? "The protected course source is configured, but its read catalogue is not ready. Retry verification to rebuild the secure index."
+            : "Run the first protected verification to build the secure course-material index."
+          : "Course materials are waiting for a platform administrator to verify the protected source.",
+      };
     } else if (driveMaterialsState.error) {
       connection = {
         label: "Needs attention",
         className: "danger",
         detail: driveMaterialsState.error,
       };
-    } else if (driveRequestInFlight) {
-      connection = {
-        label: "Syncing",
-        className: "info",
-        detail: `Reading the approved ${DRIVE_CONFIG.sourceName} folder index.`,
-      };
-    } else if (driveMaterialsState.records.length && materialsEndpointReady) {
+    } else if (driveMaterialsState.records.length) {
       connection = {
         label: "Connected",
         className: "success",
         detail: `${plural(driveMaterialsState.records.length, "material")} available from ${DRIVE_CONFIG.sourceName}.`,
       };
-    } else if (folderConfigured && materialsEndpointReady) {
+    } else {
       connection = {
-        label: syncEndpointReady ? "Ready to sync" : "Connected read-only",
+        label:
+          syncEndpointReady && canSyncDrive
+            ? "Ready to sync"
+            : "Connected read-only",
         className: "info",
-        detail: syncEndpointReady
-          ? "The folder and backend adapter are configured."
-          : "Materials can be read, but the sync endpoint is not configured.",
-      };
-    } else if (folderConfigured) {
-      connection = {
-        label: "Folder selected",
-        className: "warning",
-        detail: "Add the materials and sync endpoints to activate the index.",
+        detail: syncEndpointReady && canSyncDrive
+          ? "The protected source and backend adapter are configured."
+          : "Materials can be read. Synchronization is reserved for platform administrators.",
       };
     }
     const syncDisabled =
-      !folderConfigured || !syncEndpointReady || driveRequestInFlight;
+      !canSyncDrive ||
+      !sourceConfigured ||
+      driveRequestInFlight;
+    const syncLabel = driveRequestInFlight
+      ? materialsEndpointReady
+        ? "Syncing..."
+        : "Verifying..."
+      : materialsEndpointReady
+        ? "Sync from Drive"
+        : retryVerification
+          ? "Retry Drive Verification"
+          : "Verify & Sync Drive";
     return `
       <header class="teacher-hero drive-materials-hero">
         <div>
@@ -5028,42 +5255,30 @@
           <p>Organize school-owned course materials in Drive and publish the synced index to students without sharing a Google password.</p>
         </div>
         <div class="drive-materials-actions">
-          <button class="button button-gold" type="button" data-action="sync-drive-materials" ${syncDisabled ? 'disabled aria-disabled="true"' : ""}>
-            ${driveRequestInFlight ? "Syncing..." : `Sync from Drive ${icon("arrow", 16)}`}
-          </button>
-          ${
-            folderUrl
-              ? `<a class="button button-on-dark" href="${escapeHtml(folderUrl)}" target="_blank" rel="noopener noreferrer">Open Drive Folder</a>`
-              : '<button class="button button-on-dark" type="button" disabled aria-disabled="true">Open Drive Folder</button>'
-          }
+          ${canSyncDrive ? `<button class="button button-gold" type="button" data-action="sync-drive-materials" ${syncDisabled ? 'disabled aria-disabled="true"' : ""}>${escapeHtml(syncLabel)} ${icon("arrow", 16)}</button>` : ""}
         </div>
       </header>
       <section class="panel drive-connection-card" aria-label="Drive connection">
         <div>
           <p class="eyebrow">Connection</p>
           <div class="drive-status-line">
-            <h2>Lotus folder</h2>
+            <h2>Protected course source</h2>
             <span class="status ${connection.className}">${escapeHtml(connection.label)}</span>
           </div>
           <p class="drive-connection-detail">${escapeHtml(connection.detail)}</p>
           <p class="drive-connection-detail"><strong>Last sync:</strong> ${escapeHtml(driveTimestampLabel(driveMaterialsState.lastSyncedAt))}</p>
-          ${
-            DRIVE_CONFIG.rootFolderId
-              ? `<p class="drive-connection-detail"><strong>Folder ID:</strong> ${escapeHtml(DRIVE_CONFIG.rootFolderId)}</p>`
-              : ""
-          }
         </div>
         <div class="drive-folder-convention">
-          <p class="eyebrow">Folder Convention</p>
-          <strong>Keep every file in this sequence</strong>
-          <ol aria-label="Recommended Drive folder structure">
-            <li>Course Code</li><li>Unit</li><li>Category</li><li>Files</li>
+          <p class="eyebrow">Protected Workflow</p>
+          <strong>Materials remain behind the school API</strong>
+          <ol aria-label="Protected course material workflow">
+            <li>Verify source</li><li>Build index</li><li>Publish catalogue</li><li>Open through API</li>
           </ol>
         </div>
       </section>
       ${
-        !folderConfigured
-          ? '<p class="login-help"><strong>Awaiting Lotus</strong>Share only the approved root folder or school Shared Drive with the backend service account. This page never requests or stores a Google password.</p>'
+        !sourceConfigured
+          ? '<p class="login-help"><strong>Administrator setup required</strong>Configure the protected Drive source on the backend. The browser does not accept or reveal folder identifiers, Drive links or Google passwords.</p>'
           : ""
       }
       <section class="teacher-section">
@@ -5071,24 +5286,26 @@
           <div><p class="eyebrow">Synced Index</p><h2>Course Materials</h2></div>
           <span class="badge">${plural(driveMaterialsState.records.length, "material")}</span>
         </div>
-        ${teacherDriveMaterialTree(driveMaterialsState.records)}
+        ${
+          materialsEndpointReady
+            ? teacherDriveMaterialTree(driveMaterialsState.records)
+            : `<div class="teacher-empty" role="status">${icon("file", 30)}<h3>Course Materials Temporarily Unavailable</h3><p>${escapeHtml(driveCatalogUnavailableMessage())}</p></div>`
+        }
       </section>
     `;
   }
 
   function studentCourseMaterials(course) {
-    const records = driveMaterialsState.records.filter(
-      (record) => record.courseId === course.id,
-    );
-    if (!records.length) return "";
+    const records = courseDriveMaterials(course);
+    const count = courseDriveMaterialCount(course, records);
     return `
       <section class="module course-materials">
         <header>
-          <p class="course-code">Synced from ${escapeHtml(DRIVE_CONFIG.sourceName)}</p>
+          <p class="course-code">Secure Course Index</p>
           <h3>Course Materials</h3>
-          <p>${plural(records.length, "resource")} organized by unit and category.</p>
+          <p>${count ? `${plural(count, "resource")} organized by course section and category.` : "Approved course files will appear here after synchronization."}</p>
         </header>
-        ${driveUnitTree(records)}
+        ${courseMaterialsBody(course, "Materials")}
       </section>
     `;
   }
@@ -5170,6 +5387,7 @@
             const enrolled = allStudentAccounts().filter((student) =>
               isCourseEnrolled(course.id, loadState(student)),
             ).length;
+            const materials = courseMaterialsDisclosure(course, "teacher");
             const courseRecords = records.filter(
               (record) => record.course.id === course.id,
             );
@@ -5177,7 +5395,7 @@
               isAwaitingTeacherReview,
             ).length;
             return `
-              <a class="teacher-course-card" href="#/teacher/course/${course.id}">
+              <article class="teacher-course-card ${materials.expanded ? "is-materials-open" : ""}">
                 <span class="course-code">${course.code}</span>
                 <h2>${escapeHtml(course.title)}</h2>
                 <p>${escapeHtml(course.gradeType)} · ${course.plannedHours} hours</p>
@@ -5185,8 +5403,12 @@
                   <div><dt>Enrolled</dt><dd>${enrolled}</dd></div>
                   <div><dt>Awaiting Review</dt><dd>${awaiting}</dd></div>
                 </dl>
-                <span class="text-link">Open Workspace ${icon("arrow", 16)}</span>
-              </a>
+                <div class="teacher-course-card-actions">
+                  <a class="button button-primary" href="#/teacher/course/${course.id}">Open Workspace ${icon("arrow", 16)}</a>
+                  ${materials.button}
+                </div>
+                ${materials.panel}
+              </article>
             `;
           })
           .join("")}
@@ -5468,8 +5690,7 @@
   }
 
   function teacherCourseView(course) {
-    const syllabus = course.syllabus || { units: [], drive: {} };
-    const drive = safeCourseDriveLinks(syllabus.drive);
+    const syllabus = course.syllabus || { units: [] };
     const records = teacherSubmissionRecords().filter(
       (record) => record.course.id === course.id,
     );
@@ -5495,7 +5716,7 @@
         </div>
         <div class="teacher-course-hero-actions">
           <a class="button button-gold" href="#/teacher/submissions/${course.id}">Submission Centre</a>
-          ${drive.curriculumMapUrl ? `<a class="button button-on-dark" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer">Open Curriculum Map</a>` : ""}
+          <a class="button button-on-dark" href="#/teacher/materials">Course Materials</a>
         </div>
       </header>
       <section class="teacher-metrics teacher-course-metrics" aria-label="${course.code} overview">
@@ -5579,13 +5800,9 @@
             }
           </section>
           <section class="teacher-section teacher-drive-card">
-            <div class="section-heading"><div><p class="eyebrow">Lotus Drive</p><h2>Course Files</h2></div></div>
-            <div class="teacher-drive-actions">
-              ${drive.coursebookUrl ? `<a class="resource-link" href="${escapeHtml(drive.coursebookUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("book", 19)}</span><span><strong>Student Coursebook</strong><small>Open in Drive</small></span>${icon("arrow", 16)}</a>` : ""}
-              ${drive.assessmentUrl ? `<a class="resource-link" href="${escapeHtml(drive.assessmentUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("clipboard", 19)}</span><span><strong>Assessment Package</strong><small>Open in Drive</small></span>${icon("arrow", 16)}</a>` : ""}
-              ${drive.curriculumMapUrl ? `<a class="resource-link" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("file", 19)}</span><span><strong>Curriculum Map</strong><small>110-hour plan</small></span>${icon("arrow", 16)}</a>` : ""}
-            </div>
-            <p class="teacher-security-note"><strong>Staff-only materials remain protected.</strong>They are not embedded in this public client and should be opened only after secure Workspace Drive authorization is connected.</p>
+            <div class="section-heading"><div><p class="eyebrow">Secure Course Index</p><h2>Course Files</h2></div><span class="badge">${plural(courseDriveMaterialCount(course), "item")}</span></div>
+            <div class="teacher-drive-actions">${courseMaterialsBody(course, "Resources")}</div>
+            <p class="teacher-security-note"><strong>Files open through the school API.</strong> Direct Google Drive sharing is not required, and staff-only access remains enforced by the signed-in role.</p>
           </section>
         </aside>
       </section>
@@ -6508,8 +6725,9 @@
           enrolled.length
             ? enrolled.map((course) => {
           const progress = courseProgress(course);
+          const materials = courseMaterialsDisclosure(course, "student");
           return `
-            <a class="course-card" href="#/course/${course.id}">
+            <article class="course-card ${materials.expanded ? "is-materials-open" : ""}">
               <div class="course-image">
                 <img src="${course.image}" alt="" />
                 <span class="badge">${course.subject}</span>
@@ -6526,8 +6744,13 @@
                   <div><span>${progress.completed} of ${progress.total} modules</span><strong>${progress.percent}%</strong></div>
                   <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
                 </div>
+                <div class="course-card-actions">
+                  <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 16)}</a>
+                  ${materials.button}
+                </div>
               </div>
-            </a>
+              ${materials.panel}
+            </article>
           `;
               }).join("")
             : '<div class="course-empty-selection"><span class="course-chip">6 Courses Available</span><h2>Build Your Course Plan</h2><p>Select the courses you want to study. Your dashboard, assignments, calendar and grades will follow that plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
@@ -6639,7 +6862,9 @@
   function moduleResourceMarkup(resource) {
     const href =
       safeExternalHttpsUrl(resource?.url) ||
-      safeProtectedResourceUrl(resource?.openUrl);
+      (driveMaterialsReadReady()
+        ? safeProtectedResourceUrl(resource?.openUrl)
+        : "");
     const content = `
       <span class="course-code">${escapeHtml(resource?.provider || "Learning Resource")}</span>
       <strong>${escapeHtml(resource?.title || "Learning Resource")}</strong>
@@ -6799,7 +7024,6 @@
       plannedHours: 110,
       description: course.overview,
       units: [],
-      drive: {},
     };
     const selected = isCourseEnrolled(course.id);
     const nextModule =
@@ -6809,7 +7033,6 @@
           moduleStatus(course, module).key !== "completed",
       ) || course.platformModules?.[0];
     const requirement = enrollmentRequirement(course);
-    const drive = safeCourseDriveLinks(syllabus.drive);
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="${selected ? "courses" : "course-selection"}">${selected ? "My Courses" : "Course Selection"}</button><span>/</span>
@@ -6902,11 +7125,9 @@
             </div>
           </section>
           <section class="panel">
-            <header class="panel-header"><div><h2>Course Materials</h2><p>Student-facing documents from Lotus Drive</p></div></header>
+            <header class="panel-header"><div><h2>Course Materials</h2><p>Student-facing documents from the secure course index</p></div>${selected ? `<span class="badge">${plural(courseDriveMaterialCount(course), "item")}</span>` : ""}</header>
             <div class="syllabus-resources">
-              ${drive.coursebookUrl ? `<a class="resource-link" href="${escapeHtml(drive.coursebookUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("book", 20)}</span><span><strong>Student Coursebook & Workbook</strong><small>Readings, practice and evidence tables</small></span>${icon("arrow", 17)}</a>` : ""}
-              ${drive.assessmentUrl ? `<a class="resource-link" href="${escapeHtml(drive.assessmentUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("clipboard", 20)}</span><span><strong>Assessment & Final Evaluation</strong><small>Student instructions and submission requirements</small></span>${icon("arrow", 17)}</a>` : ""}
-              ${drive.studentMaterialsFolderUrl ? `<a class="resource-link" href="${escapeHtml(drive.studentMaterialsFolderUrl)}" target="_blank" rel="noopener noreferrer"><span>${icon("file", 20)}</span><span><strong>Open Student Materials Folder</strong><small>Course files and reading library</small></span>${icon("arrow", 17)}</a>` : ""}
+              ${selected ? courseMaterialsBody(course, "Materials") : `<div class="course-materials-status" role="status">${icon("file", 18)}<span><strong>Select this course to view materials</strong><small>Course files are available only to enrolled students.</small></span></div>`}
             </div>
           </section>
           <section class="panel">
@@ -6943,11 +7164,6 @@
               }
             </div>
           </section>
-          ${
-            drive.curriculumMapUrl
-              ? `<section class="panel syllabus-source-card"><header class="panel-header"><div><h3>Source Document</h3><p>Lotus Academy course package</p></div></header><div class="panel-content"><p>The unit sequence, hours, prerequisite and evaluation weights on this page are drawn from the course curriculum map.</p><a class="text-link" href="${escapeHtml(drive.curriculumMapUrl)}" target="_blank" rel="noopener noreferrer">Open Curriculum Map ${icon("arrow", 15)}</a></div></section>`
-              : ""
-          }
           <section class="panel instructor-card">
             <header class="panel-header"><div><h3>Course Contact</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
             <div class="panel-content">
@@ -7736,11 +7952,13 @@
       ensureTeacherPlatformData(findCourse(teacherRoute[2]));
     }
     if (
-      teacherRoute[1] === "materials" &&
+      ["course", "courses", "materials"].includes(teacherRoute[1]) &&
       !driveEndpointChecked &&
-      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+      driveMaterialsReadReady()
     ) {
-      void refreshDriveMaterials({ silent: true });
+      void refreshDriveMaterials({
+        silent: teacherRoute[1] === "materials",
+      });
     }
     if (
       submissionsEndpointUrl() &&
@@ -7870,11 +8088,11 @@
       studentCourses().forEach(ensureStudentPlatformData);
     }
     if (
-      route[0] === "course" &&
+      ["course", "courses", "guide", "syllabus"].includes(route[0]) &&
       !driveEndpointChecked &&
-      configuredDriveUrl(DRIVE_CONFIG.materialsEndpoint)
+      driveMaterialsReadReady()
     ) {
-      void refreshDriveMaterials({ silent: true });
+      void refreshDriveMaterials({ silent: route[0] === "course" });
     }
     if (
       submissionsEndpointUrl() &&
@@ -9008,6 +9226,26 @@
       }
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
       window.location.assign(authorizationUrl);
+    } else if (action === "toggle-course-materials") {
+      const course = findCourse(target.dataset.course);
+      const context = target.dataset.context === "teacher" ? "teacher" : "student";
+      if (!course || (context === "teacher" && !isTeacher())) return;
+      const disclosureKey = `${context}:${course.id}`;
+      if (expandedCourseMaterials.has(disclosureKey)) {
+        expandedCourseMaterials.delete(disclosureKey);
+      } else {
+        expandedCourseMaterials.add(disclosureKey);
+      }
+      render(false, true);
+      window.requestAnimationFrame(() =>
+        document
+          .querySelector(
+            `[data-action="toggle-course-materials"][data-course="${course.id}"][data-context="${context}"]`,
+          )
+          ?.focus(),
+      );
+    } else if (action === "refresh-course-materials") {
+      await refreshDriveMaterials();
     } else if (action === "sync-drive-materials") {
       await syncDriveMaterials();
     } else if (action === "download-submission") {
@@ -9091,6 +9329,7 @@
       };
       submissionsEndpointCheckedFor = "";
       resetPlatformRuntime();
+      resetDriveMaterialsForSession();
       signInNotice = "";
       signInPrefill = "";
       window.location.hash = facultySession

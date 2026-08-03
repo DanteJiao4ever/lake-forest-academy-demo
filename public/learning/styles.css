@@ -1217,10 +1217,11 @@ textarea:focus-visible {
 
 .course-card {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
   background: #fff;
-  cursor: pointer;
   transition:
     transform 180ms ease,
     box-shadow 180ms ease;
@@ -1268,6 +1269,9 @@ textarea:focus-visible {
 }
 
 .course-card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   padding: 23px;
 }
 
@@ -1293,6 +1297,112 @@ textarea:focus-visible {
 
 .course-progress {
   margin-top: 18px;
+}
+
+.course-card-actions,
+.teacher-course-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 20px;
+}
+
+.course-card-actions .button,
+.teacher-course-card-actions .button {
+  flex: 1 1 145px;
+  min-height: 43px;
+  margin-top: 0;
+}
+
+.course-card-materials {
+  max-height: 520px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: #f6f8f5;
+  padding: 18px;
+  scrollbar-gutter: stable;
+}
+
+.course-card-materials > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 13px;
+}
+
+.course-card-materials > header strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.05rem;
+}
+
+.course-card-materials > header small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.course-card-materials .drive-unit-group {
+  background: #fff;
+}
+
+.course-card-materials .drive-unit-group + .drive-unit-group {
+  margin-top: 8px;
+}
+
+.course-card-materials .drive-unit-group > summary {
+  padding: 12px 38px 12px 13px;
+}
+
+.course-card-materials .drive-category-group {
+  padding: 11px;
+}
+
+.course-materials-status {
+  min-height: 94px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d8e0dc;
+  background: #fff;
+  padding: 16px;
+  color: var(--muted);
+}
+
+.course-materials-status svg {
+  color: var(--lake);
+}
+
+.course-materials-status strong,
+.course-materials-status small {
+  display: block;
+}
+
+.course-materials-status strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.course-materials-status small {
+  margin-top: 3px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.course-materials-status.is-error {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  border-color: #e0c3bd;
+  background: #fff8f6;
+}
+
+.course-materials-status.is-error svg {
+  color: var(--danger);
 }
 
 .course-progress > div:first-child {
@@ -3632,6 +3742,20 @@ textarea:focus-visible {
   margin-top: auto;
 }
 
+.teacher-course-card .teacher-course-card-actions {
+  width: 100%;
+  margin-top: auto;
+}
+
+.teacher-course-card .teacher-course-card-actions .button {
+  align-self: stretch;
+  margin-top: 0;
+}
+
+.teacher-course-card .course-card-materials {
+  margin: 21px -25px -25px;
+}
+
 .teacher-section {
   margin-top: 25px;
   min-width: 0;
@@ -4954,6 +5078,26 @@ textarea:focus-visible {
 }
 
 @media (max-width: 650px) {
+  .course-card-actions,
+  .teacher-course-card-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .course-card-actions .button,
+  .teacher-course-card-actions .button {
+    width: 100%;
+  }
+
+  .course-materials-status.is-error {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .course-materials-status.is-error .button {
+    grid-column: 2;
+    width: 100%;
+  }
+
   .drive-materials-actions {
     width: 100%;
     display: grid;

@@ -17,6 +17,7 @@ function cookieFrom(response) {
 describe("database-driven course catalog API", () => {
   let app;
   let repository;
+  let drive;
 
   beforeEach(async () => {
     const config = loadConfig({
@@ -26,13 +27,15 @@ describe("database-driven course catalog API", () => {
       COOKIE_SECURE: "false",
       BCRYPT_COST: "10",
       CLAMAV_REQUIRED: "false",
+      CURRICULUM_DRIVE_ROOT_ID: "canonical-root-test",
       SUBMISSION_TARGET_ROOT_ID: "submission-root",
     });
     repository = new FakeRepository();
+    drive = new FakeDrive();
     app = await createApp({
       config,
       repository,
-      drive: new FakeDrive(),
+      drive,
       scanner: new FakeScanner(),
     });
   });
@@ -86,6 +89,57 @@ describe("database-driven course catalog API", () => {
     assert.equal(response.json().catalog.gradebook_items, 44);
   });
 
+  test("reports Drive catalog readiness separately without exposing file IDs", async () => {
+    const ready = await app.inject({
+      method: "GET",
+      url: "/health/drive-catalog-ready",
+    });
+    assert.equal(ready.statusCode, 200, ready.body);
+    assert.deepEqual(ready.json(), {
+      status: "ready",
+      driveCatalog: {
+        verificationStatus: "verified",
+        activeMaterialCount: 60,
+        courseCount: 6,
+        minimumCourseDistribution: true,
+        lastSyncedAt: "2026-08-03T00:00:00.000Z",
+        lastVerificationAt: "2026-08-03T00:00:00.000Z",
+      },
+    });
+    assert.equal(JSON.stringify(ready.json()).includes("driveFileId"), false);
+    assert.deepEqual(drive.curriculumReadyChecks, [{
+      rootFolderId: "canonical-root-test",
+      rootFolderName: "Lotus Academy Formal Course Pilots - Text Based",
+    }]);
+
+    repository.driveCatalogStats.active_material_count = 59;
+    const incomplete = await app.inject({
+      method: "GET",
+      url: "/health/drive-catalog-ready",
+    });
+    assert.equal(incomplete.statusCode, 503);
+    assert.equal(incomplete.json().error.code, "DRIVE_CATALOG_NOT_READY");
+    assert.equal(incomplete.json().error.details.state, "catalog_incomplete");
+
+    repository.driveCatalogStats.active_material_count = 60;
+    repository.driveCatalogStats.verification_status = "pending";
+    repository.driveCatalogStats.last_successful_sync_at = null;
+    const pending = await app.inject({
+      method: "GET",
+      url: "/health/drive-catalog-ready",
+    });
+    assert.equal(pending.statusCode, 503);
+    assert.equal(pending.json().error.details.state, "bootstrap_pending");
+
+    drive.curriculumAvailable = false;
+    const unreadable = await app.inject({
+      method: "GET",
+      url: "/health/drive-catalog-ready",
+    });
+    assert.equal(unreadable.statusCode, 503);
+    assert.equal(unreadable.json().error.code, "CURRICULUM_DRIVE_UNAVAILABLE");
+  });
+
   test("returns only enrolled courses and never exposes staff resources to students", async () => {
     const student = await registerStudent();
     const courses = await app.inject({
@@ -94,6 +148,11 @@ describe("database-driven course catalog API", () => {
       headers: { origin, cookie: student.cookie },
     });
     assert.deepEqual(courses.json().data.map((course) => course.code), ["MHF4U"]);
+    assert.deepEqual(courses.json().data[0].materials, {
+      count: 1,
+      lastSyncedAt: "2026-08-03T00:00:00.000Z",
+      href: "/v1/courses/MHF4U/materials",
+    });
 
     const modules = await app.inject({
       method: "GET",
@@ -136,6 +195,121 @@ describe("database-driven course catalog API", () => {
     });
     assert.equal(opened.statusCode, 403);
     assert.equal(opened.json().error.code, "MATERIAL_ACCESS_DENIED");
+  });
+
+  test("lists interactive course materials by stable module and enforces enrollment", async () => {
+    const student = await registerStudent();
+    const materials = await app.inject({
+      method: "GET",
+      url: "/v1/courses/MHF4U/materials?moduleId=mhf4u-m02&moduleNumber=2&category=Lessons",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(materials.statusCode, 200, materials.body);
+    assert.equal(materials.json().data.length, 1);
+    assert.deepEqual(materials.json().data[0], {
+      id: repository.materials[0].id,
+      courseCode: "MHF4U",
+      moduleId: "mhf4u-m02",
+      moduleNumber: 2,
+      unitNumber: 2,
+      category: "Lessons",
+      name: "Quadratic models.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      driveModifiedAt: "2026-07-20T10:00:00.000Z",
+      lastSyncedAt: "2026-08-03T00:00:00.000Z",
+      openUrl: `/v1/materials/${repository.materials[0].id}/open`,
+    });
+    assert.equal(JSON.stringify(materials.json()).includes("drive-material-1"), false);
+
+    const denied = await app.inject({
+      method: "GET",
+      url: "/v1/courses/SCH4U/materials",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().error.code, "COURSE_ACCESS_DENIED");
+  });
+
+  test("hides indexed materials whenever their source is not runtime-verified", async () => {
+    const student = await registerStudent("source-gate@example.invalid");
+    const source = repository.sources[0];
+    const materialId = repository.materials[0].id;
+    const cases = [
+      { verificationStatus: "pending", lastSuccessfulSyncAt: "2026-08-03T00:00:00.000Z" },
+      { verificationStatus: "failed", lastSuccessfulSyncAt: "2026-08-03T00:00:00.000Z" },
+      { verificationStatus: "verified", lastSuccessfulSyncAt: null },
+    ];
+
+    for (const item of cases) {
+      source.verification_status = item.verificationStatus;
+      source.last_successful_sync_at = item.lastSuccessfulSyncAt;
+
+      const courses = await app.inject({
+        method: "GET",
+        url: "/v1/courses",
+        headers: { origin, cookie: student.cookie },
+      });
+      assert.equal(courses.statusCode, 200, courses.body);
+      assert.equal(courses.json().data[0].materials.count, 0);
+      assert.equal(courses.json().data[0].materials.lastSyncedAt, null);
+
+      const listed = await app.inject({
+        method: "GET",
+        url: "/v1/courses/MHF4U/materials",
+        headers: { origin, cookie: student.cookie },
+      });
+      assert.equal(listed.statusCode, 200, listed.body);
+      assert.deepEqual(listed.json().data, []);
+
+      const opened = await app.inject({
+        method: "GET",
+        url: `/v1/materials/${materialId}/open`,
+        headers: { origin, cookie: student.cookie },
+      });
+      assert.equal(opened.statusCode, 404, opened.body);
+      assert.equal(opened.json().error.code, "MATERIAL_NOT_FOUND");
+    }
+  });
+
+  test("runs the canonical Drive sync through the stable admin-only endpoint", async () => {
+    const teacher = await addFaculty("teacher", allCourses);
+    const admin = await addFaculty("teacher_admin", allCourses);
+
+    const denied = await app.inject({
+      method: "POST",
+      url: "/v1/admin/drive/sync",
+      headers: {
+        origin,
+        cookie: teacher.cookie,
+        "x-csrf-token": teacher.csrf,
+      },
+      payload: { mode: "incremental" },
+    });
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().error.code, "INSUFFICIENT_ROLE");
+
+    const synced = await app.inject({
+      method: "POST",
+      url: "/v1/admin/drive/sync",
+      headers: {
+        origin,
+        cookie: admin.cookie,
+        "x-csrf-token": admin.csrf,
+        "idempotency-key": "canonical-drive-sync-0001",
+      },
+      payload: { mode: "full" },
+    });
+    assert.equal(synced.statusCode, 200, synced.body);
+    assert.equal(synced.json().data.status, "succeeded");
+    assert.equal(synced.json().data.discoveredFileCount, 60);
+    assert.match(synced.json().data.statusUrl, /^\/v1\/admin\/drive\/sync-runs\//);
+    assert.equal(
+      repository.syncRuns[0].source_id,
+      "00000000-0000-4000-8000-000000000006",
+    );
+    assert.equal(repository.syncRuns[0].trigger_type, "manual");
+    assert.equal(repository.syncRuns[0].requested_by, admin.user.id);
   });
 
   test("enforces sequential module progress unless a teacher grants a reasoned override", async () => {

@@ -6,6 +6,8 @@ import { ApiError } from "../lib/errors.js";
 const folderMime = "application/vnd.google-apps.folder";
 const shortcutMime = "application/vnd.google-apps.shortcut";
 const launchCourseCodes = ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
+const catalogModuleNumbers = new Set(Array.from({ length: 12 }, (_, index) => index));
+const curriculumUnitNumbers = new Set(Array.from({ length: 10 }, (_, index) => index + 1));
 const googleExportFormats = new Map([
   [
     "application/vnd.google-apps.document",
@@ -54,6 +56,18 @@ function escapeQuery(value) {
   return String(value).replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 }
 
+function catalogNumberFromPath(pathText, label, allowedNumbers) {
+  const match = String(pathText || "").match(
+    new RegExp(
+      `(?:^|[/\\s_-])${label}[\\s_-]*0*(\\d{1,2})(?=$|[/\\s_.-])`,
+      "i",
+    ),
+  );
+  if (!match) return null;
+  const value = Number(match[1]);
+  return allowedNumbers.has(value) ? value : null;
+}
+
 export async function createGoogleDrive(config) {
   let credentials;
   if (config.googleCredentialsBase64) {
@@ -100,6 +114,35 @@ export class GoogleDriveStore {
         503,
         "SUBMISSION_STORAGE_UNAVAILABLE",
         "Submission storage is temporarily unavailable.",
+      );
+    }
+  }
+
+  async curriculumReady(rootFolderId, expectedRootName = "") {
+    if (!String(rootFolderId || "").trim()) {
+      throw new ApiError(
+        503,
+        "CURRICULUM_DRIVE_UNAVAILABLE",
+        "Curriculum storage has not been configured.",
+      );
+    }
+    try {
+      const root = await this.getMetadata(rootFolderId);
+      if (
+        !root ||
+        root.trashed ||
+        root.mimeType !== folderMime ||
+        (expectedRootName && root.name !== expectedRootName)
+      ) {
+        throw new Error("The configured curriculum root is not an active folder.");
+      }
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(
+        503,
+        "CURRICULUM_DRIVE_UNAVAILABLE",
+        "Curriculum storage is temporarily unavailable.",
       );
     }
   }
@@ -154,6 +197,7 @@ export class GoogleDriveStore {
     }
     const records = [];
     let skippedCount = 0;
+    const discoveredCourseCodes = new Set();
     const courseFolders = await this.listChildren(root.id, source.drive_id);
     for (const course of courseFolders) {
       const courseCode = courseCodeFromFolder(course.name);
@@ -161,6 +205,7 @@ export class GoogleDriveStore {
         skippedCount += 1;
         continue;
       }
+      discoveredCourseCodes.add(courseCode);
       const courseChildren = await this.listChildren(course.id, source.drive_id);
       const studentMaterials = courseChildren.find(
         (item) =>
@@ -207,8 +252,16 @@ export class GoogleDriveStore {
             continue;
           }
           const pathText = itemPath.join("/");
-          const unitMatch = pathText.match(/(?:^|[/ _-])Unit[ _-]*0*([1-9]\d{0,2})(?:\b|[/ _-])/i);
-          const unitNumber = unitMatch ? Number(unitMatch[1]) : 1;
+          const moduleNumber = catalogNumberFromPath(
+            pathText,
+            "Module",
+            catalogModuleNumbers,
+          );
+          const unitNumber = catalogNumberFromPath(
+            pathText,
+            "Unit",
+            curriculumUnitNumbers,
+          );
           const category = /assessment[_ -]?reading[_ -]?library|evidence[_ -]?file|platform[_ -]?delivery|reading[_ -]?library|resources?/i.test(pathText)
             ? "Resources"
             : /assignments?|submission[_ -]?task/i.test(pathText)
@@ -220,6 +273,10 @@ export class GoogleDriveStore {
             driveFileId: item.id,
             parentFolderId: current.id,
             courseCode,
+            moduleId:
+              moduleNumber === null
+                ? null
+                : `${courseCode.toLowerCase()}-m${String(moduleNumber).padStart(2, "0")}`,
             unitNumber,
             category,
             fileName: item.name,
@@ -232,7 +289,12 @@ export class GoogleDriveStore {
         }
       }
     }
-    return { records, skippedCount };
+    return {
+      records,
+      skippedCount,
+      discoveredCourseCodes: [...discoveredCourseCodes].sort(),
+      materialCourseCodes: [...new Set(records.map((record) => record.courseCode))].sort(),
+    };
   }
 
   async ensureFolder(parentId, name, driveId = null) {
