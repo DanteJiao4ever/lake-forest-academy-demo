@@ -96,6 +96,9 @@
     studentGradesEndpoint: String(
       window.LFA_PLATFORM_API_CONFIG?.studentGradesEndpoint || "",
     ).trim(),
+    notificationsEndpoint: String(
+      window.LFA_PLATFORM_API_CONFIG?.notificationsEndpoint || "",
+    ).trim(),
     moduleProgressEndpoint: String(
       window.LFA_PLATFORM_API_CONFIG?.moduleProgressEndpoint || "",
     ).trim(),
@@ -1319,6 +1322,7 @@
   let state;
   let assignmentFilter = "all";
   let replacingSubmissionId = null;
+  let resumingDeviceDraftId = null;
   let toastTimer = null;
   let lastEnrollmentChange = null;
   let signInNotice = "";
@@ -1327,6 +1331,7 @@
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
   let driveSessionGeneration = 0;
+  let platformSessionGeneration = 0;
   const expandedCourseMaterials = new Set();
   let remoteSubmissionsState = {
     records: [],
@@ -1347,6 +1352,11 @@
     assignments: {},
     studentProgress: {},
     studentGrades: {},
+    notifications: [],
+    notificationsUnreadCount: null,
+    notificationsLoaded: false,
+    notificationsLoading: false,
+    notificationsError: "",
     teacherRosters: {},
     teacherProgress: {},
     teacherGradebooks: {},
@@ -1355,16 +1365,26 @@
   const platformRequests = new Map();
 
   function resetPlatformRuntime() {
+    platformSessionGeneration += 1;
     platformRuntime.modules = {};
     platformRuntime.assignments = {};
     platformRuntime.studentProgress = {};
     platformRuntime.studentGrades = {};
+    platformRuntime.notifications = [];
+    platformRuntime.notificationsUnreadCount = null;
+    platformRuntime.notificationsLoaded = false;
+    platformRuntime.notificationsLoading = false;
+    platformRuntime.notificationsError = "";
     platformRuntime.teacherRosters = {};
     platformRuntime.teacherProgress = {};
     platformRuntime.teacherGradebooks = {};
     platformRuntime.errors = {};
     platformRequests.clear();
     expandedCourseMaterials.clear();
+    submissionsRequestInFlight = false;
+    submissionsEndpointCheckedFor = "";
+    replacingSubmissionId = null;
+    resumingDeviceDraftId = null;
   }
   let drawerScrollY = 0;
   let remoteSessionValidated = !AUTH_CONFIG.workspaceSessionEndpoint;
@@ -1411,7 +1431,17 @@
 
   function gradingDraftKey(record) {
     if (!record) return "";
-    return `${studentRecordKey(record.student)}:${record.assignment.id}`;
+    const assignmentKey = scalarLabel(
+      record.assignment?.id || record.assignmentId,
+    );
+    const submissionKey = scalarLabel(
+      record.submission?.id ||
+        record.submission?.submissionId ||
+        record.id ||
+        `attempt-${record.submission?.attemptNumber || "unknown"}`,
+    );
+    if (!assignmentKey || !submissionKey) return "";
+    return `${submissionScopeKey()}:${studentRecordKey(record.student)}:${assignmentKey}:${submissionKey}`;
   }
 
   function gradingDraftFor(record) {
@@ -1502,7 +1532,16 @@
           ? returnedVersion
           : record.submission.gradeVersion ?? null,
         publishedAt,
-        status: publishedAt ? "graded" : "submitted",
+        status: publishedAt
+          ? "graded"
+          : record.submission.workflowStatus ||
+            record.submission.status ||
+            "submitted",
+        workflowStatus: publishedAt
+          ? "graded"
+          : record.submission.workflowStatus ||
+            record.submission.status ||
+            "submitted",
         gradedAt,
         updatedAt: validTimestamp(
           publishedAt || responseSource?.gradedAt,
@@ -1520,10 +1559,12 @@
     if (!form) return null;
     const studentKey = form.dataset.student || "";
     const assignmentId = form.dataset.assignment || "";
+    const submissionId = scalarLabel(form.dataset.submission);
     const record = teacherSubmissionRecords().find(
       (item) =>
         item.assignment.id === assignmentId &&
-        studentRecordKey(item.student) === studentKey,
+        studentRecordKey(item.student) === studentKey &&
+        scalarLabel(item.submission?.id) === submissionId,
     );
     if (!record) return null;
     const values = {
@@ -1753,11 +1794,13 @@
               receiptId,
               status:
                 submission.status ||
-                (assignment && assignmentScore(assignment, user) != null
-                  ? "graded"
-                  : assignment?.status === "submitted"
-                    ? "review"
-                    : "submitted"),
+                (submission.delivery === "device"
+                  ? "draft"
+                  : assignment && assignmentScore(assignment, user) != null
+                    ? "graded"
+                    : assignment?.status === "submitted"
+                      ? "review"
+                      : "submitted"),
               history,
             },
           ];
@@ -2007,6 +2050,10 @@
           const assignment = matchedAssignment
             ? {
                 ...matchedAssignment,
+                moduleNumber:
+                  remote.moduleNumber ??
+                  remote.submission.moduleNumber ??
+                  matchedAssignment.moduleNumber,
                 unit:
                   remote.assignmentMeta?.unit || matchedAssignment.unit,
                 unitTitle:
@@ -2044,7 +2091,14 @@
             student: remote.student,
             course,
             assignment,
-            submission: remote.submission,
+              submission: remote.submission,
+              moduleId:
+                remote.moduleId || remote.submission.moduleId || "",
+              moduleNumber:
+                remote.moduleNumber ??
+                remote.submission.moduleNumber ??
+                assignment.moduleNumber ??
+                null,
             unmapped: !matchedAssignment || !supportedCourse,
             history,
             versionCount: Math.max(history.length, 1),
@@ -2106,26 +2160,45 @@
     if (record.unmapped) {
       return { label: "Needs Mapping", className: "danger" };
     }
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      record.submission.workflowStatus || record.submission.status,
+      record.submission.publishedAt,
+    );
+    if (workflowStatus === "graded") {
+      return { label: "Returned to Student", className: "success" };
+    }
+    if (workflowStatus === "revision_requested") {
+      return { label: "Revision Requested", className: "warning" };
+    }
     if (
-      record.submission.score != null &&
-      !record.submission.publishedAt &&
-      record.submission.status !== "graded"
+      gradingDraftFor(record) ||
+      (record.submission.score != null && !record.submission.publishedAt)
     ) {
       return { label: "Draft Saved", className: "warning" };
     }
-    if (record.submission.status === "graded") {
-      return { label: "Returned", className: "success" };
+    if (workflowStatus === "resubmitted") {
+      return { label: "Resubmitted", className: "info" };
     }
-    if (record.submission.status === "revision") {
-      return { label: "Revision Requested", className: "warning" };
+    if (workflowStatus === "under_review") {
+      return { label: "Under Review", className: "info" };
     }
     return { label: "Awaiting Review", className: "info" };
   }
 
   function teacherSubmissionBucket(record) {
     if (record.unmapped) return "unmapped";
-    if (record.submission.status === "graded") return "graded";
-    if (record.submission.status === "revision") return "revision";
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      record.submission.workflowStatus || record.submission.status,
+      record.submission.publishedAt,
+    );
+    if (workflowStatus === "graded") return "returned";
+    if (workflowStatus === "revision_requested") return "revision";
+    if (
+      gradingDraftFor(record) ||
+      (record.submission.score != null && !record.submission.publishedAt)
+    ) {
+      return "draft";
+    }
     return "awaiting";
   }
 
@@ -2144,6 +2217,7 @@
       record.assignment.title,
       record.assignment.unit,
       record.assignment.unitTitle,
+      record.moduleNumber == null ? "" : `module ${record.moduleNumber}`,
       record.submission.fileName,
       record.submission.receiptId,
     ]
@@ -2285,6 +2359,13 @@
       : `student:${normalizeEmail(user.email)}`;
   }
 
+  function platformSessionMatches(generation, scopeKey) {
+    return (
+      generation === platformSessionGeneration &&
+      scopeKey === submissionScopeKey()
+    );
+  }
+
   function flattenSubmissionItems(items) {
     const flattened = [];
     items.forEach((item) => {
@@ -2363,6 +2444,11 @@
 
   function normalizeSubmissionVersion(raw, fallback = {}) {
     const version = raw && typeof raw === "object" ? raw : {};
+    const attemptNumber = Number.isInteger(Number(version.attemptNumber))
+      ? Math.max(1, Number(version.attemptNumber))
+      : Number.isInteger(Number(fallback.attemptNumber))
+        ? Math.max(1, Number(fallback.attemptNumber))
+        : null;
     const submittedAt = validTimestamp(
       version.submittedAt || version.createdAt,
       fallback.submittedAt || new Date().toISOString(),
@@ -2372,9 +2458,7 @@
       fallback.receiptId ||
       "";
     return {
-      attemptNumber: Number.isInteger(Number(version.attemptNumber))
-        ? Math.max(1, Number(version.attemptNumber))
-        : null,
+      attemptNumber,
       fileName:
         scalarLabel(version.fileName || version.name) ||
         fallback.fileName ||
@@ -2402,7 +2486,81 @@
         configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
           window.location.href,
       ),
+      messages: normalizeSubmissionMessages(
+        version.messages || version.interactionMessages || version.thread,
+        attemptNumber,
+      ),
     };
+  }
+
+  function normalizeSubmissionWorkflowStatus(value, publishedAt = "") {
+    const status = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    const aliases = {
+      review: "under_review",
+      reviewing: "under_review",
+      revision: "revision_requested",
+      returned_for_revision: "revision_requested",
+      changes_requested: "revision_requested",
+      returned: "graded",
+      published: "graded",
+    };
+    const normalized = aliases[status] || status;
+    if (
+      [
+        "draft",
+        "submitted",
+        "under_review",
+        "revision_requested",
+        "resubmitted",
+        "graded",
+        "rejected",
+        "withdrawn",
+      ].includes(normalized)
+    ) {
+      return normalized;
+    }
+    return publishedAt ? "graded" : "submitted";
+  }
+
+  function normalizeSubmissionMessages(value, fallbackAttemptNumber = null) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((message) => message && typeof message === "object")
+      .map((message, index) => ({
+        id:
+          scalarLabel(message.id) ||
+          `attempt-${fallbackAttemptNumber || "current"}-message-${index + 1}`,
+        body: scalarLabel(message.body || message.message || message.text),
+        authorRole: String(
+          message.authorRole ||
+            message.author_role ||
+            message.senderRole ||
+            message.sender_role ||
+            "teacher",
+        )
+          .trim()
+          .toLowerCase(),
+        authorName: scalarLabel(
+          message.authorName ||
+            message.author_name ||
+            message.senderName ||
+            message.sender_name,
+        ),
+        createdAt: validTimestamp(
+          message.createdAt ||
+            message.created_at ||
+            message.sentAt ||
+            message.sent_at,
+          "",
+        ),
+        attemptNumber: Number.isInteger(Number(message.attemptNumber))
+          ? Math.max(1, Number(message.attemptNumber))
+          : fallbackAttemptNumber,
+      }))
+      .filter((message) => message.body);
   }
 
   function normalizeRemoteSubmission(raw, index, defaultStudent = null) {
@@ -2538,6 +2696,12 @@
     const attemptNumber = Number.isInteger(Number(source.attemptNumber))
       ? Math.max(1, Number(source.attemptNumber))
       : 1;
+    const rawMaximumAttempts = Number(
+      source.maxAttempts ?? source.max_attempts ?? source.assignment?.maxAttempts,
+    );
+    const maxAttempts = Number.isInteger(rawMaximumAttempts)
+      ? Math.max(attemptNumber, rawMaximumAttempts)
+      : 99;
     const updatedAt = validTimestamp(
       source.updatedAt || source.gradedAt || source.grade?.updatedAt,
       "",
@@ -2546,6 +2710,29 @@
       source.publishedAt || source.grade?.publishedAt,
       "",
     );
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      source.workflowStatus || source.workflow_status || source.status,
+      publishedAt,
+    );
+    const moduleId = scalarLabel(
+      source.moduleId || source.module_id || source.assignment?.moduleId,
+    );
+    const rawModuleNumber = Number(
+      source.moduleNumber ??
+        source.module_number ??
+        source.assignment?.moduleNumber,
+    );
+    const moduleNumber = Number.isInteger(rawModuleNumber)
+      ? rawModuleNumber
+      : null;
+    const currentMessages = normalizeSubmissionMessages(
+      source.messages || source.interactionMessages || source.thread,
+      attemptNumber,
+    );
+    const resubmissionAllowed =
+      source.resubmissionAllowed === true ||
+      source.resubmission_allowed === true ||
+      workflowStatus === "revision_requested";
     const historySource = Array.isArray(source.history)
       ? source.history
       : Array.isArray(source.versions)
@@ -2570,6 +2757,22 @@
     const history = (
       historySource.length ? historySource : [fallbackVersion]
     ).map((version) => normalizeSubmissionVersion(version, fallbackVersion));
+    const messages = [
+      ...new Map(
+        [...history.flatMap((version) => version.messages || []), ...currentMessages].map(
+          (message) => [
+            message.id ||
+              `${message.authorRole}:${message.createdAt}:${message.body}:${message.attemptNumber || ""}`,
+            message,
+          ],
+        ),
+      ).values(),
+    ].sort((a, b) => {
+      const aTime = Date.parse(a.createdAt || "");
+      const bTime = Date.parse(b.createdAt || "");
+      if (Number.isFinite(aTime) && Number.isFinite(bTime)) return aTime - bTime;
+      return Number(a.attemptNumber || 0) - Number(b.attemptNumber || 0);
+    });
     return {
       id:
         scalarLabel(source.submissionId || source.id) ||
@@ -2584,6 +2787,8 @@
       },
       assignmentId,
       attemptNumber,
+      moduleId,
+      moduleNumber,
       courseId: course?.id || courseId || assignment?.courseId || "",
       assignmentMeta: {
         title: scalarLabel(
@@ -2604,7 +2809,9 @@
         id:
           scalarLabel(source.submissionId || source.id) ||
           scalarLabel(source.receiptId),
+        delivery: "central",
         attemptNumber,
+        maxAttempts,
         text: scalarLabel(source.note || source.text || source.comment),
         fileName,
         submittedAt,
@@ -2613,9 +2820,12 @@
         fileSize: fallbackVersion.fileSize,
         fileType: fallbackVersion.fileType,
         fileUrl,
-        status: publishedAt
-          ? "graded"
-          : scalarLabel(source.status) || "submitted",
+        status: workflowStatus,
+        workflowStatus,
+        resubmissionAllowed,
+        moduleId,
+        moduleNumber,
+        messages,
         score,
         feedback: scalarLabel(
           source.feedback || source.teacherFeedback || source.grade?.feedback,
@@ -2652,6 +2862,8 @@
   async function requestSubmissionEndpoint(endpoint, options = {}) {
     const url = configuredDriveUrl(endpoint);
     if (!url) throw new Error("Submission service is not configured.");
+    const requestGeneration = platformSessionGeneration;
+    const requestScopeKey = submissionScopeKey();
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 45000);
     const method = String(options.method || "GET").toUpperCase();
@@ -2687,6 +2899,13 @@
             throw new Error("The submission service returned invalid JSON.");
           }
         }
+      }
+      if (!platformSessionMatches(requestGeneration, requestScopeKey)) {
+        const error = new Error(
+          "The account changed while the request was in progress.",
+        );
+        error.name = "StaleSessionError";
+        throw error;
       }
       if (!response.ok) {
         if (response.status === 401) expireRemoteSession();
@@ -2739,22 +2958,31 @@
     );
   }
 
-  function submissionForAssignment(assignmentId, user = currentUser()) {
-    const localSubmission =
+  function localSubmissionForAssignment(assignmentId, user = currentUser()) {
+    return (
       user && normalizeEmail(user.email) !== normalizeEmail(currentUser()?.email)
         ? loadState(user).submissions?.[assignmentId] || null
-        : state?.submissions?.[assignmentId] || null;
+        : state?.submissions?.[assignmentId] || null
+    );
+  }
+
+  function localDeviceDraftForAssignment(
+    assignmentId,
+    user = currentUser(),
+  ) {
+    const localSubmission = localSubmissionForAssignment(assignmentId, user);
+    return localSubmission?.delivery === "device"
+      ? localSubmission
+      : null;
+  }
+
+  function submissionForAssignment(assignmentId, user = currentUser()) {
+    const localSubmission = localSubmissionForAssignment(assignmentId, user);
     const remoteSubmission = submissionsEndpointUrl()
       ? remoteSubmissionFor(assignmentId, user)
       : null;
     if (!remoteSubmission) return localSubmission;
-    if (!localSubmission) return remoteSubmission;
-    const localSubmittedAt = Date.parse(localSubmission.submittedAt || "");
-    const remoteSubmittedAt = Date.parse(remoteSubmission.submittedAt || "");
-    return Number.isFinite(localSubmittedAt) &&
-      (!Number.isFinite(remoteSubmittedAt) || localSubmittedAt > remoteSubmittedAt)
-      ? localSubmission
-      : remoteSubmission;
+    return remoteSubmission;
   }
 
   async function refreshRemoteSubmissions({ silent = false } = {}) {
@@ -2762,6 +2990,7 @@
     const scope = isTeacher(user) ? "teacher" : "student";
     const endpoint = submissionsEndpointUrl(scope);
     const scopeKey = submissionScopeKey(user);
+    const requestGeneration = platformSessionGeneration;
     if (!user || !endpoint || submissionsRequestInFlight) return false;
     submissionsRequestInFlight = true;
     submissionsEndpointCheckedFor = scopeKey;
@@ -2806,6 +3035,12 @@
       };
       return true;
     } catch (error) {
+      if (
+        error?.name === "StaleSessionError" ||
+        !platformSessionMatches(requestGeneration, scopeKey)
+      ) {
+        return false;
+      }
       remoteSubmissionsState = {
         ...remoteSubmissionsState,
         error:
@@ -2815,13 +3050,15 @@
       };
       return false;
     } finally {
-      submissionsRequestInFlight = false;
-      captureVisibleGradingDraft();
-      render(false, true);
-      if (focusedFieldId) {
-        window.requestAnimationFrame(() =>
-          document.querySelector(`#${focusedFieldId}`)?.focus(),
-        );
+      if (platformSessionMatches(requestGeneration, scopeKey)) {
+        submissionsRequestInFlight = false;
+        captureVisibleGradingDraft();
+        render(false, true);
+        if (focusedFieldId) {
+          window.requestAnimationFrame(() =>
+            document.querySelector(`#${focusedFieldId}`)?.focus(),
+          );
+        }
       }
     }
   }
@@ -2877,6 +3114,8 @@
   async function requestPlatformJson(endpoint, options = {}) {
     const url = configuredDriveUrl(endpoint);
     if (!url) throw new Error("The secure course service is not connected.");
+    const requestGeneration = platformSessionGeneration;
+    const requestScopeKey = submissionScopeKey();
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     const method = String(options.method || "GET").toUpperCase();
@@ -2900,6 +3139,13 @@
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => ({}));
+      if (!platformSessionMatches(requestGeneration, requestScopeKey)) {
+        const error = new Error(
+          "The account changed while the request was in progress.",
+        );
+        error.name = "StaleSessionError";
+        throw error;
+      }
       saveCsrfToken(payload);
       if (response.status === 401) expireRemoteSession();
       if (!response.ok) {
@@ -2915,6 +3161,194 @@
 
   function platformPayloadData(payload, fallback) {
     return payload?.data ?? fallback;
+  }
+
+  function notificationActionHref(value) {
+    const candidate = String(value || "").trim();
+    if (/^#\/[a-z0-9/_?&=%.-]+$/i.test(candidate)) return candidate;
+    try {
+      const url = new URL(candidate, window.location.href);
+      if (
+        url.origin === window.location.origin &&
+        url.pathname === window.location.pathname &&
+        /^#\/[a-z0-9/_?&=%.-]+$/i.test(url.hash)
+      ) {
+        return url.hash;
+      }
+    } catch {
+      // Invalid or external action destinations intentionally fall back.
+    }
+    return "#/notifications";
+  }
+
+  function normalizeNotification(record, index = 0) {
+    if (!record || typeof record !== "object") return null;
+    const id = scalarLabel(record.id || record.notificationId);
+    const title = scalarLabel(record.title);
+    const body = scalarLabel(record.body || record.message);
+    if (!id || (!title && !body)) return null;
+    return {
+      id,
+      eventType: scalarLabel(
+        record.eventType || record.event_type || record.type || "update",
+      ),
+      title: title || "Learning update",
+      body,
+      actionUrl: notificationActionHref(
+        record.actionUrl || record.action_url || record.href,
+      ),
+      readAt: validTimestamp(record.readAt || record.read_at, ""),
+      createdAt: validTimestamp(
+        record.createdAt || record.created_at,
+        new Date(Date.now() - index).toISOString(),
+      ),
+    };
+  }
+
+  function notificationItems() {
+    return [...platformRuntime.notifications].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+    );
+  }
+
+  function unreadNotificationCount() {
+    const authoritative = Number(platformRuntime.notificationsUnreadCount);
+    return Number.isInteger(authoritative) && authoritative >= 0
+      ? authoritative
+      : notificationItems().filter((item) => !item.readAt).length;
+  }
+
+  async function ensureNotifications({ force = false } = {}) {
+    if (!currentUser()) return false;
+    const requestGeneration = platformSessionGeneration;
+    const requestScopeKey = submissionScopeKey();
+    const endpoint = configuredDriveUrl(
+      PLATFORM_API_CONFIG.notificationsEndpoint,
+    );
+    if (!endpoint) {
+      platformRuntime.notificationsLoaded = true;
+      return false;
+    }
+    if (platformRuntime.notificationsLoading) return false;
+    if (platformRuntime.notificationsError && !force) return false;
+    if (platformRuntime.notificationsLoaded && !force) return true;
+    platformRuntime.notificationsLoading = true;
+    if (force) platformRuntime.notificationsError = "";
+    try {
+      const firstPage = new URL(endpoint);
+      firstPage.searchParams.set("limit", "100");
+      let pageUrl = firstPage.toString();
+      let pageCount = 0;
+      let unreadCount = null;
+      const loadedRecords = [];
+      while (pageUrl && pageCount < 50) {
+        const payload = await requestPlatformJson(pageUrl);
+        const source = platformPayloadData(payload, []);
+        const records = Array.isArray(source)
+          ? source
+          : Array.isArray(source?.notifications)
+            ? source.notifications
+            : null;
+        if (!Array.isArray(records)) {
+          throw new Error(
+            "The notification service returned an invalid response.",
+          );
+        }
+        loadedRecords.push(...records);
+        const pageUnreadCount = Number(payload?.unreadCount);
+        if (Number.isInteger(pageUnreadCount) && pageUnreadCount >= 0) {
+          unreadCount = pageUnreadCount;
+        }
+        pageUrl = nextPageUrl(pageUrl, payload);
+        pageCount += 1;
+      }
+      platformRuntime.notifications = [
+        ...new Map(
+          loadedRecords
+            .map(normalizeNotification)
+            .filter(Boolean)
+            .map((notification) => [notification.id, notification]),
+        ).values(),
+      ];
+      platformRuntime.notificationsUnreadCount =
+        unreadCount ??
+        platformRuntime.notifications.filter((item) => !item.readAt).length;
+      platformRuntime.notificationsLoaded = true;
+      platformRuntime.notificationsError = "";
+      return true;
+    } catch (error) {
+      if (
+        error?.name === "StaleSessionError" ||
+        !platformSessionMatches(requestGeneration, requestScopeKey)
+      ) {
+        return false;
+      }
+      platformRuntime.notificationsError =
+        error?.message || "Notifications could not be loaded.";
+      return false;
+    } finally {
+      if (platformSessionMatches(requestGeneration, requestScopeKey)) {
+        platformRuntime.notificationsLoading = false;
+        render(false, true);
+      }
+    }
+  }
+
+  function notificationEndpointFor(id = "") {
+    const endpoint = configuredDriveUrl(
+      PLATFORM_API_CONFIG.notificationsEndpoint,
+    );
+    return id
+      ? platformEndpoint(endpoint, encodeURIComponent(id))
+      : endpoint;
+  }
+
+  function notificationAssignmentId(notification) {
+    const match = String(notification?.actionUrl || "").match(
+      /^#\/assignment\/([^/?#]+)/i,
+    );
+    return match ? safeDecode(match[1]) : "";
+  }
+
+  function unreadGradeNotificationsForAssignment(assignmentId = "") {
+    return notificationItems().filter((notification) => {
+      const eventType = String(notification.eventType || "")
+        .toLowerCase()
+        .replace(/[.-]+/g, "_");
+      return (
+        !notification.readAt &&
+        ["grade_published", "feedback_published", "submission_graded"].includes(
+          eventType,
+        ) &&
+        (!assignmentId ||
+          notificationAssignmentId(notification) === assignmentId)
+      );
+    });
+  }
+
+  async function markNotificationRead(id) {
+    const endpoint = notificationEndpointFor(id);
+    if (!id || !endpoint) {
+      throw new Error("The notification service is not connected.");
+    }
+    const payload = await requestPlatformJson(endpoint, {
+      method: "PATCH",
+      body: JSON.stringify({ read: true }),
+    });
+    const returned = normalizeNotification(
+      platformPayloadData(payload, null),
+    );
+    const unreadCount = Number(payload?.unreadCount);
+    if (Number.isInteger(unreadCount) && unreadCount >= 0) {
+      platformRuntime.notificationsUnreadCount = unreadCount;
+    }
+    const notification = platformRuntime.notifications.find(
+      (item) => item.id === id,
+    );
+    if (notification) {
+      notification.readAt = returned?.readAt || new Date().toISOString();
+    }
+    return notification;
   }
 
   function mergeRemoteAssignments(course, records) {
@@ -2979,20 +3413,34 @@
 
   function loadPlatformData(key, loader) {
     if (platformRequests.has(key)) return platformRequests.get(key);
+    const requestGeneration = platformSessionGeneration;
+    const requestScopeKey = submissionScopeKey();
     const request = Promise.resolve()
       .then(loader)
       .catch((error) => {
+        if (
+          error?.name === "StaleSessionError" ||
+          !platformSessionMatches(requestGeneration, requestScopeKey)
+        ) {
+          return;
+        }
         platformRuntime.errors[key] =
           error?.name === "AbortError"
             ? "The course service timed out."
             : error?.message || "Course data could not be loaded.";
       })
       .finally(() => {
+        if (!platformSessionMatches(requestGeneration, requestScopeKey)) return;
         platformRequests.set(key, Promise.resolve());
         render(false, true);
       });
     platformRequests.set(key, request);
     return request;
+  }
+
+  function optionalPlatformPayload(error) {
+    if (error?.name === "StaleSessionError") throw error;
+    return { data: [] };
   }
 
   function ensureStudentPlatformData(course) {
@@ -3011,12 +3459,12 @@
       ] = await Promise.all([
         requestPlatformJson(endpoint),
         requestPlatformJson(modulesEndpoint),
-        requestPlatformJson(courseAssignmentsEndpoint(course)).catch(() => ({
-          data: [],
-        })),
-        requestPlatformJson(studentGradesEndpoint(course)).catch(() => ({
-          data: [],
-        })),
+        requestPlatformJson(courseAssignmentsEndpoint(course)).catch(
+          optionalPlatformPayload,
+        ),
+        requestPlatformJson(studentGradesEndpoint(course)).catch(
+          optionalPlatformPayload,
+        ),
       ]);
       const records = platformPayloadData(progressPayload, []);
       platformRuntime.studentProgress[course.code] = Array.isArray(records)
@@ -3051,7 +3499,7 @@
           const [payload, assignmentsPayload] = await Promise.all([
             requestPlatformJson(modulesEndpoint),
             requestPlatformJson(courseAssignmentsEndpoint(course)).catch(
-              () => ({ data: [] }),
+              optionalPlatformPayload,
             ),
           ]);
           const records = platformPayloadData(payload, []);
@@ -4534,6 +4982,19 @@
   }
 
   function unreadFeedback() {
+    if (notificationEndpointFor()) {
+      if (!platformRuntime.notificationsLoaded) return [];
+      return [
+        ...new Map(
+          unreadGradeNotificationsForAssignment()
+            .map((notification) =>
+              findAssignment(notificationAssignmentId(notification)),
+            )
+            .filter(Boolean)
+            .map((assignment) => [assignment.id, assignment]),
+        ).values(),
+      ];
+    }
     return studentAssignments().filter(
       (assignment) =>
         assignmentIsUnlocked(assignment) &&
@@ -4542,22 +5003,102 @@
     );
   }
 
+  function unreadStandaloneFeedbackNotifications() {
+    if (!notificationEndpointFor() || !platformRuntime.notificationsLoaded) {
+      return [];
+    }
+    return unreadGradeNotificationsForAssignment().filter(
+      (notification) =>
+        !findAssignment(notificationAssignmentId(notification)),
+    );
+  }
+
+  function studentWorkspaceStatus() {
+    const courseErrors = studentCourses()
+      .map(
+        (course) =>
+          platformRuntime.errors[`student-progress:${course.code}`],
+      )
+      .filter(Boolean);
+    const courseLoading = studentCourses().some(
+      (course) =>
+        course.platformModules?.length &&
+        officialProgressConfigured(course) &&
+        !officialProgressConnected(course) &&
+        !platformRuntime.errors[`student-progress:${course.code}`],
+    );
+    const submissionsLoading = Boolean(
+      submissionsEndpointUrl() &&
+        (submissionsRequestInFlight ||
+          submissionsEndpointCheckedFor !== submissionScopeKey()),
+    );
+    const notificationsLoading = Boolean(
+      notificationEndpointFor() &&
+        (!platformRuntime.notificationsLoaded ||
+          platformRuntime.notificationsLoading) &&
+        !platformRuntime.notificationsError,
+    );
+    const errors = [
+      ...courseErrors,
+      remoteSubmissionsState.error,
+      platformRuntime.notificationsError,
+    ].filter(Boolean);
+    return {
+      loading: courseLoading || submissionsLoading || notificationsLoading,
+      error: errors.join(" "),
+    };
+  }
+
+  function refreshStudentWorkspace() {
+    studentCourses().forEach((course) => {
+      const key = `student-progress:${course.code}`;
+      platformRequests.delete(key);
+      delete platformRuntime.errors[key];
+      delete platformRuntime.studentProgress[course.code];
+      delete platformRuntime.studentGrades[course.code];
+      delete platformRuntime.modules[course.code];
+      delete platformRuntime.assignments[course.code];
+      ensureStudentPlatformData(course);
+    });
+    if (submissionsEndpointUrl()) {
+      submissionsEndpointCheckedFor = "";
+      void refreshRemoteSubmissions({ silent: true });
+    }
+    void ensureNotifications({ force: true });
+  }
+
   function smartActions() {
     const actions = [];
-    studentAssignments().filter(assignmentIsUnlocked).forEach((assignment) => {
+    const unlockedAssignments = studentAssignments().filter(assignmentIsUnlocked);
+    unlockedAssignments.forEach((assignment) => {
+      const status = assignmentStatus(assignment);
+      if (status.key !== "revision") return;
+      const course = findCourse(assignment.courseId);
+      actions.push({
+        id: `assignment-${assignment.id}`,
+        priority: 0,
+        route: `assignment/${assignment.id}`,
+        eyebrow: `${course.code} · ${status.label}`,
+        title: assignment.title,
+        meta: "Read your teacher's message and submit a new version.",
+        cta: "Revise Submission",
+        className: "warning",
+      });
+    });
+    unlockedAssignments.forEach((assignment) => {
       const status = assignmentStatus(assignment);
       if (!["overdue", "late", "due"].includes(status.key)) return;
       const course = findCourse(assignment.courseId);
       actions.push({
         id: `assignment-${assignment.id}`,
-        priority: status.key === "overdue" ? 0 : status.key === "late" ? 1 : 2,
+        priority: status.key === "overdue" ? 1 : 2,
         route: `assignment/${assignment.id}`,
         eyebrow: `${course.code} · ${status.label}`,
         title: assignment.title,
         meta: assignment.due
           ? `Due ${formatDate(assignment.due, true)}`
           : "Schedule set separately",
-        cta: status.key === "revision" ? "Revise Submission" : `Open ${assignment.title}`,
+        cta: `Open ${assignment.title}`,
         className: status.key === "overdue" ? "danger" : "warning",
       });
     });
@@ -4565,7 +5106,7 @@
       const course = findCourse(assignment.courseId);
       actions.push({
         id: `feedback-${assignment.id}`,
-        priority: 2,
+        priority: 3,
         route: `assignment/${assignment.id}`,
         eyebrow: `${course.code} · New Feedback`,
         title: assignment.title,
@@ -4574,35 +5115,50 @@
         className: "success",
       });
     });
-    studentCourses().forEach((course) => {
-      const guide = guideProgress(course);
-      if (guide.isComplete) return;
+    unreadStandaloneFeedbackNotifications().forEach((notification) => {
+      const actionUrl = notificationActionHref(
+        notification.actionUrl || "#/progress",
+      );
       actions.push({
-        id: `guide-${course.id}`,
+        id: `feedback-notification-${notification.id}`,
         priority: 3,
-        route: `guide/${course.id}`,
-        eyebrow: `${course.code} · Start Here`,
-        title: "Complete the Course Guide",
-        meta: `${guide.completed} of ${guide.total} steps reviewed`,
-        cta: `Finish ${course.code} Setup`,
-        className: "info",
+        route: actionUrl.replace(/^#\//, ""),
+        notificationId: notification.id,
+        actionUrl,
+        eyebrow: "New Feedback",
+        title: notification.title,
+        meta:
+          notification.body ||
+          "A published result and teacher feedback are ready to review.",
+        cta: "Review Feedback",
+        className: "success",
       });
     });
     studentCourses().forEach((course) => {
-      const lesson = course.lessons.find(
+      if (!officialProgressConnected(course)) return;
+      const module = (course.platformModules || []).find(
         (item) =>
-          !state.completed.includes(item.id) &&
-          lessonIsUnlocked({ ...item, course }),
+          moduleIsUnlocked(course, item) &&
+          moduleStatus(course, item).key !== "completed",
       );
-      if (!lesson) return;
+      if (!module) return;
+      const status = moduleStatus(course, module);
       actions.push({
-        id: `lesson-${lesson.id}`,
+        id: `module-${course.id}-${module.key}`,
         priority: 4,
-        route: `lesson/${lesson.id}`,
+        route:
+          status.key === "available"
+            ? `course/${course.id}`
+            : platformModuleRoute(course, module),
         eyebrow: `${course.code} · Continue Learning`,
-        title: lesson.title,
-        meta: `${lesson.unit} · ${lesson.duration}`,
-        cta: `Continue ${course.code}`,
+        title: module.title,
+        meta: `Module ${String(module.number).padStart(2, "0")} · ${status.label}`,
+        cta:
+          status.key === "available"
+            ? module.number === 0
+              ? "Start Course"
+              : `Start Module ${module.number}`
+            : `Continue ${course.code}`,
         className: "",
       });
     });
@@ -4613,24 +5169,28 @@
     if (!assignmentIsUnlocked(assignment)) {
       return { key: "locked", label: "Locked", className: "warning" };
     }
-    const score = assignmentScore(assignment);
-    if (score != null) {
-      return { key: "graded", label: `Graded · ${score}%`, className: "success" };
-    }
     const submission = submissionForAssignment(assignment.id);
-    if (submission?.status === "revision") {
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      submission?.workflowStatus || submission?.status,
+      submission?.publishedAt,
+    );
+    if (workflowStatus === "revision_requested") {
       return {
         key: "revision",
         label: "Revision Requested",
         className: "warning",
       };
     }
-    if (submission?.status === "review") {
+    const score = assignmentScore(assignment);
+    if (score != null) {
+      return { key: "graded", label: `Graded · ${score}%`, className: "success" };
+    }
+    if (workflowStatus === "under_review") {
       return { key: "review", label: "Under Review", className: "info" };
     }
     if (
       submission &&
-      submission.status !== "draft" &&
+      workflowStatus !== "draft" &&
       submission.delivery !== "device"
     ) {
       return {
@@ -4682,13 +5242,15 @@
       assessments: "Assessments",
       assignments: "Assessments",
       progress: "Progress & Grades",
-      announcements: "Announcements",
+      notifications: "Notifications",
+      announcements: "Notifications",
       support: "Student Support",
       security: "Account Security",
     }[section] || "Page Not Found";
   }
 
   function activeSection(route) {
+    if (route[0] === "announcements") return "notifications";
     if (
       route[0] === "course" ||
       route[0] === "guide" ||
@@ -4724,7 +5286,7 @@
     const route = routeParts();
     const user = currentUser() || SCHOOL_ACCOUNT;
     const initials = userInitials(user);
-    const unread = ANNOUNCEMENTS.filter((item) => !state.read.includes(item.id)).length;
+    const unread = unreadNotificationCount();
     const pending = studentAssignments().filter((item) =>
       ["due", "late", "overdue", "revision"].includes(
         assignmentStatus(item).key,
@@ -4745,7 +5307,7 @@
             ${navLink("calendar", "Calendar", "calendar")}
             ${navLink("assessments", "Assessments", "clipboard", pending)}
             ${navLink("progress", "Progress & Grades", "chart")}
-            ${navLink("announcements", "Announcements", "bell", unread)}
+            ${navLink("notifications", "Notifications", "bell", unread)}
             ${navLink("support", "Student Support", "award")}
             ${navLink("security", "Account Security", "lock")}
           </nav>
@@ -4764,7 +5326,7 @@
               <strong>${escapeHtml(pageTitle(route))}</strong>
             </div>
             <span class="header-spacer"></span>
-            <a class="notification-link" href="#/announcements" aria-label="${plural(unread, "unread announcement")}">
+            <a class="notification-link" href="#/notifications" aria-label="${plural(unread, "unread notification")}">
               ${icon("bell", 18)}
               ${unread ? `<small>${unread}</small>` : ""}
             </a>
@@ -4792,7 +5354,8 @@
     return {
       dashboard: "Faculty Dashboard",
       courses: "Course Management",
-      submissions: "Submission Centre",
+      submissions: "Action Inbox",
+      notifications: "Notifications",
       materials: "Course Materials",
       security: "Account Security",
     }[route[1]] || "Faculty Dashboard";
@@ -4820,6 +5383,7 @@
     const awaitingReview = records.filter(
       isAwaitingTeacherReview,
     ).length;
+    const unread = unreadNotificationCount();
     const courseMenuOpen = route[1] === "course";
     return `
       <div class="app-shell">
@@ -4832,7 +5396,8 @@
           <nav class="sidebar-nav">
             ${teacherNavLink("dashboard", "Dashboard", "home")}
             ${teacherNavLink("courses", "Course Management", "book")}
-            ${teacherNavLink("submissions", "Submission Centre", "clipboard", awaitingReview)}
+            ${teacherNavLink("submissions", "Action Inbox", "clipboard", awaitingReview)}
+            ${teacherNavLink("notifications", "Notifications", "bell", unread)}
             ${teacherNavLink("materials", "Course Materials", "file")}
             ${teacherNavLink("security", "Account Security", "lock")}
             <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
@@ -4869,8 +5434,9 @@
             </div>
             <span class="header-spacer"></span>
             <span class="faculty-badge">Faculty</span>
-            <a class="notification-link" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer" aria-label="Open Workspace Gmail">
-              ${icon("file", 18)}
+            <a class="notification-link" href="#/teacher/notifications" aria-label="${plural(unread, "unread notification")}">
+              ${icon("bell", 18)}
+              ${unread ? `<small>${unread}</small>` : ""}
             </a>
             <div class="header-profile">
               <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
@@ -4901,7 +5467,7 @@
           </span>
         </a>
         <div class="teacher-record-meta">
-          <span><strong>${escapeHtml(record.course.code)}</strong> · ${escapeHtml(record.assignment.unit)}</span>
+          <span><strong>${escapeHtml(record.course.code)}</strong> · ${record.moduleNumber == null ? "Module not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`} · ${escapeHtml(record.assignment.unit)}</span>
           <span>${formatDate(record.submission.submittedAt, true)}</span>
           <span>${escapeHtml(record.submission.fileName || "Submission note only")}</span>
         </div>
@@ -5003,7 +5569,7 @@
                                     <a class="hierarchy-assignment" href="${teacherRecordLink(record)}">
                                       <span>
                                         <strong>${escapeHtml(record.assignment.title)}</strong>
-                                        <small>${formatDate(record.submission.submittedAt, true)} · ${escapeHtml(record.submission.fileName || "Note only")}</small>
+                                        <small>${record.moduleNumber == null ? "Module not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`} · ${formatDate(record.submission.submittedAt, true)} · ${escapeHtml(record.submission.fileName || "Note only")}</small>
                                       </span>
                                       <span class="status ${status.className}">${status.label}</span>
                                       ${icon("arrow", 17)}
@@ -5379,13 +5945,13 @@
           <h1>Welcome Back, James</h1>
           <p>Review student progress and find submitted work across every OSSD course from one organized workspace.</p>
         </div>
-        <a class="button button-gold" href="#/teacher/submissions">Open Submission Centre ${icon("arrow", 17)}</a>
+        <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a>
       </header>
       <section class="teacher-metrics" aria-label="Faculty overview">
         <a class="teacher-metric" href="#/teacher/courses" aria-label="${catalogCourses().length} active courses. Open Course Management."><span>${icon("book", 22)}</span><strong>${catalogCourses().length}</strong><p>Active Courses</p></a>
         <a class="teacher-metric" href="#/teacher/courses" aria-label="${studentCount} students. Open Course Management."><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></a>
-        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${awaitingReview} submissions awaiting review. Open Submission Centre."><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></a>
-        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${attachedFiles} submitted files. Open Submission Centre."><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></a>
+        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${awaitingReview} submissions awaiting review. Open Action Inbox."><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></a>
+        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${attachedFiles} submitted files. Open Action Inbox."><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></a>
       </section>
       <section class="teacher-section">
         <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
@@ -5766,7 +6332,7 @@
           <p>${escapeHtml(course.description)}</p>
         </div>
         <div class="teacher-course-hero-actions">
-          <a class="button button-gold" href="#/teacher/submissions/${course.id}">Submission Centre</a>
+          <a class="button button-gold" href="#/teacher/submissions/${course.id}">Action Inbox</a>
           <a class="button button-on-dark" href="#/teacher/materials">Course Materials</a>
         </div>
       </header>
@@ -5877,7 +6443,7 @@
     );
     return `
       <nav class="teacher-breadcrumbs" aria-label="Breadcrumb"><a href="#/teacher/courses">Course Management</a><span>/</span><a href="#/teacher/course/${course.id}">${course.code}</a><span>/</span><span aria-current="page">Module ${module.number}</span></nav>
-      <header class="teacher-course-hero module-teacher-hero"><div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div><div class="teacher-course-hero-actions"><a class="button button-gold" href="#/teacher/submissions/${course.id}">Open Submission Centre</a><a class="button button-on-dark" href="#/teacher/course/${course.id}">Back to Course</a></div></header>
+      <header class="teacher-course-hero module-teacher-hero"><div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div><div class="teacher-course-hero-actions"><a class="button button-gold" href="#/teacher/submissions/${course.id}">Open Action Inbox</a><a class="button button-on-dark" href="#/teacher/course/${course.id}">Back to Course</a></div></header>
       <section class="teacher-module-layout">
         <div>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Instructional Plan</p><h2>Teacher Presence</h2></div><span class="badge">${module.estimatedCreditHours || 0} hours</span></div><p class="teacher-section-copy">${escapeHtml(module.teacherPresence)}</p><h3>Learning Focus</h3><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
@@ -5896,6 +6462,9 @@
     const course = courseId ? findCourse(courseId) : null;
     const assignment = assignmentId ? findAssignment(assignmentId) : null;
     const allRecords = teacherSubmissionRecords();
+    const unreadNotifications = notificationItems().filter(
+      (item) => !item.readAt,
+    );
     const selectedCourse =
       course?.id || teacherSubmissionFilters.course || "all";
     const selectedStatus = assignment
@@ -5921,8 +6490,11 @@
       revision: scopedRecords.filter(
         (record) => teacherSubmissionBucket(record) === "revision",
       ).length,
-      graded: scopedRecords.filter(
-        (record) => teacherSubmissionBucket(record) === "graded",
+      draft: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "draft",
+      ).length,
+      returned: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "returned",
       ).length,
       unmapped: scopedRecords.filter(
         (record) => teacherSubmissionBucket(record) === "unmapped",
@@ -5961,7 +6533,7 @@
             );
     return `
       ${pageHeading(
-        course ? course.subject : "Submission Centre",
+        course ? course.subject : "Action Inbox",
         title,
         course
           ? `Browse ${course.code} work by student, module and assignment.`
@@ -5970,6 +6542,15 @@
           ? '<a class="button button-secondary" href="#/teacher/submissions">View All Courses</a>'
           : "",
       )}
+      ${
+        unreadNotifications.length
+          ? `<aside class="teacher-inbox-notification-summary" aria-label="Unread faculty notifications">
+              <span>${icon("bell", 20)}</span>
+              <div><strong>${plural(unreadNotifications.length, "unread update")}</strong><p>${escapeHtml(unreadNotifications[0].title)}${unreadNotifications.length > 1 ? ` and ${unreadNotifications.length - 1} more` : ""}</p></div>
+              <a class="button button-secondary" href="#/teacher/notifications">Review Notifications</a>
+            </aside>`
+          : ""
+      }
       <section class="teacher-section teacher-submission-centre" aria-busy="${submissionsRequestInFlight}">
         <div class="section-heading">
           <div>
@@ -6013,8 +6594,9 @@
         <div class="teacher-queue-tabs" aria-label="Filter submissions by review status">
           ${[
             ["awaiting", "Needs Review"],
+            ["draft", "Grading Drafts"],
             ["revision", "Revision Requested"],
-            ["graded", "Returned"],
+            ["returned", "Returned"],
             ["unmapped", "Needs Mapping"],
             ["all", "All"],
           ]
@@ -6051,11 +6633,39 @@
           ${icon("file", 30)}
           <h1>Submission Not Found</h1>
           <p>This record is unavailable or no longer belongs to an active student account.</p>
-          <a class="button button-primary" href="#/teacher/submissions">Return to Submission Centre</a>
+          <a class="button button-primary" href="#/teacher/submissions">Return to Action Inbox</a>
         </div>
       `;
     }
     const status = teacherSubmissionStatus(record);
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      record.submission.workflowStatus || record.submission.status,
+      record.submission.publishedAt,
+    );
+    const attemptNumber = Number(record.submission.attemptNumber || 1);
+    const maximumAttempts = Number(record.submission.maxAttempts || 99);
+    const revisionEndpointReady = Boolean(
+      submissionWorkflowEndpoint(
+        record.submission.id || record.id,
+        "return",
+      ),
+    );
+    const revisionRequestBlockedReason =
+      workflowStatus === "revision_requested"
+        ? "A revision has already been requested for this attempt. Wait for the student to submit a new version."
+        : workflowStatus === "graded"
+          ? "This grade has already been published. Use the documented grade revision process if the result must change."
+          : attemptNumber >= maximumAttempts
+            ? "This assignment has no remaining attempt available for revision."
+            : ["rejected", "withdrawn"].includes(workflowStatus)
+              ? "This submission is no longer active."
+              : record.unmapped
+                ? "Map this submission to the course catalogue before returning it."
+                : !revisionEndpointReady
+                  ? "The secure revision workflow is not connected."
+                  : "";
+    const canRequestRevision = !revisionRequestBlockedReason;
+    const gradingBlockedByRevision = workflowStatus === "revision_requested";
     const gradingDraft = gradingDraftFor(record);
     const centralDraft =
       !gradingDraft &&
@@ -6085,7 +6695,7 @@
         ];
     return `
       <nav class="teacher-breadcrumbs" aria-label="Breadcrumb">
-        <a href="#/teacher/submissions">Submissions</a><span>/</span>
+        <a href="#/teacher/submissions">Action Inbox</a><span>/</span>
         ${
           record.unmapped
             ? `<span>${escapeHtml(record.course.code)}</span>`
@@ -6099,7 +6709,7 @@
         `${escapeHtml(record.course.code)} · ${escapeHtml(record.assignment.unit)}`,
         escapeHtml(record.assignment.title),
         `${escapeHtml(record.student.displayName)} · ${escapeHtml(record.student.email || record.student.id || "Student record")}`,
-        `<div class="teacher-detail-heading-actions"><span class="status ${status.className}">${status.label}</span><button class="button button-primary" type="button" data-action="focus-grading">Grade Submission</button></div>`,
+        `<div class="teacher-detail-heading-actions"><span class="status ${status.className}">${status.label}</span><button class="button button-primary" type="button" data-action="focus-grading" ${gradingBlockedByRevision ? "disabled" : ""}>${gradingBlockedByRevision ? "Awaiting New Version" : "Grade Submission"}</button></div>`,
       )}
       <section class="teacher-detail-grid">
         <div>
@@ -6149,6 +6759,9 @@
             </div>
             <p class="login-help"><strong>File Availability</strong>${submissionsEndpointUrl() ? "Submitted files are opened through the secure school service. Records without an attached file show metadata only." : "Files saved in this browser can be downloaded here. Records created on another device may show metadata only."}</p>
           </article>
+          <article class="teacher-detail-card">
+            ${submissionThreadMarkup(record.submission, { faculty: true })}
+          </article>
         </div>
         <aside>
           <article class="teacher-detail-card">
@@ -6162,10 +6775,25 @@
               }
               <div><dt>Course</dt><dd>${escapeHtml(record.course.code)} · ${escapeHtml(record.course.title)}</dd></div>
               <div><dt>Unit</dt><dd>${escapeHtml(record.assignment.unit)} · ${escapeHtml(record.assignment.unitTitle)}</dd></div>
+              <div><dt>Module</dt><dd>${record.moduleNumber == null ? "Not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`}</dd></div>
               <div><dt>Submitted</dt><dd>${formatDate(record.submission.submittedAt, true)}</dd></div>
               <div><dt>Receipt</dt><dd>${escapeHtml(record.submission.receiptId)}</dd></div>
               <div><dt>Versions</dt><dd>${record.versionCount}</dd></div>
             </dl>
+          </article>
+          <article class="teacher-detail-card revision-request-card">
+            <p class="eyebrow">Student Next Step</p>
+            <h2>Request Revision</h2>
+            <p>${escapeHtml(
+              revisionRequestBlockedReason ||
+                "Return this attempt with a clear, assignment-specific message. The student can submit a new version while prior evidence remains available.",
+            )}</p>
+            <form class="interaction-message-form" id="revision-request-form" data-submission="${escapeHtml(record.submission.id || record.id)}">
+              <label for="revision-request-message">Required revision message</label>
+              <textarea id="revision-request-message" name="message" minlength="3" maxlength="10000" required placeholder="Explain what the student should revise and what evidence to resubmit." ${canRequestRevision ? "" : "disabled"}></textarea>
+              <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+              <button class="button button-secondary" type="submit" ${canRequestRevision ? "" : "disabled"}>${workflowStatus === "revision_requested" ? "Revision Requested" : "Return for Revision"}</button>
+            </form>
           </article>
           <article class="teacher-detail-card grading-card">
             <p class="eyebrow">Assessment</p>
@@ -6176,20 +6804,24 @@
               data-assignment="${escapeHtml(record.assignment.id)}">
               <label for="grade-score">Percentage Score</label>
               <div class="grade-score-input">
-                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="grading-form-alert grading-help" value="${escapeHtml(gradeScoreValue)}" />
+                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="grading-form-alert grading-help" value="${escapeHtml(gradeScoreValue)}" ${gradingBlockedByRevision ? "disabled" : ""} />
                 <span aria-hidden="true">%</span>
               </div>
               <label for="grade-feedback">Teacher Feedback</label>
-              <textarea id="grade-feedback" name="feedback" maxlength="10000" required aria-describedby="grading-form-alert grading-help" placeholder="Explain strengths and the next step for improvement.">${escapeHtml(gradeFeedbackValue)}</textarea>
+              <textarea id="grade-feedback" name="feedback" maxlength="10000" required aria-describedby="grading-form-alert grading-help" placeholder="Explain strengths and the next step for improvement." ${gradingBlockedByRevision ? "disabled" : ""}>${escapeHtml(gradeFeedbackValue)}</textarea>
               <p class="form-alert is-error" id="grading-form-alert" role="alert" tabindex="-1" hidden></p>
               <p class="grading-status ${
-                gradingDraft || centralDraft
+                gradingBlockedByRevision
+                  ? "is-pending"
+                  : gradingDraft || centralDraft
                   ? "is-draft"
                   : record.submission.score != null
                     ? "is-graded"
                     : "is-pending"
               }">${
-                gradingDraft
+                gradingBlockedByRevision
+                  ? "Revision requested · Grading resumes when the student submits a new version."
+                  : gradingDraft
                   ? `Draft saved on this device at ${formatDate(gradingDraft.savedAt, true)} · Not published to the student.`
                   : centralDraft
                     ? `Draft saved to the school record${record.submission.updatedAt || record.submission.gradedAt ? ` at ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""} · Not published to the student; any earlier published result remains visible.`
@@ -6198,8 +6830,9 @@
                     : "Awaiting grading"
               }</p>
               <div class="grading-actions">
-                <button class="button button-secondary" type="button" data-action="save-grade-draft">Save Draft</button>
+                <button class="button button-secondary" type="button" data-action="save-grade-draft" ${gradingBlockedByRevision ? "disabled" : ""}>Save Draft</button>
                 <button class="button button-primary" type="submit" ${
+                  gradingBlockedByRevision ||
                   record.unmapped ||
                   (submissionsEndpointUrl() &&
                     !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint))
@@ -6208,7 +6841,9 @@
                 }>Publish Grade & Feedback</button>
               </div>
               ${
-                record.unmapped
+                gradingBlockedByRevision
+                  ? '<p class="login-help" id="grading-help">This attempt is waiting for a student resubmission. Open the new version from the Action Inbox before grading.</p>'
+                  : record.unmapped
                   ? '<p class="login-help" id="grading-help">This Lotus record is not matched to the local assignment catalogue. Confirm the course and assignment before publishing.</p>'
                   : submissionsEndpointUrl() &&
                       !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
@@ -6634,16 +7269,27 @@
       ),
     );
     const feedback = unreadFeedback();
+    const standaloneFeedback = unreadStandaloneFeedbackNotifications();
+    const feedbackCount = feedback.length + standaloneFeedback.length;
     const weekEvents = calendarEvents().slice(0, 5);
-    const primaryCopy = !enrolled.length
+    const workspace = studentWorkspaceStatus();
+    const primaryCopy = workspace.loading
+      ? "Synchronizing your official course progress, submissions and feedback."
+      : workspace.error
+        ? "Some official learning records could not be synchronized. Refresh before choosing your next step."
+      : !enrolled.length
       ? "Choose your courses to build your learning plan and unlock course syllabi."
       : primary
       ? `${escapeHtml(primary.eyebrow)} is the most important item in your learning plan.`
       : "You are caught up. Review your progress or plan the week ahead.";
-    const primaryAction = !enrolled.length
+    const primaryAction = workspace.loading
+      ? '<span class="dashboard-sync-status" data-student-workspace-loading role="status"><span class="loading-dot" aria-hidden="true"></span>Syncing learning record</span>'
+      : workspace.error
+        ? '<button class="button button-gold" type="button" data-action="refresh-student-workspace">Try Again</button>'
+      : !enrolled.length
       ? `<a class="button button-gold" href="#/course-selection">Choose Courses ${icon("arrow", 17)}</a>`
       : primary
-      ? `<a class="button button-gold" href="#/${primary.route}">${escapeHtml(primary.cta || "Open Next Action")} ${icon("arrow", 17)}</a>`
+      ? `<a class="button button-gold" href="${escapeHtml(primary.actionUrl || `#/${primary.route}`)}" ${primary.notificationId ? `data-action="open-notification" data-id="${escapeHtml(primary.notificationId)}"` : ""}>${escapeHtml(primary.cta || "Open Next Action")} ${icon("arrow", 17)}</a>`
       : `<a class="button button-gold" href="#/calendar">Plan Your Week ${icon("arrow", 17)}</a>`;
     return `
       <section class="welcome">
@@ -6659,7 +7305,7 @@
         <a class="metric" href="#/courses" aria-label="${enrolled.length} active courses. Open My Courses."><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span>${icon("arrow", 16)}</a>
         <a class="metric" href="#/progress" aria-label="${progress}% overall progress. Open Progress and Grades."><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span>${icon("arrow", 16)}</a>
         <a class="metric" href="#/assignments" aria-label="${pending.length} items need attention. Open Assignments."><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span>${icon("arrow", 16)}</a>
-        <a class="metric" href="#/progress" aria-label="${feedback.length} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedback.length}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/progress" aria-label="${feedbackCount} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedbackCount}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
       </section>
       <section class="dashboard-grid">
         <div class="panel dashboard-priority">
@@ -6668,12 +7314,16 @@
             <a class="text-link" href="#/calendar">Open Calendar ${icon("arrow", 16)}</a>
           </header>
           ${
-            actions.length
+            workspace.loading
+              ? '<div class="dashboard-loading" data-student-workspace-loading role="status"><span class="loading-dot" aria-hidden="true"></span><div><strong>Building your next steps</strong><p>Checking official progress, submissions and feedback.</p></div></div>'
+              : workspace.error
+                ? `<div class="dashboard-loading is-error" role="alert"><div><strong>Next steps could not be confirmed</strong><p>${escapeHtml(workspace.error)}</p></div><button class="button button-secondary" type="button" data-action="refresh-student-workspace">Try Again</button></div>`
+              : actions.length
               ? actions
                   .slice(0, 5)
                   .map(
                     (action, index) => `
-                      <a class="priority-action-row" href="#/${action.route}">
+                      <a class="priority-action-row" href="${escapeHtml(action.actionUrl || `#/${action.route}`)}" ${action.notificationId ? `data-action="open-notification" data-id="${escapeHtml(action.notificationId)}"` : ""}>
                         <span class="action-rank">${index + 1}</span>
                         <span>
                           <p class="course-code">${escapeHtml(action.eyebrow)}</p>
@@ -6725,7 +7375,7 @@
         <div class="panel">
           <header class="panel-header"><div><h2>Feedback & Support</h2><p>Returned work and people who can help</p></div></header>
           ${
-            feedback.length
+            feedback.length || standaloneFeedback.length
               ? feedback
                   .slice(0, 2)
                   .map((assignment) => {
@@ -6738,6 +7388,18 @@
                       </a>
                     `;
                   })
+                  .join("") +
+                standaloneFeedback
+                  .slice(0, Math.max(0, 2 - feedback.length))
+                  .map(
+                    (notification) => `
+                      <a class="feedback-row" href="${escapeHtml(notification.actionUrl || "#/progress")}" data-action="open-notification" data-id="${escapeHtml(notification.id)}">
+                        <span class="feedback-score">${icon("bell", 18)}</span>
+                        <span><p class="course-code">New Feedback</p><h3>${escapeHtml(notification.title)}</h3></span>
+                        ${icon("arrow", 18)}
+                      </a>
+                    `,
+                  )
                   .join("")
               : '<div class="empty-state compact"><p>No unread feedback.</p></div>'
           }
@@ -7796,22 +8458,124 @@
     return assessmentsView();
   }
 
+  function submissionWorkflowEndpoint(submissionId, action) {
+    const endpoint = configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint);
+    if (!endpoint || !submissionId) return "";
+    return platformEndpoint(
+      endpoint,
+      `${encodeURIComponent(submissionId)}/${encodeURIComponent(action)}`,
+    );
+  }
+
+  function remoteSubmissionRecordById(submissionId) {
+    return (
+      remoteSubmissionsState.records.find(
+        (record) =>
+          record.id === submissionId ||
+          record.submission?.id === submissionId,
+      ) || null
+    );
+  }
+
+  function appendSubmissionMessage(submission, message) {
+    if (!submission || !message) return;
+    const messages = Array.isArray(submission.messages)
+      ? submission.messages
+      : [];
+    submission.messages = [
+      ...new Map(
+        [...messages, message].map((item) => [item.id, item]),
+      ).values(),
+    ].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  }
+
+  function submissionThreadMarkup(submission, { faculty = false } = {}) {
+    const messages = Array.isArray(submission?.messages)
+      ? submission.messages
+      : [];
+    const submissionId = scalarLabel(submission?.id);
+    const messageReady = Boolean(
+      submissionWorkflowEndpoint(submissionId, "messages"),
+    );
+    return `
+      <section class="lesson-section interaction-thread" aria-label="Assignment conversation">
+        <div class="interaction-thread-heading">
+          <div><p class="course-code">Assignment Conversation</p><h2>Messages</h2></div>
+          <span class="badge">${plural(messages.length, "message")}</span>
+        </div>
+        <div class="interaction-message-list">
+          ${
+            messages.length
+              ? messages
+                  .map((message) => {
+                    const ownMessage = faculty
+                      ? ["teacher", "teacher_admin"].includes(message.authorRole)
+                      : message.authorRole === "student";
+                    const author = ownMessage
+                      ? "You"
+                      : message.authorName ||
+                        (faculty ? "Student" : "Teacher");
+                    return `
+                      <article class="interaction-message ${ownMessage ? "is-own" : ""}">
+                        <div><strong>${escapeHtml(author)}</strong><time>${message.attemptNumber ? `Attempt ${message.attemptNumber} · ` : ""}${message.createdAt ? formatDate(message.createdAt, true) : ""}</time></div>
+                        <p>${escapeHtml(message.body)}</p>
+                      </article>`;
+                  })
+                  .join("")
+              : '<p class="interaction-empty">No messages yet. Keep questions and feedback connected to this assignment.</p>'
+          }
+        </div>
+        ${
+          messageReady
+            ? `<form class="interaction-message-form" id="submission-message-form" data-submission="${escapeHtml(submissionId)}" data-role="${faculty ? "teacher" : "student"}">
+                <label for="submission-message-body">${faculty ? "Reply to student" : "Reply to teacher"}</label>
+                <textarea id="submission-message-body" name="body" maxlength="10000" required placeholder="Write a focused message about this assignment."></textarea>
+                <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+                <button class="button button-secondary" type="submit">Send Message</button>
+              </form>`
+            : '<p class="login-help">Assignment messages will be available when the secure submission service is connected.</p>'
+        }
+      </section>`;
+  }
+
   function assignmentView(assignment) {
     const course = findCourse(assignment.courseId);
     const status = assignmentStatus(assignment);
+    const remoteSubmission = remoteSubmissionFor(assignment.id);
+    const localDeviceDraft = localDeviceDraftForAssignment(assignment.id);
     const submission = submissionForAssignment(assignment.id);
     const remoteSubmissionEnabled = submissionUploadEnabled();
-    const deliveredToLotus =
+    const deliveredToSchoolRecord =
       submission?.delivery === "lotus" ||
+      submission?.delivery === "central" ||
       Boolean(submission?.driveFileId || submission?.fileUrl);
     const submissionManagedByTeacher =
       assignment.teacherRecorded || assignment.submissionMode === "supervised";
-    const requiresSubmissionFile = ["file", "project"].includes(
-      assignment.submissionMode,
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      submission?.workflowStatus || submission?.status,
+      submission?.publishedAt,
     );
+    const canResubmit = Boolean(
+      submission &&
+        (workflowStatus === "revision_requested" ||
+          submission.resubmissionAllowed === true),
+    );
+    const canResumeDeviceDraft = Boolean(
+      localDeviceDraft &&
+        remoteSubmissionEnabled &&
+        (!remoteSubmission || canResubmit),
+    );
+    const resumedDeviceDraft =
+      resumingDeviceDraftId === assignment.id ? localDeviceDraft : null;
+    const formSubmission = resumedDeviceDraft || submission;
+    const requiresSubmissionFile =
+      canResubmit ||
+      ["file", "project"].includes(assignment.submissionMode);
     const showSubmissionForm =
       !submissionManagedByTeacher &&
-      (!submission || replacingSubmissionId === assignment.id);
+      (!submission ||
+        (replacingSubmissionId === assignment.id &&
+          (canResubmit || canResumeDeviceDraft)));
     const submittedOnTime =
       submission &&
       (!assignment.due ||
@@ -7819,32 +8583,44 @@
     const score = assignmentScore(assignment);
     const feedback = assignmentFeedback(assignment);
     const lifecycleIndex =
-      score != null
-        ? 3
-        : submission?.status === "review"
+      workflowStatus === "revision_requested"
+        ? 2
+        : workflowStatus === "graded" || score != null
+          ? 3
+        : ["under_review", "resubmitted"].includes(workflowStatus)
           ? 1
           : submission
             ? 0
             : -1;
     const lifecycle = [
       [
-        deliveredToLotus
+        deliveredToSchoolRecord
           ? "Submitted"
           : remoteSubmissionEnabled
             ? "Ready to Submit"
             : "Saved on This Device",
-        deliveredToLotus
+        deliveredToSchoolRecord
           ? "Your work and submission receipt are recorded."
           : remoteSubmissionEnabled
             ? "Attach your completed work and submit it securely to your teacher."
             : "This draft remains in this browser until the Lotus submission service is connected.",
       ],
       ["Under Review", "Your instructor is reviewing the submission."],
-      ["Feedback Available", "Comments and rubric results are ready."],
+      [
+        workflowStatus === "revision_requested"
+          ? "Revision Requested"
+          : "Feedback Available",
+        workflowStatus === "revision_requested"
+          ? "Read the teacher message and submit a new version when ready."
+          : "Comments and rubric results are ready.",
+      ],
       ["Graded", "The published result is included in your course standing."],
     ];
     const feedbackUnread =
-      score != null && !state.feedbackRead.includes(assignment.id);
+      score != null &&
+      (notificationEndpointFor()
+        ? unreadGradeNotificationsForAssignment(assignment.id).length > 0
+        : !state.feedbackRead.includes(assignment.id));
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="assignments">Assignments</button><span>/</span><span>${course.code}</span>
@@ -7854,7 +8630,7 @@
           <div class="panel-content">
             <p class="course-code">${course.code} · ${course.title}</p>
             <h1>${escapeHtml(assignment.title)}</h1>
-            <span class="badge ${submission && !deliveredToLotus ? "warning" : status.className}">${submission && !deliveredToLotus ? "Device-Only Draft" : status.label}</span>
+            <span class="badge ${submission && !deliveredToSchoolRecord ? "warning" : status.className}">${submission && !deliveredToSchoolRecord ? "Device-Only Draft" : status.label}</span>
             <div class="assignment-date-grid">
               <div><span>Schedule</span><strong>${assignmentScheduleLabel(assignment)}</strong></div>
               <div><span>Availability</span><strong>${assignmentAvailabilityLabel(assignment)}</strong></div>
@@ -7899,6 +8675,7 @@
                 `
                 : ""
             }
+            ${submission ? submissionThreadMarkup(submission) : ""}
             <section class="lesson-section">
               <h2>Submission Progress</h2>
               <div class="submission-timeline">
@@ -7935,11 +8712,11 @@
                     <div class="receipt-card">
                       <div class="receipt-heading">
                         <span>${icon("check", 18)}</span>
-                        <div><p class="course-code">${deliveredToLotus ? "Submitted to Lotus Drive" : "Saved on This Device"}</p><h3>${deliveredToLotus ? status.label : "Local Draft"}</h3></div>
+                        <div><p class="course-code">${deliveredToSchoolRecord ? (submission.delivery === "central" ? "Submitted to School Record" : "Submitted to Lotus Drive") : "Saved on This Device"}</p><h3>${deliveredToSchoolRecord ? status.label : "Local Draft"}</h3></div>
                       </div>
                       <dl>
                         <div><dt>Receipt ID</dt><dd>${escapeHtml(submission.receiptId)}</dd></div>
-                        <div><dt>${deliveredToLotus ? "Submitted" : "Saved"}</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
+                        <div><dt>${deliveredToSchoolRecord ? "Submitted" : "Saved"}</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
                         <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
                         <div><dt>Version</dt><dd>${submission.history?.length || 1}</dd></div>
                         <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
@@ -7957,8 +8734,15 @@
                       }
                     </div>
                     ${
-                      score == null
-                        ? `<button class="button button-quiet full-width" type="button" data-action="replace-submission" data-id="${assignment.id}">Replace Submission</button>`
+                      localDeviceDraft && remoteSubmission
+                        ? `<div class="form-notice"><strong>Unsent device draft retained</strong><p>${escapeHtml(localDeviceDraft.fileName || "Note-only draft")} · saved ${formatDate(localDeviceDraft.submittedAt, true)}. Your official status remains ${escapeHtml(status.label)}. ${canResumeDeviceDraft ? "Continue the saved draft when you are ready to submit the authorized revision." : "This draft cannot replace the official record unless your teacher requests a revision."}</p></div>`
+                        : ""
+                    }
+                    ${
+                      canResumeDeviceDraft
+                        ? `<button class="button button-quiet full-width" type="button" data-action="resume-device-draft" data-id="${assignment.id}">${remoteSubmission ? "Continue Saved Revision" : "Submit Saved Draft"}</button>`
+                        : canResubmit
+                          ? `<button class="button button-quiet full-width" type="button" data-action="replace-submission" data-id="${assignment.id}">Replace Submission</button>`
                         : ""
                     }
                     <div class="submission-history">
@@ -7988,12 +8772,14 @@
                     <form class="assignment-form" id="assignment-form" data-id="${assignment.id}">
                       <div class="form-alert" id="assignment-form-alert" role="alert" tabindex="-1" hidden></div>
                       ${
-                        submission
-                          ? '<p class="form-notice">Replacing this work creates a new version. Earlier versions remain in the submission history.</p>'
+                        resumedDeviceDraft
+                          ? `<p class="form-notice">${remoteSubmission ? "Submitting this saved revision creates a new official version." : "Submitting this saved draft creates the first official attempt."} Select the file again if it must be included.</p>`
+                          : submission
+                            ? '<p class="form-notice">Replacing this work creates a new version. Earlier versions remain in the submission history.</p>'
                           : ""
                       }
                       <label for="submission-note">Submission Note</label>
-                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(submission?.text || "")}</textarea>
+                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(formSubmission?.text || "")}</textarea>
                       <label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
                       <input id="submission-file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
                       <p class="field-help" id="submission-file-help">PDF, Word, PowerPoint or Excel · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
@@ -8002,13 +8788,13 @@
                         <span><strong data-file-name></strong><small data-file-meta></small></span>
                         <button type="button" data-action="clear-submission-file">Remove</button>
                       </div>
-                      ${submission?.fileName ? `<p class="login-help">Current file: ${escapeHtml(submission.fileName)}</p>` : ""}
+                      ${formSubmission?.fileName ? `<p class="login-help">Saved file reference: ${escapeHtml(formSubmission.fileName)}. Browser security requires you to select it again before upload.</p>` : ""}
                       <label class="integrity-check" for="submission-integrity">
                         <input id="submission-integrity" name="integrity" type="checkbox" value="confirmed" />
                         <span>I confirm that this is my own work and that I have credited all sources.</span>
                       </label>
-                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (submission ? "Submit New Version to Lotus Drive" : "Submit to Lotus Drive") : "Save Draft on This Device"}</button>
-                      ${submission ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
+                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (remoteSubmission ? "Submit New Version to Lotus Drive" : "Submit to Lotus Drive") : "Save Draft on This Device"}</button>
+                      ${submission || resumedDeviceDraft ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
                     </form>
                   `
               }
@@ -8118,38 +8904,57 @@
     `;
   }
 
-  function announcementsView() {
-    const unread = ANNOUNCEMENTS.filter((item) => !state.read.includes(item.id)).length;
+  function notificationsView() {
+    const notifications = notificationItems();
+    const unread = unreadNotificationCount();
+    const faculty = isTeacher();
     return `
       ${pageHeading(
-        "School Updates",
-        "Announcements",
-        "Messages from your teachers, the Academic Office and Student Services.",
+        faculty ? "Faculty Updates" : "Learning Updates",
+        "Notifications",
+        faculty
+          ? "New submissions, resubmissions and workflow updates from your courses."
+          : "Assignment feedback, revision requests, grades and course updates in one place.",
         unread
-          ? '<button class="button button-secondary" type="button" data-action="read-all">Mark All as Read</button>'
+          ? '<button class="button button-secondary" type="button" data-action="mark-all-notifications-read">Mark All as Read</button>'
           : "",
       )}
-      <section class="announcement-list">
-        ${ANNOUNCEMENTS.map((item) => {
-          const read = state.read.includes(item.id);
-          return `
-            <article class="announcement-card ${read ? "" : "unread"}">
-              <div>
-                <p class="course-code">${escapeHtml(item.category)}</p>
-                <h2>${escapeHtml(item.title)}</h2>
-                <p>${escapeHtml(item.body)}</p>
-                <div class="announcement-meta"><span>${escapeHtml(item.author)}</span><span>${formatDate(item.date)}</span></div>
-              </div>
-              ${
-                read
-                  ? '<span class="badge success">Read</span>'
-                  : `<button class="button button-quiet" type="button" data-action="read-announcement" data-id="${item.id}">Mark as Read</button>`
-              }
-            </article>
-          `;
-        }).join("")}
+      <section class="announcement-list notification-list" aria-busy="${platformRuntime.notificationsLoading}">
+        ${
+          platformRuntime.notificationsLoading &&
+          !platformRuntime.notificationsLoaded
+            ? '<div class="notification-state" role="status"><span class="loading-dot" aria-hidden="true"></span><h2>Syncing notifications</h2><p>Checking the secure learning record for new activity.</p></div>'
+            : platformRuntime.notificationsError
+              ? `<div class="notification-state" role="alert"><h2>Notifications are temporarily unavailable</h2><p>${escapeHtml(platformRuntime.notificationsError)}</p><button class="button button-primary" type="button" data-action="refresh-notifications">Try Again</button></div>`
+              : notifications.length
+                ? notifications
+                    .map((item) => {
+                      const category = String(item.eventType || "update")
+                        .replace(/[_-]+/g, " ")
+                        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                      return `
+                        <article class="announcement-card notification-card ${item.readAt ? "" : "unread"}">
+                          <div>
+                            <p class="course-code">${escapeHtml(category)}</p>
+                            <h2>${escapeHtml(item.title)}</h2>
+                            <p>${escapeHtml(item.body)}</p>
+                            <div class="announcement-meta"><span>${item.readAt ? "Read" : "New"}</span><span>${formatDate(item.createdAt, true)}</span></div>
+                          </div>
+                          <div class="notification-actions">
+                            <a class="button button-primary" href="${escapeHtml(item.actionUrl)}" data-action="open-notification" data-id="${escapeHtml(item.id)}">Open</a>
+                            ${item.readAt ? '<span class="badge success">Read</span>' : `<button class="button button-quiet" type="button" data-action="mark-notification-read" data-id="${escapeHtml(item.id)}">Mark as Read</button>`}
+                          </div>
+                        </article>`;
+                    })
+                    .join("")
+                : '<div class="notification-state"><h2>You are up to date</h2><p>New learning and submission activity will appear here.</p></div>'
+        }
       </section>
     `;
+  }
+
+  function announcementsView() {
+    return notificationsView();
   }
 
   function notFoundView() {
@@ -8235,6 +9040,8 @@
       );
     } else if (teacherRoute[1] === "materials") {
       view = teacherMaterialsView();
+    } else if (teacherRoute[1] === "notifications") {
+      view = notificationsView();
     } else if (teacherRoute[1] === "security") {
       view = securityView();
     } else if (teacherRoute[1] === "course") {
@@ -8319,6 +9126,7 @@
       return;
     }
     let route = routeParts();
+    void ensureNotifications();
     if (isTeacher()) {
       renderTeacher(route);
       window.requestAnimationFrame(() =>
@@ -8395,7 +9203,9 @@
             : notFoundView()
         : notFoundView();
     } else if (route[0] === "progress") view = progressView();
-    else if (route[0] === "announcements") view = announcementsView();
+    else if (route[0] === "notifications" || route[0] === "announcements") {
+      view = notificationsView();
+    }
     else if (route[0] === "support") view = supportView();
     else if (route[0] === "security") view = securityView();
     else view = notFoundView();
@@ -8497,6 +9307,172 @@
   }
 
   document.addEventListener("submit", async (event) => {
+    if (event.target.id === "submission-message-form") {
+      event.preventDefault();
+      const form = event.target;
+      const values = new FormData(form);
+      const body = String(values.get("body") || "").trim();
+      const submissionId = String(form.dataset.submission || "").trim();
+      const endpoint = submissionWorkflowEndpoint(submissionId, "messages");
+      const idempotencyKey =
+        form.dataset.idempotencyKey || requestIdFor("submission-message");
+      form.dataset.idempotencyKey = idempotencyKey;
+      setFormAlert(form);
+      if (!body) {
+        setFormAlert(form, "Write a message before sending.");
+        form.elements.body?.focus();
+        return;
+      }
+      if (!endpoint) {
+        setFormAlert(form, "The secure assignment conversation is unavailable.");
+        return;
+      }
+      const button = form.querySelector('[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Sending...";
+      }
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: JSON.stringify({ body }),
+        });
+        const source = platformPayloadData(payload, payload);
+        const rawMessage =
+          source?.message && typeof source.message === "object"
+            ? source.message
+            : source;
+        const record = remoteSubmissionRecordById(submissionId);
+        const message = normalizeSubmissionMessages(
+          [
+            {
+              ...(rawMessage && typeof rawMessage === "object"
+                ? rawMessage
+                : {}),
+              body:
+                (rawMessage && typeof rawMessage === "object"
+                  ? rawMessage.body
+                  : "") || body,
+              authorRole:
+                rawMessage?.authorRole || currentUser()?.role || "student",
+              authorName:
+                rawMessage?.authorName || currentUser()?.displayName || "",
+              createdAt: rawMessage?.createdAt || new Date().toISOString(),
+              attemptNumber:
+                rawMessage?.attemptNumber ||
+                record?.submission?.attemptNumber ||
+                null,
+            },
+          ],
+          record?.submission?.attemptNumber || null,
+        )[0];
+        appendSubmissionMessage(record?.submission, message);
+        delete form.dataset.idempotencyKey;
+        form.reset();
+        render(false, true);
+        showToast("Message sent in the assignment conversation.", {
+          tone: "success",
+        });
+        void refreshRemoteSubmissions({ silent: true });
+      } catch (error) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Send Message";
+        }
+        setFormAlert(
+          form,
+          error?.message || "The message could not be sent.",
+        );
+      }
+      return;
+    }
+
+    if (event.target.id === "revision-request-form") {
+      event.preventDefault();
+      const form = event.target;
+      const values = new FormData(form);
+      const messageBody = String(values.get("message") || "").trim();
+      const submissionId = String(form.dataset.submission || "").trim();
+      const endpoint = submissionWorkflowEndpoint(submissionId, "return");
+      const idempotencyKey =
+        form.dataset.idempotencyKey || requestIdFor("revision-request");
+      form.dataset.idempotencyKey = idempotencyKey;
+      setFormAlert(form);
+      if (messageBody.length < 3) {
+        setFormAlert(
+          form,
+          "Add a clear revision message before returning this work.",
+        );
+        form.elements.message?.focus();
+        return;
+      }
+      if (!endpoint) {
+        setFormAlert(form, "The revision workflow is not connected.");
+        return;
+      }
+      const button = form.querySelector('[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Returning...";
+      }
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: JSON.stringify({ message: messageBody }),
+        });
+        const source = platformPayloadData(payload, payload);
+        const record = remoteSubmissionRecordById(submissionId);
+        if (record) {
+          clearGradingDraft(record);
+          record.submission.workflowStatus = "revision_requested";
+          record.submission.status = "revision_requested";
+          record.submission.resubmissionAllowed = true;
+          const rawMessage =
+            source?.message && typeof source.message === "object"
+              ? source.message
+              : {};
+          const message = normalizeSubmissionMessages(
+            [
+              {
+                ...rawMessage,
+                body: rawMessage.body || messageBody,
+                authorRole:
+                  rawMessage.authorRole || currentUser()?.role || "teacher",
+                authorName:
+                  rawMessage.authorName || currentUser()?.displayName || "",
+                createdAt: rawMessage.createdAt || new Date().toISOString(),
+                attemptNumber:
+                  rawMessage.attemptNumber ||
+                  record.submission.attemptNumber ||
+                  null,
+              },
+            ],
+            record.submission.attemptNumber || null,
+          )[0];
+          appendSubmissionMessage(record.submission, message);
+        }
+        delete form.dataset.idempotencyKey;
+        form.reset();
+        render(false, true);
+        showToast("Revision requested. The student can submit a new version.", {
+          tone: "success",
+        });
+        void refreshRemoteSubmissions({ silent: true });
+      } catch (error) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Return for Revision";
+        }
+        setFormAlert(
+          form,
+          error?.message || "The revision request could not be sent.",
+        );
+      }
+      return;
+    }
+
     if (event.target.id === "forgot-password-form") {
       event.preventDefault();
       const form = new FormData(event.target);
@@ -9085,7 +10061,8 @@
       const record = teacherSubmissionRecords().find(
         (item) =>
           item.assignment.id === assignmentId &&
-          studentRecordKey(item.student) === studentKey,
+          studentRecordKey(item.student) === studentKey &&
+          scalarLabel(item.submission?.id) === scalarLabel(submissionId),
       );
       if (!record) {
         setGradingAlert(
@@ -9185,9 +10162,21 @@
       const file = form.get("file");
       const assignment = findAssignment(id);
       const existing = submissionForAssignment(id);
+      const remoteExisting = remoteSubmissionFor(id);
+      const deviceDraft = localDeviceDraftForAssignment(id);
+      const isResumingDeviceDraft = Boolean(
+        resumingDeviceDraftId === id && deviceDraft,
+      );
+      const remoteEndpoint = submissionUploadEnabled()
+        ? submissionsEndpointUrl()
+        : "";
       const text = String(form.get("note") || "").trim();
       const newFileName = file instanceof File && file.name ? file.name : "";
-      const fileName = newFileName || existing?.fileName || "";
+      const fileName =
+        newFileName ||
+        (remoteEndpoint && isResumingDeviceDraft
+          ? ""
+          : existing?.fileName || "");
       if (newFileName && file.size > MAX_SUBMISSION_BYTES) {
         setFormAlert(
           event.target,
@@ -9197,12 +10186,15 @@
         return;
       }
       if (
-        ["file", "project"].includes(assignment?.submissionMode) &&
+        (remoteExisting ||
+          ["file", "project"].includes(assignment?.submissionMode)) &&
         !newFileName
       ) {
         setFormAlert(
           event.target,
-          "Choose a new file for this assignment before continuing.",
+          remoteExisting
+            ? "Choose a new file for this replacement attempt before continuing."
+            : "Choose a new file for this assignment before continuing.",
         );
         document.querySelector("#submission-file")?.focus();
         return;
@@ -9225,18 +10217,16 @@
       }
       const submittedAt = new Date().toISOString();
       const receiptId = receiptIdFor(id, submittedAt);
-      const remoteEndpoint = submissionUploadEnabled()
-        ? submissionsEndpointUrl()
-        : "";
       if (remoteEndpoint) {
         const course = assignment ? findCourse(assignment.courseId) : null;
         const user = currentUser();
         const unitNumber = Number(assignment?.unitNumber);
-        const attemptNumber =
-          Math.max(
-            Number(existing?.attemptNumber || 0),
-            existing?.history?.length || 0,
-          ) + 1;
+        const attemptNumber = remoteExisting
+          ? Math.max(
+              Number(remoteExisting.attemptNumber || 0),
+              remoteExisting.history?.length || 0,
+            ) + 1
+          : 1;
         const upload = new FormData();
         upload.set("assignmentId", id);
         upload.set("courseCode", course?.code || "");
@@ -9251,7 +10241,9 @@
         upload.set("attemptNumber", String(attemptNumber));
         upload.set("note", text);
         upload.set("integrityConfirmed", "true");
-        if (existing?.id) upload.set("replacesSubmissionId", existing.id);
+        if (remoteExisting?.id) {
+          upload.set("replacesSubmissionId", remoteExisting.id);
+        }
         if (newFileName) upload.set("files", file, file.name);
         const submitButton = event.target.querySelector(
           'button[type="submit"]',
@@ -9290,9 +10282,9 @@
               studentName: user?.displayName || "",
               note: text,
               fileName,
-              fileSize: newFileName ? file.size : existing?.fileSize || 0,
+              fileSize: newFileName ? file.size : 0,
               fileType:
-                (newFileName ? file.type : existing?.fileType) ||
+                (newFileName ? file.type : "") ||
                 "application/octet-stream",
               submittedAt,
               receiptId:
@@ -9307,14 +10299,14 @@
                 "",
               status: "submitted",
               history: [
-                ...(existing?.history || []),
+                ...(remoteExisting?.history || []),
                 {
                   fileName,
                   fileSize: newFileName
                     ? file.size
-                    : existing?.fileSize || 0,
+                    : 0,
                   fileType:
-                    (newFileName ? file.type : existing?.fileType) ||
+                    (newFileName ? file.type : "") ||
                     "application/octet-stream",
                   submittedAt,
                   receiptId,
@@ -9338,12 +10330,47 @@
                 },
               }
             : fallbackRecord;
+          const existingMessages = normalizeSubmissionMessages(
+            remoteExisting?.messages,
+            remoteExisting?.attemptNumber,
+          );
+          if (
+            !storedRecord.submission.messages?.length &&
+            existingMessages.length
+          ) {
+            storedRecord.submission.messages = existingMessages;
+          }
+          const mergedHistory = new Map();
+          for (const version of [
+            ...(fallbackRecord.submission.history || []),
+            ...(storedRecord.submission.history || []),
+          ]) {
+            const key =
+              scalarLabel(version.receiptId || version.fileReceiptId) ||
+              `attempt-${version.attemptNumber || "unknown"}-${
+                version.submittedAt || version.fileName || mergedHistory.size
+              }`;
+            mergedHistory.set(key, {
+              ...(mergedHistory.get(key) || {}),
+              ...version,
+            });
+          }
+          storedRecord.submission.history = [...mergedHistory.values()].sort(
+            (a, b) =>
+              Number(a.attemptNumber || 0) - Number(b.attemptNumber || 0) ||
+              Date.parse(a.submittedAt || 0) - Date.parse(b.submittedAt || 0),
+          );
           storedRecord.submission.delivery = "lotus";
           upsertRemoteSubmission(storedRecord);
           remoteSubmissionsState.error = "";
           remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
           submissionsEndpointCheckedFor = submissionScopeKey(user);
+          if (deviceDraft) {
+            delete state.submissions[id];
+            saveState();
+          }
           replacingSubmissionId = null;
+          resumingDeviceDraftId = null;
           render(true);
           showToast(
             `Submission uploaded to Lotus Drive. Receipt ${
@@ -9354,7 +10381,7 @@
         } catch (error) {
           if (submitButton) {
             submitButton.disabled = false;
-            submitButton.textContent = existing
+            submitButton.textContent = remoteExisting
               ? "Submit New Version to Lotus Drive"
               : "Submit to Lotus Drive";
           }
@@ -9432,6 +10459,10 @@
   });
 
   document.addEventListener("input", (event) => {
+    const interactionForm = event.target.closest(
+      "#submission-message-form, #revision-request-form",
+    );
+    if (interactionForm) delete interactionForm.dataset.idempotencyKey;
     const gradingForm = event.target.closest("#grading-form");
     if (gradingForm) {
       setGradingAlert(gradingForm);
@@ -9518,6 +10549,70 @@
     if (action === "dismiss-toast") {
       window.clearTimeout(toastTimer);
       target.closest(".toast")?.remove();
+    } else if (action === "refresh-notifications") {
+      target.disabled = true;
+      await ensureNotifications({ force: true });
+    } else if (action === "open-notification") {
+      event.preventDefault();
+      const id = String(target.dataset.id || "").trim();
+      const destination = notificationActionHref(target.getAttribute("href"));
+      try {
+        await markNotificationRead(id);
+      } catch (error) {
+        showToast(error?.message || "The notification could not be updated.", {
+          tone: "error",
+        });
+      }
+      window.location.hash = destination;
+    } else if (action === "mark-notification-read") {
+      const id = String(target.dataset.id || "").trim();
+      target.disabled = true;
+      try {
+        await markNotificationRead(id);
+        render(false, true);
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "The notification could not be updated.", {
+          tone: "error",
+        });
+      }
+    } else if (action === "mark-all-notifications-read") {
+      const endpoint = notificationEndpointFor();
+      if (!endpoint) {
+        showToast("The notification service is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      target.disabled = true;
+      try {
+        const payload = await requestPlatformJson(endpoint, {
+          method: "PATCH",
+          body: JSON.stringify({ readAll: true }),
+        });
+        const readAt = new Date().toISOString();
+        platformRuntime.notifications.forEach((item) => {
+          if (!item.readAt) item.readAt = readAt;
+        });
+        const unreadCount = Number(payload?.unreadCount);
+        platformRuntime.notificationsUnreadCount =
+          Number.isInteger(unreadCount) && unreadCount >= 0
+            ? unreadCount
+            : 0;
+        render(false, true);
+        showToast("All notifications marked as read.", { tone: "success" });
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "Notifications could not be updated.", {
+          tone: "error",
+        });
+      }
+    } else if (action === "refresh-student-workspace") {
+      target.disabled = true;
+      refreshStudentWorkspace();
+      showToast("Refreshing your official learning record.", {
+        tone: "success",
+      });
     } else if (action === "toast-action") {
       if (target.dataset.toastAction === "undo-enrollment" && lastEnrollmentChange) {
         const currentCourseIds = [...enrolledCourseIdsFor()];
@@ -9543,7 +10638,14 @@
       form?.scrollIntoView({ behavior: "smooth", block: "start" });
       window.requestAnimationFrame(() => form?.elements.score?.focus());
     } else if (action === "set-teacher-status") {
-      const status = ["awaiting", "revision", "graded", "unmapped", "all"].includes(
+      const status = [
+        "awaiting",
+        "draft",
+        "revision",
+        "returned",
+        "unmapped",
+        "all",
+      ].includes(
         target.dataset.status,
       )
         ? target.dataset.status
@@ -9612,10 +10714,12 @@
       const form = target.closest("#grading-form");
       const studentKey = form?.dataset.student || "";
       const assignmentId = form?.dataset.assignment || "";
+      const formSubmissionId = scalarLabel(form?.dataset.submission);
       const record = teacherSubmissionRecords().find(
         (item) =>
           item.assignment.id === assignmentId &&
-          studentRecordKey(item.student) === studentKey,
+          studentRecordKey(item.student) === studentKey &&
+          scalarLabel(item.submission?.id) === formSubmissionId,
       );
       if (!form || !record) {
         showToast("This submission is no longer available.", {
@@ -10105,18 +11209,86 @@
       render(false, true);
       document.querySelector(`[data-filter="${assignmentFilter}"]`)?.focus();
     } else if (action === "replace-submission") {
-      replacingSubmissionId = target.dataset.id;
+      const assignmentId = target.dataset.id;
+      const submission = submissionForAssignment(assignmentId);
+      const workflowStatus = normalizeSubmissionWorkflowStatus(
+        submission?.workflowStatus || submission?.status,
+        submission?.publishedAt,
+      );
+      if (
+        !submission ||
+        (workflowStatus !== "revision_requested" &&
+          submission.resubmissionAllowed !== true)
+      ) {
+        showToast(
+          "A new version can be submitted after your teacher requests a revision.",
+          { tone: "error" },
+        );
+        return;
+      }
+      resumingDeviceDraftId = null;
+      replacingSubmissionId = assignmentId;
+      render(false, true);
+      document.querySelector("#submission-note")?.focus();
+    } else if (action === "resume-device-draft") {
+      const assignmentId = target.dataset.id;
+      const draft = localDeviceDraftForAssignment(assignmentId);
+      const remoteSubmission = remoteSubmissionFor(assignmentId);
+      const workflowStatus = normalizeSubmissionWorkflowStatus(
+        remoteSubmission?.workflowStatus || remoteSubmission?.status,
+        remoteSubmission?.publishedAt,
+      );
+      const remoteAllowsRevision = Boolean(
+        remoteSubmission &&
+          (workflowStatus === "revision_requested" ||
+            remoteSubmission.resubmissionAllowed === true),
+      );
+      if (
+        !draft ||
+        !submissionUploadEnabled() ||
+        (remoteSubmission && !remoteAllowsRevision)
+      ) {
+        showToast(
+          "This saved draft cannot be submitted until the secure service is available and any required revision is authorized.",
+          { tone: "error" },
+        );
+        return;
+      }
+      resumingDeviceDraftId = assignmentId;
+      replacingSubmissionId = assignmentId;
       render(false, true);
       document.querySelector("#submission-note")?.focus();
     } else if (action === "cancel-replacement") {
       replacingSubmissionId = null;
+      resumingDeviceDraftId = null;
       render(false, true);
-      document.querySelector('[data-action="replace-submission"]')?.focus();
+      document
+        .querySelector(
+          '[data-action="resume-device-draft"], [data-action="replace-submission"]',
+        )
+        ?.focus();
     } else if (action === "mark-feedback-read") {
-      if (!state.feedbackRead.includes(target.dataset.id)) {
-        state.feedbackRead.push(target.dataset.id);
+      const assignmentId = target.dataset.id;
+      const notifications = unreadGradeNotificationsForAssignment(assignmentId);
+      if (notificationEndpointFor() && notifications.length) {
+        target.disabled = true;
+        try {
+          await Promise.all(
+            notifications.map((notification) =>
+              markNotificationRead(notification.id),
+            ),
+          );
+        } catch (error) {
+          target.disabled = false;
+          showToast(error?.message || "Feedback could not be marked as read.", {
+            tone: "error",
+          });
+          return;
+        }
+      } else if (!state.feedbackRead.includes(assignmentId)) {
+        state.feedbackRead.push(assignmentId);
+        saveState();
       }
-      saveState();
       render(false, true);
       document
         .querySelector('[data-action="mark-feedback-read"]')

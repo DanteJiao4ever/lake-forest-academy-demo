@@ -905,6 +905,437 @@ describe("Lake Forest Learning API", () => {
     assert.match(allowed.headers["content-disposition"], /^attachment;/);
   });
 
+  test("supports the return, resubmit, grade, and notification workflow without exposing drafts", async () => {
+    const student = await registerEnrolledStudent("interaction-student@example.invalid");
+    const faculty = await addFaculty();
+    const commonFields = {
+      courseCode: "MHF4U",
+      unitNumber: 2,
+      assignmentId: "a1",
+      assignmentTitle: "Quadratic Models Investigation",
+      note: "My first analysis",
+      integrityConfirmed: "true",
+    };
+    const pdf = {
+      name: "investigation.pdf",
+      type: "application/pdf",
+      buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+    };
+
+    const firstForm = multipartPayload({ ...commonFields, attemptNumber: 1 }, pdf);
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+        "idempotency-key": "interaction-submit-0001",
+        ...firstForm.headers,
+      },
+      payload: firstForm.payload,
+    });
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal(first.json().data.workflowStatus, "under_review");
+    const firstId = first.json().data.id;
+
+    const facultyNotifications = await app.inject({
+      method: "GET",
+      url: "/v1/me/notifications",
+      headers: { origin, cookie: faculty.cookie },
+    });
+    assert.equal(facultyNotifications.statusCode, 200, facultyNotifications.body);
+    assert.equal(facultyNotifications.json().data[0].type, "submission_received");
+
+    const prematureForm = multipartPayload({
+      ...commonFields,
+      attemptNumber: 2,
+      replacesSubmissionId: firstId,
+      note: "A premature replacement",
+    }, pdf);
+    const premature = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+        "idempotency-key": "interaction-premature-1",
+        ...prematureForm.headers,
+      },
+      payload: prematureForm.payload,
+    });
+    assert.equal(premature.statusCode, 409, premature.body);
+    assert.equal(premature.json().error.code, "RESUBMISSION_NOT_REQUESTED");
+
+    const returned = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${firstId}/return`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "interaction-return-0001",
+      },
+      payload: { body: "Please add evidence for your model selection." },
+    });
+    assert.equal(returned.statusCode, 201, returned.body);
+    assert.equal(returned.json().data.type, "revision_request");
+
+    const returnedReplay = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${firstId}/return`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "interaction-return-0001",
+      },
+      payload: { message: "Please add evidence for your model selection." },
+    });
+    assert.equal(returnedReplay.statusCode, 201, returnedReplay.body);
+    assert.equal(returnedReplay.json().data.id, returned.json().data.id);
+
+    const revisionState = await app.inject({
+      method: "GET",
+      url: "/v1/submissions?courseCode=MHF4U",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(revisionState.statusCode, 200, revisionState.body);
+    assert.equal(revisionState.json().data[0].workflowStatus, "revision_requested");
+    assert.equal(revisionState.json().data[0].resubmissionAllowed, true);
+    assert.equal(revisionState.json().data[0].messages[0].submissionId, firstId);
+    assert.equal(revisionState.json().data[0].messages[0].attemptNumber, 1);
+
+    const secondForm = multipartPayload({
+      ...commonFields,
+      attemptNumber: 2,
+      replacesSubmissionId: firstId,
+      note: "Revised analysis with evidence",
+    }, { ...pdf, name: "investigation-revised.pdf" });
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+        "idempotency-key": "interaction-submit-0002",
+        ...secondForm.headers,
+      },
+      payload: secondForm.payload,
+    });
+    assert.equal(second.statusCode, 201, second.body);
+    assert.equal(second.json().data.workflowStatus, "resubmitted");
+    assert.equal(second.json().data.replacesSubmissionId, firstId);
+    assert.equal(second.json().data.history.length, 2);
+    assert.equal(second.json().data.messages[0].submissionId, firstId);
+    const secondId = second.json().data.id;
+
+    const comment = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${secondId}/messages`,
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+        "idempotency-key": "interaction-comment-001",
+      },
+      payload: { body: "I added the requested comparison table." },
+    });
+    assert.equal(comment.statusCode, 201, comment.body);
+    assert.equal(comment.json().data.type, "comment");
+
+    const draft = await app.inject({
+      method: "PUT",
+      url: `/v1/grades/${secondId}`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "interaction-grade-draft-1",
+        "if-match": '"grade-v0"',
+      },
+      payload: {
+        submissionId: secondId,
+        score: 87,
+        feedback: "Draft feedback that must stay private.",
+        publish: false,
+      },
+    });
+    assert.equal(draft.statusCode, 200, draft.body);
+
+    const teacherDraftQueue = await app.inject({
+      method: "GET",
+      url: "/v1/submissions?scope=teacher&courseCode=MHF4U",
+      headers: { origin, cookie: faculty.cookie },
+    });
+    assert.equal(teacherDraftQueue.statusCode, 200, teacherDraftQueue.body);
+    const teacherDraftSubmission =
+      teacherDraftQueue.json().data[0].students[0].units[0].submissions[0];
+    assert.equal(teacherDraftSubmission.grade.score, 87);
+    assert.equal(teacherDraftSubmission.workflowStatus, "under_review");
+
+    const hiddenDraft = await app.inject({
+      method: "GET",
+      url: "/v1/submissions?courseCode=MHF4U",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(hiddenDraft.statusCode, 200, hiddenDraft.body);
+    assert.equal(hiddenDraft.json().data[0].grade, null);
+    assert.equal("score" in hiddenDraft.json().data[0], false);
+    assert.equal(hiddenDraft.json().data[0].workflowStatus, "resubmitted");
+
+    const published = await app.inject({
+      method: "PUT",
+      url: `/v1/grades/${secondId}`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "interaction-grade-publish-1",
+        "if-match": '"grade-v1"',
+      },
+      payload: {
+        submissionId: secondId,
+        score: 87,
+        feedback: "Clear revision and well-supported reasoning.",
+        publish: true,
+      },
+    });
+    assert.equal(published.statusCode, 200, published.body);
+
+    const graded = await app.inject({
+      method: "GET",
+      url: "/v1/submissions?courseCode=MHF4U",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(graded.statusCode, 200, graded.body);
+    assert.equal(graded.json().data[0].workflowStatus, "graded");
+    assert.equal(graded.json().data[0].score, 87);
+    assert.equal(graded.json().data[0].history.length, 2);
+    assert.equal(
+      graded.json().data[0].messages.some((item) =>
+        item.submissionId === firstId && item.attemptNumber === 1),
+      true,
+    );
+
+    const studentNotifications = await app.inject({
+      method: "GET",
+      url: "/v1/me/notifications",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(studentNotifications.statusCode, 200, studentNotifications.body);
+    assert.equal(studentNotifications.json().unreadCount, 2);
+    assert.deepEqual(
+      new Set(studentNotifications.json().data.map((item) => item.type)),
+      new Set(["submission_returned", "grade_published"]),
+    );
+    assert.equal(
+      studentNotifications.json().data.every((item) => item.href === "#/assignment/a1"),
+      true,
+    );
+
+    const notificationId = studentNotifications.json().data[0].id;
+    const readOne = await app.inject({
+      method: "PATCH",
+      url: `/v1/me/notifications/${notificationId}`,
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+      },
+      payload: { read: true },
+    });
+    assert.equal(readOne.statusCode, 200, readOne.body);
+    assert.equal(readOne.json().unreadCount, 1);
+
+    const other = await register("notification-boundary@example.invalid");
+    const deniedRead = await app.inject({
+      method: "PATCH",
+      url: `/v1/me/notifications/${notificationId}`,
+      headers: {
+        origin,
+        cookie: other.cookie,
+        "x-csrf-token": other.body.csrfToken,
+      },
+      payload: { read: true },
+    });
+    assert.equal(deniedRead.statusCode, 404, deniedRead.body);
+    assert.equal(deniedRead.json().error.code, "NOTIFICATION_NOT_FOUND");
+
+    const readAll = await app.inject({
+      method: "PATCH",
+      url: "/v1/me/notifications",
+      headers: {
+        origin,
+        cookie: student.cookie,
+        "x-csrf-token": student.csrf,
+      },
+      payload: { readAll: true },
+    });
+    assert.equal(readAll.statusCode, 200, readAll.body);
+    assert.equal(readAll.json().unreadCount, 0);
+  });
+
+  test("enforces return attempt limits and submission message ownership", async () => {
+    const owner = await registerEnrolledStudent("message-owner@example.invalid");
+    const faculty = await addFaculty();
+    const first = await repository.createSubmission(
+      {
+        id: randomUuid("7"),
+        studentUserId: owner.user.id,
+        studentId: owner.user.publicId,
+        studentName: owner.user.displayName,
+        studentEmail: owner.user.email,
+        studentFirstName: owner.user.firstName,
+        studentLastName: owner.user.lastName,
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Ready",
+        idempotencyKey: "message-owner-seed",
+        requestFingerprint: "d".repeat(64),
+      },
+      [],
+    );
+    const other = await register("message-other@example.invalid");
+    const forbidden = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${first.id}/messages`,
+      headers: {
+        origin,
+        cookie: other.cookie,
+        "x-csrf-token": other.body.csrfToken,
+        "idempotency-key": "message-cross-owner-1",
+      },
+      payload: { message: "I should not be able to post here." },
+    });
+    assert.equal(forbidden.statusCode, 403, forbidden.body);
+    assert.equal(forbidden.json().error.code, "SUBMISSION_ACCESS_DENIED");
+
+    repository.assignments.get("a1").maxAttempts = 1;
+    const noRemainingAttempt = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${first.id}/return`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "return-max-attempt-1",
+      },
+      payload: { body: "Please revise." },
+    });
+    assert.equal(noRemainingAttempt.statusCode, 409, noRemainingAttempt.body);
+    assert.equal(noRemainingAttempt.json().error.code, "ATTEMPT_LIMIT_REACHED");
+
+    first.status = "withdrawn";
+    repository.assignments.get("a1").maxAttempts = 3;
+    const inactiveAttempt = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${first.id}/return`,
+      headers: {
+        origin,
+        cookie: faculty.cookie,
+        "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "return-inactive-attempt-1",
+      },
+      payload: { body: "Please revise." },
+    });
+    assert.equal(inactiveAttempt.statusCode, 409, inactiveAttempt.body);
+    assert.equal(inactiveAttempt.json().error.code, "SUBMISSION_NOT_ACTIVE");
+  });
+
+  test("rate limits submission conversation writes", async () => {
+    const owner = await registerEnrolledStudent("message-rate-limit@example.invalid");
+    const submission = await repository.createSubmission(
+      {
+        id: randomUuid("8"),
+        studentUserId: owner.user.id,
+        studentId: owner.user.publicId,
+        studentName: owner.user.displayName,
+        studentEmail: owner.user.email,
+        studentFirstName: owner.user.firstName,
+        studentLastName: owner.user.lastName,
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Ready",
+        idempotencyKey: "message-rate-limit-seed",
+        requestFingerprint: "e".repeat(64),
+      },
+      [],
+    );
+
+    for (let index = 0; index < 120; index += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/submissions/${submission.id}/messages`,
+        headers: {
+          origin,
+          cookie: owner.cookie,
+          "x-csrf-token": owner.csrf,
+          "idempotency-key": `message-rate-limit-${index}`,
+        },
+        payload: { body: `Conversation entry ${index}.` },
+      });
+      assert.equal(response.statusCode, 201, response.body);
+    }
+
+    const limited = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${submission.id}/messages`,
+      headers: {
+        origin,
+        cookie: owner.cookie,
+        "x-csrf-token": owner.csrf,
+        "idempotency-key": "message-rate-limit-overflow",
+      },
+      payload: { body: "This write should be rate limited." },
+    });
+    assert.equal(limited.statusCode, 429, limited.body);
+
+    const secondOwner = await registerEnrolledStudent(
+      "message-rate-limit-second@example.invalid",
+    );
+    const secondSubmission = await repository.createSubmission(
+      {
+        id: randomUuid("9"),
+        studentUserId: secondOwner.user.id,
+        studentId: secondOwner.user.publicId,
+        studentName: secondOwner.user.displayName,
+        studentEmail: secondOwner.user.email,
+        studentFirstName: secondOwner.user.firstName,
+        studentLastName: secondOwner.user.lastName,
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Ready",
+        idempotencyKey: "message-rate-limit-second-seed",
+        requestFingerprint: "f".repeat(64),
+      },
+      [],
+    );
+    const independentSession = await app.inject({
+      method: "POST",
+      url: `/v1/submissions/${secondSubmission.id}/messages`,
+      headers: {
+        origin,
+        cookie: secondOwner.cookie,
+        "x-csrf-token": secondOwner.csrf,
+        "idempotency-key": "message-rate-limit-independent-session",
+      },
+      payload: { body: "A separate account keeps its own allowance." },
+    });
+    assert.equal(independentSession.statusCode, 201, independentSession.body);
+  });
+
   test("filters material records by authorized courses and never exposes Drive IDs", async () => {
     const registered = await register();
     await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);

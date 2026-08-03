@@ -190,6 +190,10 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     window.LFA_DRIVE_CONFIG.submissionsEndpoint,
     "https://api.example.test/v1/submissions",
   );
+  assert.equal(
+    window.LFA_PLATFORM_API_CONFIG.notificationsEndpoint,
+    "https://api.example.test/v1/me/notifications",
+  );
   assert.ok(requestedUrls.some((url) => url.endsWith("/health/ready")));
   assert.ok(
     requestedUrls.some((url) => url.endsWith("/health/upload-ready")),
@@ -210,9 +214,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=account-security-v1",
-    "./platform-sequences.js?v=account-security-v1",
-    "./app.js?v=account-security-v1",
+    "./course-catalog.js?v=student-teacher-interaction-v1",
+    "./platform-sequences.js?v=student-teacher-interaction-v1",
+    "./app.js?v=student-teacher-interaction-v1",
   ]);
 });
 
@@ -402,7 +406,7 @@ async function renderPortal(hash, session, options = {}) {
     decodeURIComponent,
     structuredClone,
     AbortController,
-    FormData,
+    FormData: options.FormData || FormData,
     fetch:
       options.fetch ||
       (async () => {
@@ -612,12 +616,127 @@ async function lockedStudentPlatformFetch(request) {
   return jsonResponse({ data: [] });
 }
 
+function studentStateStorage(email, overrides = {}) {
+  const key = `lake-forest-learning-state-v1:${encodeURIComponent(
+    String(email).toLowerCase(),
+  )}`;
+  return {
+    [key]: JSON.stringify({
+      enrolledCourseIds: ["sch4u"],
+      completed: [],
+      guideChecks: { sch4u: [] },
+      read: [],
+      feedbackRead: [],
+      submissions: {},
+      ...overrides,
+    }),
+  };
+}
+
+function sch4uPlatformFetch({ progress, submission = null, onRequest } = {}) {
+  return async (request, init = {}) => {
+    const url = new URL(String(request));
+    onRequest?.(url, init);
+    if (url.pathname === "/v1/me/progress") {
+      return jsonResponse({
+        data: url.searchParams.get("courseCode") === "SCH4U" ? progress : [],
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/modules") {
+      return jsonResponse({
+        data: Array.from({ length: 12 }, (_, moduleNumber) => ({
+          id: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+          moduleKey: `SCH4U-M${String(moduleNumber).padStart(2, "0")}`,
+          moduleNumber,
+        })),
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/assignments") {
+      return jsonResponse({
+        data: [
+          {
+            id: "sch4u-m02-assignment",
+            moduleId: "sch4u-m02",
+            moduleNumber: 2,
+            unitNumber: 1,
+            status: "active",
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/me/grades") {
+      return jsonResponse({ data: [] });
+    }
+    if (url.pathname === "/v1/submissions") {
+      return jsonResponse({
+        data: submission ? [submission] : [],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    return jsonResponse({ data: [] });
+  };
+}
+
+class TestFormData {
+  constructor(form) {
+    this.values = form.formValues || {};
+  }
+
+  get(name) {
+    return this.values[name] ?? null;
+  }
+}
+
+function interactiveForm(id, dataset, formValues) {
+  const alert = {
+    className: "form-alert",
+    hidden: true,
+    textContent: "",
+    focus() {},
+  };
+  const button = { disabled: false, textContent: "Submit" };
+  const elements = Object.fromEntries(
+    Object.keys(formValues).map((name) => [name, { focus() {} }]),
+  );
+  return {
+    id,
+    dataset: { ...dataset },
+    formValues,
+    elements,
+    resetCalled: false,
+    querySelector(selector) {
+      if (selector === "#assignment-form-alert, .form-alert") return alert;
+      if (selector === '[type="submit"]') return button;
+      return null;
+    },
+    reset() {
+      this.resetCalled = true;
+    },
+    alert,
+    button,
+  };
+}
+
+function actionTarget(action, dataset = {}) {
+  return {
+    dataset: { action, ...dataset },
+    disabled: false,
+    closest(selector) {
+      return selector === "[data-action], [data-route]" ? this : null;
+    },
+  };
+}
+
 test("bootstrap loads the permanent course metadata and platform sequence before the app", async () => {
   const bootstrap = await source("public/learning/bootstrap.js");
   const catalog = bootstrap.indexOf('loadScript("course-catalog.js")');
   const sequence = bootstrap.indexOf('loadScript("platform-sequences.js")');
   const app = bootstrap.indexOf('loadScript("app.js")');
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
+  assert.match(
+    bootstrap,
+    /const SCRIPT_VERSION = "student-teacher-interaction-v1";/,
+  );
 });
 
 test("the permanent six-course catalog contains no offering dates", async () => {
@@ -979,6 +1098,793 @@ test("starting a course records Orientation in progress and keeps the next modul
     refreshed,
     /<article class="platform-module-row is-locked" aria-disabled="true">[\s\S]*?Locked/,
   );
+});
+
+test("dashboard Next Step follows authoritative module progress instead of browser lesson completion", async () => {
+  const email = "next-step@example.test";
+  const session = {
+    email,
+    firstName: "Avery",
+    displayName: "Avery Student",
+    role: "student",
+  };
+  const progress = Array.from({ length: 12 }, (_, moduleNumber) => ({
+    courseCode: "SCH4U",
+    moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+    moduleKey: `SCH4U-M${String(moduleNumber).padStart(2, "0")}`,
+    moduleNumber,
+    status:
+      moduleNumber === 0
+        ? "completed"
+        : moduleNumber === 1
+          ? "in_progress"
+          : "locked",
+  }));
+  let progressRequests = 0;
+  const fetch = sch4uPlatformFetch({
+    progress,
+    onRequest(url) {
+      if (url.pathname === "/v1/me/progress") progressRequests += 1;
+    },
+  });
+  const completedLessons = Array.from({ length: 5 }, (_, unitIndex) =>
+    Array.from(
+      { length: 4 },
+      (_, lessonIndex) => `SCH4U-U${unitIndex + 1}-L${lessonIndex + 1}`,
+    ),
+  ).flat();
+  const renderWithCompleted = (completed) =>
+    renderPortal("#/dashboard", session, {
+      platformApiConfig: studentPlatformApiConfig,
+      fetch,
+      settleTurns: 16,
+      localStorageSeed: studentStateStorage(email, { completed }),
+    });
+
+  const [emptyBrowserState, completedBrowserState] = await Promise.all([
+    renderWithCompleted([]),
+    renderWithCompleted(completedLessons),
+  ]);
+  const primaryHref = (html) =>
+    html.match(
+      /<section class="welcome">[\s\S]*?<a class="button button-gold" href="([^"]+)"/,
+    )?.[1];
+
+  assert.ok(progressRequests >= 2);
+  assert.equal(
+    primaryHref(emptyBrowserState),
+    "#/course/sch4u/module/SCH4U-M01",
+  );
+  assert.equal(primaryHref(completedBrowserState), primaryHref(emptyBrowserState));
+  assert.match(completedBrowserState, /Module 01 · In Progress/);
+  assert.doesNotMatch(completedBrowserState, /#\/lesson\/SCH4U-U2-L1/);
+});
+
+test("revision requests outrank module work and are the only ordinary submission state that enables replacement", async () => {
+  const email = "revision-student@example.test";
+  const session = {
+    email,
+    firstName: "Riley",
+    displayName: "Riley Student",
+    role: "student",
+  };
+  const progress = Array.from({ length: 12 }, (_, moduleNumber) => ({
+    courseCode: "SCH4U",
+    moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+    moduleKey: `SCH4U-M${String(moduleNumber).padStart(2, "0")}`,
+    moduleNumber,
+    status:
+      moduleNumber < 2
+        ? "completed"
+        : moduleNumber === 2
+          ? "in_progress"
+          : "locked",
+  }));
+  const baseSubmission = {
+    id: "11111111-1111-4111-8111-111111111111",
+    submissionId: "11111111-1111-4111-8111-111111111111",
+    student: {
+      id: "revision-student",
+      displayName: "Riley Student",
+      email,
+    },
+    courseCode: "SCH4U",
+    moduleId: "sch4u-m02",
+    moduleNumber: 2,
+    assignmentId: "sch4u-m02-assignment",
+    assignmentTitle: "Safer Organic Product Reformulation Dossier",
+    unitNumber: 1,
+    unit: "Unit 1",
+    attemptNumber: 1,
+    submittedAt: "2026-08-03T10:00:00.000Z",
+    receiptId: "11111111-1111-4111-8111-111111111111",
+    files: [],
+    history: [],
+  };
+  const optionsFor = (workflowStatus) => ({
+    platformApiConfig: studentPlatformApiConfig,
+    submissionConfig: {
+      submissionsEndpoint: "https://api.example.test/v1/submissions",
+      uploadReady: true,
+    },
+    fetch: sch4uPlatformFetch({
+      progress,
+      submission: {
+        ...baseSubmission,
+        status: workflowStatus,
+        workflowStatus,
+        resubmissionAllowed: workflowStatus === "revision_requested",
+      },
+    }),
+    settleTurns: 16,
+    localStorageSeed: studentStateStorage(email),
+  });
+
+  const revisionDashboard = await renderPortal(
+    "#/dashboard",
+    session,
+    optionsFor("revision_requested"),
+  );
+  assert.match(
+    revisionDashboard,
+    /<section class="welcome">[\s\S]*?href="#\/assignment\/sch4u-m02-assignment"[\s\S]*?Revise Submission/,
+  );
+
+  const revisionAssignment = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    session,
+    optionsFor("revision_requested"),
+  );
+  assert.match(revisionAssignment, /data-action="replace-submission"/);
+  assert.match(revisionAssignment, /id="submission-message-form"/);
+
+  const revisionWithNewerDeviceDraft = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    session,
+    {
+      ...optionsFor("revision_requested"),
+      localStorageSeed: studentStateStorage(email, {
+        submissions: {
+          "sch4u-m02-assignment": {
+            status: "draft",
+            delivery: "device",
+            text: "A newer unsent device note.",
+            submittedAt: "2099-08-03T10:00:00.000Z",
+          },
+        },
+      }),
+    },
+  );
+  assert.match(revisionWithNewerDeviceDraft, /Revision Requested/);
+  assert.match(
+    revisionWithNewerDeviceDraft,
+    /data-action="resume-device-draft"/,
+  );
+
+  const replacementForm = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    session,
+    {
+      ...optionsFor("revision_requested"),
+      interact: async ({ listeners }) => {
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        await click({
+          target: actionTarget("replace-submission", {
+            id: "sch4u-m02-assignment",
+          }),
+        });
+      },
+    },
+  );
+  assert.match(
+    replacementForm,
+    /id="submission-file"[^>]*required aria-required="true"/,
+  );
+  assert.match(replacementForm, /required for this assignment/);
+
+  for (const workflowStatus of ["submitted", "under_review", "graded"]) {
+    const html = await renderPortal(
+      "#/assignment/sch4u-m02-assignment",
+      session,
+      optionsFor(workflowStatus),
+    );
+    assert.doesNotMatch(
+      html,
+      /data-action="replace-submission"/,
+      `${workflowStatus} must not authorize another attempt`,
+    );
+  }
+});
+
+test("notifications load from the secure endpoint and marking one read updates the unread state", async () => {
+  const notificationId = "21111111-1111-4111-8111-111111111111";
+  const notifications = [
+    {
+      id: notificationId,
+      eventType: "revision_requested",
+      title: "Revision requested",
+      body: "Review the teacher message before resubmitting.",
+      actionUrl: "#/assignment/sch4u-m02-assignment",
+      readAt: null,
+      createdAt: "2026-08-03T08:00:00.000Z",
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      eventType: "grade_published",
+      title: "Grade published",
+      body: "Your result is ready.",
+      actionUrl: "#/grades",
+      readAt: "2026-08-03T07:00:00.000Z",
+      createdAt: "2026-08-03T07:00:00.000Z",
+    },
+  ];
+  const requests = [];
+  let beforeMarkRead = "";
+  const result = await renderPortal(
+    "#/notifications",
+    {
+      email: "notification-student@example.test",
+      displayName: "Notification Student",
+      role: "student",
+    },
+    {
+      platformApiConfig: {
+        notificationsEndpoint:
+          "https://api.example.test/v1/me/notifications",
+      },
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "csrf-notification-test",
+      },
+      fetch: async (request, init = {}) => {
+        const url = new URL(String(request));
+        requests.push({ url, init });
+        if (
+          url.pathname === "/v1/me/notifications" &&
+          (!init.method || init.method === "GET")
+        ) {
+          return jsonResponse({
+            data: notifications,
+            unreadCount: notifications.filter((item) => !item.readAt).length,
+          });
+        }
+        if (
+          url.pathname === `/v1/me/notifications/${notificationId}` &&
+          init.method === "PATCH"
+        ) {
+          const notification = notifications.find(
+            (item) => item.id === notificationId,
+          );
+          notification.readAt = "2026-08-03T09:00:00.000Z";
+          return jsonResponse({ data: notification });
+        }
+        throw new Error(`Unexpected notification request: ${url.pathname}`);
+      },
+      settleTurns: 12,
+      interact: async ({ appRoot, listeners }) => {
+        beforeMarkRead = appRoot.innerHTML;
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        await click({
+          target: actionTarget("mark-notification-read", {
+            id: notificationId,
+          }),
+        });
+      },
+      returnHarness: true,
+    },
+  );
+
+  assert.match(beforeMarkRead, /aria-label="1 unread notification"/);
+  assert.match(
+    beforeMarkRead,
+    new RegExp(`data-action="mark-notification-read" data-id="${notificationId}"`),
+  );
+  const patchRequest = requests.find(
+    ({ url, init }) =>
+      url.pathname === `/v1/me/notifications/${notificationId}` &&
+      init.method === "PATCH",
+  );
+  assert.ok(patchRequest);
+  assert.equal(
+    patchRequest.init.headers["X-CSRF-Token"],
+    "csrf-notification-test",
+  );
+  assert.deepEqual(JSON.parse(patchRequest.init.body), { read: true });
+  assert.doesNotMatch(
+    result.html,
+    new RegExp(`data-action="mark-notification-read" data-id="${notificationId}"`),
+  );
+  assert.match(result.html, /Revision requested[\s\S]*?<span class="badge success">Read<\/span>/);
+});
+
+test("direct-grade notifications become actionable student Next Steps", async () => {
+  const email = "direct-feedback@example.test";
+  const notificationId = "29999999-9999-4999-8999-999999999999";
+  const requests = [];
+  let dashboardHtml = "";
+  await renderPortal(
+    "#/dashboard",
+    { email, firstName: "Taylor", role: "student" },
+    {
+      platformApiConfig: {
+        notificationsEndpoint:
+          "https://api.example.test/v1/me/notifications",
+      },
+      localStorageSeed: studentStateStorage(email),
+      fetch: async (request, init = {}) => {
+        const url = new URL(String(request));
+        requests.push({ url, init });
+        if (url.pathname !== "/v1/me/notifications") {
+          throw new Error(`Unexpected direct-feedback request: ${url.pathname}`);
+        }
+        if (init.method === "PATCH") {
+          return jsonResponse({
+            data: {
+              id: notificationId,
+              eventType: "grade_published",
+              title: "Grade published: Final Examination",
+              body: "Your score and feedback are ready.",
+              actionUrl: "#/progress",
+              readAt: "2026-08-03T09:01:00.000Z",
+              createdAt: "2026-08-03T09:00:00.000Z",
+            },
+            unreadCount: 0,
+          });
+        }
+        if (url.searchParams.get("cursor") === "page-2") {
+          return jsonResponse({
+            data: [
+              {
+                id: "28888888-8888-4888-8888-888888888888",
+                eventType: "submission_message",
+                title: "Earlier message",
+                body: "This read notification came from page two.",
+                actionUrl: "#/notifications",
+                readAt: "2026-08-02T09:00:00.000Z",
+                createdAt: "2026-08-02T08:00:00.000Z",
+              },
+            ],
+            unreadCount: 1,
+            page: { nextCursor: null, limit: 100 },
+          });
+        }
+        return jsonResponse({
+          data: [
+            {
+              id: notificationId,
+              eventType: "grade_published",
+              title: "Grade published: Final Examination",
+              body: "Your score and feedback are ready.",
+              actionUrl: "#/progress",
+              readAt: null,
+              createdAt: "2026-08-03T09:00:00.000Z",
+            },
+          ],
+          unreadCount: 1,
+          page: { nextCursor: "page-2", limit: 100 },
+        });
+      },
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "csrf-direct-feedback",
+      },
+      settleTurns: 12,
+      interact: async ({ appRoot, listeners }) => {
+        dashboardHtml = appRoot.innerHTML;
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        const target = actionTarget("open-notification", {
+          id: notificationId,
+        });
+        target.getAttribute = (name) =>
+          name === "href" ? "#/progress" : null;
+        await click({ target, preventDefault() {} });
+      },
+    },
+  );
+
+  assert.match(dashboardHtml, /Grade published: Final Examination/);
+  assert.match(
+    dashboardHtml,
+    new RegExp(`data-action="open-notification" data-id="${notificationId}"`),
+  );
+  assert.match(
+    dashboardHtml,
+    /aria-label="1 new feedback items\. Open Progress and Grades\."/,
+  );
+  const patchRequest = requests.find(
+    ({ init }) => init.method === "PATCH",
+  );
+  assert.ok(patchRequest);
+  assert.equal(patchRequest.init.headers["X-CSRF-Token"], "csrf-direct-feedback");
+  assert.equal(
+    requests.some(
+      ({ url, init }) =>
+        init.method === "GET" &&
+        url.searchParams.get("cursor") === "page-2",
+    ),
+    true,
+  );
+});
+
+test("faculty Action Inbox filters revision requests and grading drafts by workflow state", async () => {
+  const records = [
+    {
+      id: "31111111-1111-4111-8111-111111111111",
+      student: {
+        id: "revision-student",
+        displayName: "Revision Student",
+        email: "revision@example.test",
+      },
+      courseCode: "SCH4U",
+      assignmentId: "sch4u-m02-assignment",
+      assignmentTitle: "Safer Organic Product Reformulation Dossier",
+      moduleId: "sch4u-m02",
+      moduleNumber: 2,
+      status: "revision_requested",
+      workflowStatus: "revision_requested",
+      resubmissionAllowed: true,
+      score: 65,
+      feedback: "A draft existed before the revision request.",
+      publishedAt: null,
+      submittedAt: "2026-08-03T08:00:00.000Z",
+      receiptId: "REVISION-RECEIPT",
+    },
+    {
+      id: "32222222-2222-4222-8222-222222222222",
+      student: {
+        id: "draft-student",
+        displayName: "Draft Student",
+        email: "draft@example.test",
+      },
+      courseCode: "SCH4U",
+      assignmentId: "sch4u-m04-assignment",
+      assignmentTitle: "Reaction Systems Investigation",
+      moduleId: "sch4u-m04",
+      moduleNumber: 4,
+      status: "under_review",
+      workflowStatus: "under_review",
+      submittedAt: "2026-08-03T07:00:00.000Z",
+      receiptId: "DRAFT-RECEIPT",
+      score: 74,
+      feedback: "Unpublished grading draft.",
+      publishedAt: null,
+    },
+  ];
+  let revisionHtml = "";
+  let draftHtml = "";
+  let submissionLoads = 0;
+  await renderPortal(
+    "#/teacher/submissions",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    {
+      submissionConfig: {
+        submissionsEndpoint: "https://api.example.test/v1/submissions",
+      },
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname === "/v1/submissions") {
+          submissionLoads += 1;
+          return jsonResponse({
+            data: records,
+            page: { nextCursor: null, limit: 100 },
+          });
+        }
+        throw new Error(`Unexpected faculty inbox request: ${url.pathname}`);
+      },
+      settleTurns: 12,
+      interact: async ({ appRoot, listeners }) => {
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        await click({
+          target: actionTarget("set-teacher-status", { status: "revision" }),
+        });
+        revisionHtml = appRoot.innerHTML;
+        await click({
+          target: actionTarget("set-teacher-status", { status: "draft" }),
+        });
+        draftHtml = appRoot.innerHTML;
+      },
+    },
+  );
+
+  assert.ok(submissionLoads > 0);
+  assert.match(revisionHtml, /Revision Student/);
+  assert.doesNotMatch(revisionHtml, /Draft Student/);
+  assert.match(
+    revisionHtml,
+    /data-status="revision" aria-pressed="true"/,
+  );
+  assert.match(draftHtml, /Draft Student/);
+  assert.doesNotMatch(draftHtml, /Revision Student/);
+  assert.match(draftHtml, /data-status="draft" aria-pressed="true"/);
+});
+
+test("faculty device grading drafts are scoped to one teacher and immutable submission attempt", async () => {
+  const app = await source("public/learning/app.js");
+
+  assert.match(
+    app,
+    /return `\$\{submissionScopeKey\(\)\}:\$\{studentRecordKey\(record\.student\)\}:\$\{assignmentKey\}:\$\{submissionKey\}`/,
+  );
+  assert.match(
+    app,
+    /if \(record\) \{\s*clearGradingDraft\(record\);\s*record\.submission\.workflowStatus = "revision_requested"/,
+  );
+});
+
+test("account changes invalidate pending notification and submission responses", async () => {
+  const app = await source("public/learning/app.js");
+
+  assert.match(app, /let platformSessionGeneration = 0/);
+  assert.match(
+    app,
+    /function resetPlatformRuntime\(\) \{\s*platformSessionGeneration \+= 1/,
+  );
+  assert.match(
+    app,
+    /function platformSessionMatches\(generation, scopeKey\)/,
+  );
+  assert.match(
+    app,
+    /async function requestPlatformJson[\s\S]*?StaleSessionError[\s\S]*?saveCsrfToken/,
+  );
+  assert.match(
+    app,
+    /async function requestSubmissionEndpoint[\s\S]*?StaleSessionError[\s\S]*?if \(!response\.ok\)/,
+  );
+  assert.match(
+    app,
+    /finally \{\s*if \(platformSessionMatches\(requestGeneration, requestScopeKey\)\) \{\s*platformRuntime\.notificationsLoading = false/,
+  );
+  assert.match(
+    app,
+    /scalarLabel\(item\.submission\?\.id\) === submissionId/,
+  );
+});
+
+test("faculty can return an assignment for revision through the secure workflow", async () => {
+  const submissionId = "41111111-1111-4111-8111-111111111111";
+  const revisionMessage = "Please revise the evidence table and resubmit it.";
+  const record = {
+    id: submissionId,
+    student: {
+      id: "revision-return-student",
+      displayName: "Return Student",
+      email: "return@example.test",
+    },
+    courseCode: "SCH4U",
+    assignmentId: "sch4u-m02-assignment",
+    assignmentTitle: "Safer Organic Product Reformulation Dossier",
+    moduleId: "sch4u-m02",
+    moduleNumber: 2,
+    status: "submitted",
+    workflowStatus: "submitted",
+    submittedAt: "2026-08-03T08:00:00.000Z",
+    receiptId: "RETURN-RECEIPT",
+    messages: [],
+  };
+  let revisionRequest = null;
+  let submittedForm = null;
+  const result = await renderPortal(
+    "#/teacher/submission/return%40example.test/sch4u-m02-assignment",
+    {
+      email: "administrator@lakeforestacademy.ca",
+      displayName: "Academic Administrator",
+      role: "teacher_admin",
+    },
+    {
+      FormData: TestFormData,
+      submissionConfig: {
+        submissionsEndpoint: "https://api.example.test/v1/submissions",
+      },
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "csrf-revision-return-test",
+      },
+      fetch: async (request, init = {}) => {
+        const url = new URL(String(request));
+        if (url.pathname === "/v1/submissions") {
+          return jsonResponse({
+            data: [record],
+            page: { nextCursor: null, limit: 100 },
+          });
+        }
+        if (
+          url.pathname === `/v1/submissions/${submissionId}/return` &&
+          init.method === "POST"
+        ) {
+          revisionRequest = { url, init };
+          record.status = "revision_requested";
+          record.workflowStatus = "revision_requested";
+          record.resubmissionAllowed = true;
+          record.messages = [
+            {
+              id: "revision-message-1",
+              body: revisionMessage,
+              authorRole: "teacher_admin",
+              authorName: "Academic Administrator",
+              createdAt: "2026-08-03T09:00:00.000Z",
+              attemptNumber: 1,
+            },
+          ];
+          return jsonResponse({ data: record.messages[0] }, 201);
+        }
+        throw new Error(`Unexpected revision request: ${url.pathname}`);
+      },
+      settleTurns: 12,
+      interact: async ({ appRoot, listeners }) => {
+        assert.match(appRoot.innerHTML, /id="revision-request-form"/);
+        submittedForm = interactiveForm(
+          "revision-request-form",
+          { submission: submissionId },
+          { message: revisionMessage },
+        );
+        const submit = listeners.get("submit")?.[0];
+        assert.equal(typeof submit, "function");
+        await submit({ target: submittedForm, preventDefault() {} });
+      },
+      returnHarness: true,
+    },
+  );
+
+  assert.ok(revisionRequest);
+  assert.equal(revisionRequest.init.method, "POST");
+  assert.equal(
+    revisionRequest.init.headers["X-CSRF-Token"],
+    "csrf-revision-return-test",
+  );
+  assert.match(
+    revisionRequest.init.headers["Idempotency-Key"],
+    /^revision-request-/,
+  );
+  assert.deepEqual(JSON.parse(revisionRequest.init.body), {
+    message: revisionMessage,
+  });
+  assert.equal(submittedForm.resetCalled, true);
+  assert.match(result.html, /Revision Requested/);
+  assert.match(result.html, /Please revise the evidence table and resubmit it\./);
+});
+
+test("student and faculty assignment conversations post messages to the same secure thread", async () => {
+  const progress = Array.from({ length: 12 }, (_, moduleNumber) => ({
+    courseCode: "SCH4U",
+    moduleId: `sch4u-m${String(moduleNumber).padStart(2, "0")}`,
+    moduleKey: `SCH4U-M${String(moduleNumber).padStart(2, "0")}`,
+    moduleNumber,
+    status:
+      moduleNumber < 2
+        ? "completed"
+        : moduleNumber === 2
+          ? "in_progress"
+          : "locked",
+  }));
+  const cases = [
+    {
+      role: "student",
+      route: "#/assignment/sch4u-m02-assignment",
+      email: "thread-student@example.test",
+      message: "Could you clarify the evidence required for section two?",
+    },
+    {
+      role: "teacher_admin",
+      route:
+        "#/teacher/submission/thread-student%40example.test/sch4u-m02-assignment",
+      email: "administrator@lakeforestacademy.ca",
+      message: "Yes. Include the source table and your calculation notes.",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const submissionId =
+      testCase.role === "student"
+        ? "51111111-1111-4111-8111-111111111111"
+        : "52222222-2222-4222-8222-222222222222";
+    const record = {
+      id: submissionId,
+      student: {
+        id: "thread-student",
+        displayName: "Thread Student",
+        email: "thread-student@example.test",
+      },
+      courseCode: "SCH4U",
+      assignmentId: "sch4u-m02-assignment",
+      assignmentTitle: "Safer Organic Product Reformulation Dossier",
+      moduleId: "sch4u-m02",
+      moduleNumber: 2,
+      status: "under_review",
+      workflowStatus: "under_review",
+      submittedAt: "2026-08-03T08:00:00.000Z",
+      receiptId: `THREAD-${testCase.role}`,
+      messages: [],
+    };
+    const requests = [];
+    const platformFetch = sch4uPlatformFetch({
+      progress,
+      submission: record,
+    });
+    const result = await renderPortal(
+      testCase.route,
+      {
+        email: testCase.email,
+        displayName:
+          testCase.role === "student"
+            ? "Thread Student"
+            : "Academic Administrator",
+        role: testCase.role,
+      },
+      {
+        FormData: TestFormData,
+        platformApiConfig:
+          testCase.role === "student" ? studentPlatformApiConfig : {},
+        submissionConfig: {
+          submissionsEndpoint: "https://api.example.test/v1/submissions",
+          uploadReady: true,
+        },
+        sessionStorageSeed: {
+          "lake-forest-learning-csrf-v1": `csrf-thread-${testCase.role}`,
+        },
+        localStorageSeed:
+          testCase.role === "student"
+            ? studentStateStorage(testCase.email)
+            : {},
+        fetch: async (request, init = {}) => {
+          const url = new URL(String(request));
+          if (
+            url.pathname === `/v1/submissions/${submissionId}/messages` &&
+            init.method === "POST"
+          ) {
+            requests.push({ url, init });
+            const message = {
+              id: `message-${testCase.role}`,
+              body: testCase.message,
+              authorRole: testCase.role,
+              authorName:
+                testCase.role === "student"
+                  ? "Thread Student"
+                  : "Academic Administrator",
+              createdAt: "2026-08-03T09:00:00.000Z",
+              attemptNumber: 1,
+            };
+            record.messages.push(message);
+            return jsonResponse({ data: message }, 201);
+          }
+          return platformFetch(request, init);
+        },
+        settleTurns: 14,
+        interact: async ({ appRoot, listeners }) => {
+          assert.match(appRoot.innerHTML, /id="submission-message-form"/);
+          const form = interactiveForm(
+            "submission-message-form",
+            { submission: submissionId, role: testCase.role },
+            { body: testCase.message },
+          );
+          const submit = listeners.get("submit")?.[0];
+          assert.equal(typeof submit, "function");
+          await submit({ target: form, preventDefault() {} });
+          assert.equal(form.resetCalled, true);
+        },
+        returnHarness: true,
+      },
+    );
+
+    assert.equal(requests.length, 1, `${testCase.role} message request`);
+    assert.equal(
+      requests[0].init.headers["X-CSRF-Token"],
+      `csrf-thread-${testCase.role}`,
+    );
+    assert.match(
+      requests[0].init.headers["Idempotency-Key"],
+      /^submission-message-/,
+    );
+    assert.deepEqual(JSON.parse(requests[0].init.body), {
+      body: testCase.message,
+    });
+    assert.match(result.html, new RegExp(testCase.message.replace(/[?]/g, "\\?")));
+  }
 });
 
 test("production progress outages fail closed after Orientation", async () => {
@@ -1595,7 +2501,7 @@ test("project submissions require a new file and final-evaluation uploads omit e
   assert.match(project, /required for this assignment/);
   assert.match(
     app,
-    /\["file", "project"\]\.includes\(assignment\?\.submissionMode\)[\s\S]{0,100}!newFileName/,
+    /\(remoteExisting \|\|[\s\S]{0,120}\["file", "project"\]\.includes\(assignment\?\.submissionMode\)\)[\s\S]{0,100}!newFileName/,
   );
   assert.match(
     app,
@@ -1724,6 +2630,78 @@ test("an upload dependency outage preserves submission records but uses device d
       settleTurns: 14,
     },
   );
+  const resumableDraft = await renderPortal(
+    "#/assignment/ics4u-m11-culminating-assignment",
+    session,
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: localDraftState(
+        "resume-device-draft.pdf",
+        "2026-08-02T11:00:00.000Z",
+      ),
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname === "/v1/submissions") {
+          return jsonResponse({
+            data: [],
+            page: { nextCursor: null, limit: 100 },
+          });
+        }
+        return jsonResponse({ data: [] });
+      },
+      settleTurns: 14,
+      interact: async ({ listeners }) => {
+        const click = listeners.get("click")?.[0];
+        assert.equal(typeof click, "function");
+        await click({
+          target: actionTarget("resume-device-draft", {
+            id: "ics4u-m11-culminating-assignment",
+          }),
+        });
+      },
+    },
+  );
+  const remoteNoteOnly = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    {
+      email: "note-only@example.test",
+      firstName: "Note",
+      displayName: "Note Student",
+      role: "student",
+    },
+    {
+      submissionConfig: { submissionsEndpoint, uploadReady: true },
+      localStorageSeed: studentStateStorage("note-only@example.test"),
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname !== "/v1/submissions") {
+          return jsonResponse({ data: [] });
+        }
+        return jsonResponse({
+          data: [
+            {
+              id: "note-only-central-submission",
+              submissionId: "note-only-central-submission",
+              student: {
+                displayName: "Note Student",
+                email: "note-only@example.test",
+              },
+              courseCode: "SCH4U",
+              assignmentId: "sch4u-m02-assignment",
+              assignmentTitle: "Safer Organic Product Reformulation Dossier",
+              status: "submitted",
+              submittedAt: "2026-08-02T12:00:00.000Z",
+              receiptId: "NOTE-ONLY-CENTRAL",
+              note: "My response is recorded centrally without an attachment.",
+              files: [],
+            },
+          ],
+          page: { nextCursor: null, limit: 100 },
+        });
+      },
+      settleTurns: 14,
+    },
+  );
 
   assert.match(uploadPaused, /Device-Only Draft Mode/);
   assert.match(uploadPaused, /Save Draft on This Device/);
@@ -1732,10 +2710,18 @@ test("an upload dependency outage preserves submission records but uses device d
   assert.match(uploadConnected, /> Submit to Lotus Drive</);
   assert.match(savedDraft, /Saved on This Device/);
   assert.match(savedDraft, /culminating-project\.pdf/);
+  assert.match(newerLocal, /older-remote-version\.pdf/);
   assert.match(newerLocal, /newer-device-draft\.pdf/);
-  assert.doesNotMatch(newerLocal, /older-remote-version\.pdf/);
+  assert.match(newerLocal, /Unsent device draft retained/);
   assert.match(newerRemote, /newer-remote-version\.pdf/);
-  assert.doesNotMatch(newerRemote, /stale-device-draft\.pdf/);
+  assert.match(newerRemote, /stale-device-draft\.pdf/);
+  assert.match(resumableDraft, /Submitting this saved draft creates the first official attempt/);
+  assert.match(
+    resumableDraft,
+    /id="submission-file"[^>]*required aria-required="true"/,
+  );
+  assert.match(remoteNoteOnly, /Submitted to School Record/);
+  assert.doesNotMatch(remoteNoteOnly, /Device-Only Draft|Local Draft/);
 });
 
 test("catalog and module links expose only credential-free HTTPS destinations", async () => {
