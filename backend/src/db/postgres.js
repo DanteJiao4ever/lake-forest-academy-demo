@@ -517,19 +517,89 @@ export class PostgresRepository {
     return result.rows[0];
   }
 
+  async driveCatalogReady(rootFolderId) {
+    const result = await this.pool.query(
+      `WITH canonical_source AS (
+         SELECT id, status, verification_status, last_successful_sync_at,
+                last_verification_at, last_verification_error_code
+           FROM drive_sources
+          WHERE drive_kind = 'my_drive' AND root_folder_id = $1
+          LIMIT 1
+       ), course_counts AS (
+         SELECT material.course_code, count(*)::int AS material_count
+           FROM drive_materials material
+           JOIN canonical_source source ON source.id = material.source_id
+          WHERE material.is_active = true
+          GROUP BY material.course_code
+       )
+       SELECT
+         COALESCE((SELECT status = 'active' FROM canonical_source), false)
+           AS canonical_source_active,
+         COALESCE((SELECT verification_status FROM canonical_source), 'missing')
+           AS verification_status,
+         COALESCE((SELECT sum(material_count)::int FROM course_counts), 0)
+           AS active_material_count,
+         (SELECT count(*)::int FROM course_counts) AS course_count,
+         COALESCE((
+           SELECT count(*) = 6
+                  AND bool_and(material_count >= 10)
+                  AND array_agg(course_code ORDER BY course_code) = $2::text[]
+             FROM course_counts
+         ), false) AS minimum_course_distribution,
+         (SELECT last_successful_sync_at FROM canonical_source)
+           AS last_successful_sync_at,
+         (SELECT last_verification_at FROM canonical_source)
+           AS last_verification_at,
+         (SELECT last_verification_error_code FROM canonical_source)
+           AS last_verification_error_code`,
+      [rootFolderId, [...PLATFORM_COURSE_CODES].sort()],
+    );
+    return result.rows[0];
+  }
+
   async listCoursesForUser(user) {
     const allowed = await this.listAccessibleCourseCodes(user);
     const result = await this.pool.query(
-      `SELECT c.code, c.title, c.status,
-              count(cm.id) FILTER (WHERE cm.status = 'published')::int AS module_count,
-              COALESCE(sum(cm.estimated_credit_hours)
-                FILTER (WHERE cm.status = 'published'), 0)::numeric AS planned_hours
+      `WITH module_stats AS (
+         SELECT course_code,
+                count(*) FILTER (WHERE status = 'published')::int AS module_count,
+                COALESCE(sum(estimated_credit_hours)
+                  FILTER (WHERE status = 'published'), 0)::numeric AS planned_hours
+           FROM course_modules
+          WHERE course_code = ANY($1::text[])
+          GROUP BY course_code
+       ), material_stats AS (
+         SELECT m.course_code, count(*)::int AS material_count,
+                max(source.last_successful_sync_at) AS materials_last_synced_at
+           FROM drive_materials m
+           JOIN drive_sources source ON source.id = m.source_id
+          WHERE m.course_code = ANY($1::text[])
+            AND m.is_active = true
+            AND source.status = 'active'
+            AND source.verification_status = 'verified'
+            AND source.last_successful_sync_at IS NOT NULL
+            AND ($2::boolean OR (
+              m.audience = 'student'
+              AND NOT EXISTS (
+                SELECT 1 FROM module_resources restricted
+                 WHERE restricted.drive_material_id = m.id
+                   AND restricted.audience = 'staff'
+                   AND restricted.status = 'published'
+              )
+            ))
+          GROUP BY m.course_code
+       )
+       SELECT c.code, c.title, c.status,
+              COALESCE(module_stats.module_count, 0)::int AS module_count,
+              COALESCE(module_stats.planned_hours, 0)::numeric AS planned_hours,
+              COALESCE(material_stats.material_count, 0)::int AS material_count,
+              material_stats.materials_last_synced_at
          FROM courses c
-         LEFT JOIN course_modules cm ON cm.course_code = c.code
+         LEFT JOIN module_stats ON module_stats.course_code = c.code
+         LEFT JOIN material_stats ON material_stats.course_code = c.code
         WHERE c.code = ANY($1::text[]) AND c.status = 'active'
-        GROUP BY c.code, c.title, c.status
         ORDER BY c.code`,
-      [allowed],
+      [allowed, user.role !== "student"],
     );
     return result.rows.map((row) => ({
       code: row.code,
@@ -537,6 +607,11 @@ export class PostgresRepository {
       status: row.status,
       moduleCount: Number(row.module_count),
       plannedHours: Number(row.planned_hours),
+      materials: {
+        count: Number(row.material_count),
+        lastSyncedAt: row.materials_last_synced_at || null,
+        href: `/v1/courses/${encodeURIComponent(row.code)}/materials`,
+      },
     }));
   }
 
@@ -607,10 +682,17 @@ export class PostgresRepository {
                   r.assigned_use, r.audience
              FROM module_resources r
              LEFT JOIN drive_materials dm ON dm.id = r.drive_material_id
+             LEFT JOIN drive_sources ds ON ds.id = dm.source_id
             WHERE r.module_id = ANY($1::text[])
               AND r.status = 'published'
               AND ($2::boolean OR r.audience = 'student')
-              AND (r.drive_material_id IS NULL OR (dm.is_active = true AND ($2::boolean OR dm.audience = 'student')))
+              AND (r.drive_material_id IS NULL OR (
+                dm.is_active = true
+                AND ds.status = 'active'
+                AND ds.verification_status = 'verified'
+                AND ds.last_successful_sync_at IS NOT NULL
+                AND ($2::boolean OR dm.audience = 'student')
+              ))
             ORDER BY r.module_id, r.position`,
           [moduleIds, includeStaff],
         ),
@@ -1722,13 +1804,24 @@ export class PostgresRepository {
 
   async listMaterials(filters = {}) {
     const values = [];
-    const conditions = ["m.is_active = true"];
+    const conditions = [
+      "m.is_active = true",
+      "source.status = 'active'",
+      "source.verification_status = 'verified'",
+      "source.last_successful_sync_at IS NOT NULL",
+    ];
     const add = (value) => {
       values.push(value);
       return `$${values.length}`;
     };
     if (filters.courseCode) conditions.push(`m.course_code = ${add(filters.courseCode)}`);
-    if (filters.unitNumber) conditions.push(`m.unit_number = ${add(filters.unitNumber)}`);
+    if (filters.unitNumber !== undefined) {
+      conditions.push(`m.unit_number = ${add(filters.unitNumber)}`);
+    }
+    if (filters.moduleId) conditions.push(`m.module_id = ${add(filters.moduleId)}`);
+    if (filters.moduleNumber !== undefined) {
+      conditions.push(`module.module_number = ${add(filters.moduleNumber)}`);
+    }
     if (filters.category) conditions.push(`m.category = ${add(filters.category)}`);
     if (!filters.includeStaff) {
       conditions.push("m.audience = 'student'");
@@ -1746,11 +1839,16 @@ export class PostgresRepository {
     values.push(limit + 1, offset);
     const result = await this.pool.query(
       `SELECT m.id, m.course_code, m.unit_number, m.category, m.file_name,
-              m.mime_type, m.drive_modified_at, m.size_bytes, m.audience
-         FROM drive_materials m
-        WHERE ${conditions.join(" AND ")}
-        ORDER BY m.course_code, m.unit_number, m.category, m.file_name, m.id
-        LIMIT $${values.length - 1} OFFSET $${values.length}`,
+               m.mime_type, m.drive_modified_at, m.size_bytes, m.audience,
+               m.module_id, module.module_number,
+               source.last_successful_sync_at AS source_last_successful_sync_at
+          FROM drive_materials m
+          JOIN drive_sources source ON source.id = m.source_id
+          LEFT JOIN course_modules module ON module.id = m.module_id
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY m.course_code, module.module_number NULLS FIRST,
+                  m.unit_number NULLS FIRST, m.category, m.file_name, m.id
+         LIMIT $${values.length - 1} OFFSET $${values.length}`,
       values,
     );
     return result.rows;
@@ -1764,8 +1862,13 @@ export class PostgresRepository {
                  WHERE restricted.drive_material_id = m.id AND restricted.audience = 'staff'
                    AND restricted.status = 'published'
               ) THEN 'staff' ELSE 'student' END AS effective_audience
-         FROM drive_materials m
-        WHERE m.id = $1 AND m.is_active = true LIMIT 1`,
+          FROM drive_materials m
+          JOIN drive_sources source ON source.id = m.source_id
+         WHERE m.id = $1 AND m.is_active = true
+           AND source.status = 'active'
+           AND source.verification_status = 'verified'
+           AND source.last_successful_sync_at IS NOT NULL
+         LIMIT 1`,
       [materialId],
     );
     if (!result.rows[0]) return null;
@@ -1791,11 +1894,45 @@ export class PostgresRepository {
   async listDriveSources() {
     const result = await this.pool.query(
       `SELECT id, display_name, drive_kind, drive_id, root_folder_id,
-              root_folder_name, credential_type, status,
-              last_successful_sync_at, created_at
+              root_folder_name, credential_type, configuration_origin, status,
+              verification_status, last_verification_at,
+              last_verification_error_code, last_successful_sync_at, created_at
          FROM drive_sources ORDER BY created_at`,
     );
     return result.rows;
+  }
+
+  async ensureSystemDriveSource({ rootFolderId, rootFolderName }) {
+    const result = await this.pool.query(
+      `INSERT INTO drive_sources
+        (display_name, drive_kind, drive_id, root_folder_id, root_folder_name,
+         credential_type, credential_ref, status, created_by,
+         configuration_origin, verification_status)
+       VALUES ($1, 'my_drive', NULL, $2, $3, 'service_account',
+               'adc://runtime-service-account', 'active', NULL,
+               'system_config', 'pending')
+       ON CONFLICT (drive_kind, root_folder_id) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         root_folder_name = EXCLUDED.root_folder_name,
+         credential_type = EXCLUDED.credential_type,
+         credential_ref = EXCLUDED.credential_ref,
+         configuration_origin = 'system_config',
+         created_by = NULL,
+         updated_at = now()
+       RETURNING *`,
+      ["Configured Grade 12 Six-Course Library", rootFolderId, rootFolderName],
+    );
+    return result.rows[0];
+  }
+
+  async getCanonicalDriveSource(rootFolderId) {
+    const result = await this.pool.query(
+      `SELECT * FROM drive_sources
+        WHERE drive_kind = 'my_drive' AND root_folder_id = $1
+        LIMIT 1`,
+      [rootFolderId],
+    );
+    return result.rows[0] || null;
   }
 
   async getDriveSource(sourceId) {
@@ -1811,7 +1948,29 @@ export class PostgresRepository {
     return result.rows[0] || null;
   }
 
-  async createSyncRun({ sourceId, mode, idempotencyKey, actorId }) {
+  async createSyncRun({
+    sourceId,
+    mode,
+    idempotencyKey,
+    actorId,
+    triggerType = "manual",
+  }) {
+    const allowedTriggerTypes = new Set([
+      "manual", "scheduled", "webhook", "system_bootstrap",
+    ]);
+    if (!allowedTriggerTypes.has(triggerType)) {
+      throw new ApiError(422, "INVALID_SYNC_TRIGGER", "The sync trigger is invalid.");
+    }
+    if (
+      (triggerType === "system_bootstrap" && actorId != null) ||
+      (triggerType !== "system_bootstrap" && actorId == null)
+    ) {
+      throw new ApiError(
+        422,
+        "INVALID_SYNC_ACTOR",
+        "The sync actor does not match the trigger type.",
+      );
+    }
     await this.pool.query(
       `UPDATE drive_sync_runs
           SET status = 'failed', finished_at = now(),
@@ -1825,18 +1984,26 @@ export class PostgresRepository {
           )`,
       [sourceId, 5, 30],
     );
-    if (idempotencyKey) {
-      const replay = await this.pool.query(
-        "SELECT * FROM drive_sync_runs WHERE source_id = $1 AND idempotency_key = $2",
-        [sourceId, idempotencyKey],
-      );
-      if (replay.rows[0]) return replay.rows[0];
+    let effectiveIdempotencyKey = idempotencyKey || null;
+    if (effectiveIdempotencyKey) {
+      while (true) {
+        const replay = await this.pool.query(
+          "SELECT * FROM drive_sync_runs WHERE source_id = $1 AND idempotency_key = $2",
+          [sourceId, effectiveIdempotencyKey],
+        );
+        if (!replay.rows[0]) break;
+        if (triggerType !== "system_bootstrap" || replay.rows[0].status !== "failed") {
+          return replay.rows[0];
+        }
+        effectiveIdempotencyKey = `system-bootstrap-retry:${replay.rows[0].id}`;
+      }
     }
     try {
       const result = await this.pool.query(
-        `INSERT INTO drive_sync_runs (source_id, mode, idempotency_key, requested_by)
-         VALUES ($1,$2,$3,$4) RETURNING *`,
-        [sourceId, mode, idempotencyKey || null, actorId],
+        `INSERT INTO drive_sync_runs
+          (source_id, mode, idempotency_key, requested_by, trigger_type)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [sourceId, mode, effectiveIdempotencyKey, actorId, triggerType],
       );
       return result.rows[0];
     } catch (error) {
@@ -1881,13 +2048,14 @@ export class PostgresRepository {
       for (const item of records) {
         const result = await client.query(
           `INSERT INTO drive_materials
-            (source_id, drive_file_id, parent_folder_id, course_code, unit_number,
+            (source_id, drive_file_id, parent_folder_id, course_code, module_id, unit_number,
              category, file_name, relative_path, mime_type, drive_web_view_link,
-             drive_modified_at, size_bytes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+              drive_modified_at, size_bytes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
            ON CONFLICT (source_id, drive_file_id) DO UPDATE SET
              parent_folder_id = EXCLUDED.parent_folder_id,
              course_code = EXCLUDED.course_code,
+             module_id = EXCLUDED.module_id,
              unit_number = EXCLUDED.unit_number,
              category = EXCLUDED.category,
              file_name = EXCLUDED.file_name,
@@ -1899,8 +2067,9 @@ export class PostgresRepository {
              is_active = true, deactivated_at = NULL, last_seen_at = now(), updated_at = now()
            RETURNING (xmax = 0) AS inserted`,
           [run.source_id, item.driveFileId, item.parentFolderId, item.courseCode,
-            item.unitNumber, item.category, item.fileName, item.relativePath,
-            item.mimeType, item.webViewLink || null, item.modifiedAt,
+            item.moduleId ?? null, item.unitNumber ?? null, item.category,
+            item.fileName, item.relativePath, item.mimeType,
+            item.webViewLink || null, item.modifiedAt,
             item.sizeBytes ?? null],
         );
         if (result.rows[0].inserted) created += 1;
@@ -1921,7 +2090,10 @@ export class PostgresRepository {
         [run.id, records.length, created, updated, deactivated.rowCount, skippedCount],
       );
       await client.query(
-        `UPDATE drive_sources SET last_sync_at = now(), last_successful_sync_at = now(), updated_at = now()
+        `UPDATE drive_sources
+            SET last_sync_at = now(), last_successful_sync_at = now(),
+                verification_status = 'verified', last_verification_at = now(),
+                last_verification_error_code = NULL, updated_at = now()
          WHERE id = $1`,
         [run.source_id],
       );
@@ -1936,9 +2108,17 @@ export class PostgresRepository {
 
   async failSync(runId, code, message) {
     await this.pool.query(
-      `UPDATE drive_sync_runs SET status = 'failed', finished_at = now(),
-              error_code = $2, error_message = $3
-       WHERE id = $1 AND status IN ('queued', 'running')`,
+      `WITH failed_run AS (
+         UPDATE drive_sync_runs SET status = 'failed', finished_at = now(),
+                error_code = $2, error_message = $3
+          WHERE id = $1 AND status IN ('queued', 'running')
+          RETURNING source_id
+       )
+       UPDATE drive_sources source
+          SET verification_status = 'failed', last_verification_at = now(),
+              last_verification_error_code = $2, updated_at = now()
+         FROM failed_run
+        WHERE source.id = failed_run.source_id`,
       [runId, code, message],
     );
   }

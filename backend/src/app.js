@@ -18,6 +18,15 @@ import { MaterialSyncService } from "./services/material-sync.js";
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const categories = ["Lessons", "Resources", "Assignments", "Assessments"];
 const launchCourseCodes = ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
+const materialFilterSchema = z.object({
+  courseCode: courseCodeSchema.optional(),
+  moduleId: assignmentIdSchema.optional(),
+  moduleNumber: z.coerce.number().int().min(0).max(11).optional(),
+  unitNumber: z.coerce.number().int().min(1).max(999).optional(),
+  category: z.enum(categories).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 function assertActivityCompletionPolicy(activity, status, evidence) {
   const policy = activity?.completionCriteria;
@@ -288,10 +297,43 @@ function sourceResponse(row) {
     rootFolderId: row.root_folder_id ?? row.rootFolderId,
     rootFolderName: row.root_folder_name ?? row.rootFolderName,
     credentialType: row.credential_type ?? row.credentialType,
+    ...((row.configuration_origin ?? row.configurationOrigin)
+      ? {
+          configurationOrigin:
+            row.configuration_origin ?? row.configurationOrigin,
+        }
+      : {}),
+    ...((row.verification_status ?? row.verificationStatus)
+      ? {
+          verificationStatus:
+            row.verification_status ?? row.verificationStatus,
+          lastVerificationAt:
+            row.last_verification_at ?? row.lastVerificationAt ?? null,
+        }
+      : {}),
     status: row.status,
     lastSuccessfulSyncAt:
       row.last_successful_sync_at ?? row.lastSuccessfulSyncAt ?? null,
     createdAt: row.created_at ?? row.createdAt,
+  };
+}
+
+function materialResponse(row) {
+  const rawSize = row.size_bytes ?? row.sizeBytes;
+  return {
+    id: row.id,
+    courseCode: row.course_code ?? row.courseCode,
+    moduleId: row.module_id ?? row.moduleId ?? null,
+    moduleNumber: row.module_number ?? row.moduleNumber ?? null,
+    unitNumber: row.unit_number ?? row.unitNumber ?? null,
+    category: row.category,
+    name: row.file_name ?? row.name,
+    mimeType: row.mime_type ?? row.mimeType,
+    sizeBytes: rawSize == null ? null : Number(rawSize),
+    driveModifiedAt: row.drive_modified_at ?? row.driveModifiedAt,
+    lastSyncedAt:
+      row.source_last_successful_sync_at ?? row.sourceLastSuccessfulSyncAt ?? null,
+    openUrl: `/v1/materials/${row.id}/open`,
   };
 }
 
@@ -446,6 +488,42 @@ export async function createApp({ config, repository, drive, scanner, logger = f
     }
   }
 
+  async function materialPage(request, forcedCourseCode = null) {
+    const query = parse(
+      materialFilterSchema,
+      request.query || {},
+      "INVALID_MATERIAL_FILTER",
+    );
+    const allowedCourseCodes = forcedCourseCode
+      ? [forcedCourseCode]
+      : await repository.listAccessibleCourseCodes(request.auth.user);
+    if (forcedCourseCode) {
+      await requireCourseAccess(request.auth.user, forcedCourseCode);
+    } else if (query.courseCode && !allowedCourseCodes.includes(query.courseCode)) {
+      throw new ApiError(
+        403,
+        "COURSE_ACCESS_DENIED",
+        "You cannot view materials for this course.",
+      );
+    }
+    const offset = parseCursor(query.cursor);
+    const records = await repository.listMaterials({
+      ...query,
+      courseCode: forcedCourseCode || query.courseCode,
+      offset,
+      allowedCourseCodes,
+      includeStaff: request.auth.user.role !== "student",
+    });
+    const hasMore = records.length > query.limit;
+    return {
+      data: records.slice(0, query.limit).map(materialResponse),
+      page: {
+        nextCursor: nextCursor(offset, query.limit, hasMore),
+        limit: query.limit,
+      },
+    };
+  }
+
   async function issueSession(reply, user) {
     const token = opaqueToken();
     const sessionId = randomUUID();
@@ -499,6 +577,94 @@ export async function createApp({ config, repository, drive, scanner, logger = f
       drive.ready(config.submissionTargetRootId),
     ]);
     return { status: "ready" };
+  });
+  app.get("/health/drive-catalog-ready", async (request) => {
+    await repository.ready();
+    if (!config.curriculumDriveRootId) {
+      throw new ApiError(
+        503,
+        "CURRICULUM_DRIVE_NOT_CONFIGURED",
+        "The curriculum Drive source has not been configured.",
+      );
+    }
+    await drive.curriculumReady(
+      config.curriculumDriveRootId,
+      config.curriculumDriveRootName,
+    );
+    const counts = await repository.driveCatalogReady(
+      config.curriculumDriveRootId,
+    );
+    const canonicalSourceActive = Boolean(
+      counts.canonical_source_active ?? counts.canonicalSourceActive,
+    );
+    const verificationStatus =
+      counts.verification_status ?? counts.verificationStatus ?? "missing";
+    const activeMaterialCount = Number(
+      counts.active_material_count ?? counts.activeMaterialCount ?? 0,
+    );
+    const courseCount = Number(counts.course_count ?? counts.courseCount ?? 0);
+    const minimumCourseDistribution = Boolean(
+      counts.minimum_course_distribution ?? counts.minimumCourseDistribution,
+    );
+    const lastSyncedAt =
+      counts.last_successful_sync_at ?? counts.lastSuccessfulSyncAt ?? null;
+    const lastVerificationAt =
+      counts.last_verification_at ?? counts.lastVerificationAt ?? null;
+    const lastVerificationErrorCode =
+      counts.last_verification_error_code ??
+      counts.lastVerificationErrorCode ??
+      null;
+    if (
+      !canonicalSourceActive ||
+      verificationStatus !== "verified" ||
+      !lastSyncedAt ||
+      activeMaterialCount < 60 ||
+      courseCount !== 6 ||
+      !minimumCourseDistribution
+    ) {
+      const state = !canonicalSourceActive
+        ? "source_unavailable"
+        : verificationStatus === "failed"
+          ? "verification_failed"
+          : verificationStatus !== "verified" || !lastSyncedAt
+            ? "bootstrap_pending"
+            : "catalog_incomplete";
+      request.log.warn(
+        {
+          state,
+          verificationStatus,
+          activeMaterialCount,
+          courseCount,
+          minimumCourseDistribution,
+        },
+        "Drive course catalog is incomplete",
+      );
+      throw new ApiError(
+        503,
+        "DRIVE_CATALOG_NOT_READY",
+        "The Drive course catalog is bootstrapped but has not passed runtime verification.",
+        {
+          state,
+          verificationStatus,
+          activeMaterialCount,
+          courseCount,
+          minimumCourseDistribution,
+          lastVerificationAt,
+          lastVerificationErrorCode,
+        },
+      );
+    }
+    return {
+      status: "ready",
+      driveCatalog: {
+        verificationStatus,
+        activeMaterialCount,
+        courseCount,
+        minimumCourseDistribution,
+        lastSyncedAt,
+        lastVerificationAt,
+      },
+    };
   });
 
   const registerSchema = z
@@ -642,6 +808,19 @@ export async function createApp({ config, repository, drive, scanner, logger = f
           includeStaff: request.auth.user.role !== "student",
         }),
       };
+    },
+  );
+
+  app.get(
+    "/v1/courses/:courseCode/materials",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => {
+      const courseCode = parse(
+        courseCodeSchema,
+        request.params.courseCode,
+        "INVALID_COURSE_CODE",
+      );
+      return materialPage(request, courseCode);
     },
   );
 
@@ -1351,43 +1530,7 @@ export async function createApp({ config, repository, drive, scanner, logger = f
   app.get(
     "/v1/materials",
     { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
-    async (request) => {
-      const query = parse(
-        z.object({
-          courseCode: courseCodeSchema.optional(),
-          unitNumber: z.coerce.number().int().min(1).max(999).optional(),
-          category: z.enum(categories).optional(),
-          cursor: z.string().optional(),
-          limit: z.coerce.number().int().min(1).max(100).default(50),
-        }),
-        request.query || {},
-        "INVALID_MATERIAL_FILTER",
-      );
-      const allowedCourseCodes = await repository.listAccessibleCourseCodes(request.auth.user);
-      if (query.courseCode && !allowedCourseCodes.includes(query.courseCode)) {
-        throw new ApiError(403, "COURSE_ACCESS_DENIED", "You cannot view materials for this course.");
-      }
-      const offset = parseCursor(query.cursor);
-      const records = await repository.listMaterials({
-        ...query,
-        offset,
-        allowedCourseCodes,
-        includeStaff: request.auth.user.role !== "student",
-      });
-      const hasMore = records.length > query.limit;
-      const data = records.slice(0, query.limit).map((row) => ({
-        id: row.id,
-        courseCode: row.course_code ?? row.courseCode,
-        unitNumber: row.unit_number ?? row.unitNumber,
-        category: row.category,
-        name: row.file_name ?? row.name,
-        mimeType: row.mime_type ?? row.mimeType,
-        sizeBytes: Number(row.size_bytes ?? row.sizeBytes ?? 0) || null,
-        driveModifiedAt: row.drive_modified_at ?? row.driveModifiedAt,
-        openUrl: `/v1/materials/${row.id}/open`,
-      }));
-      return { data, page: { nextCursor: nextCursor(offset, query.limit, hasMore), limit: query.limit } };
-    },
+    async (request) => materialPage(request),
   );
 
   app.get(
@@ -1465,50 +1608,88 @@ export async function createApp({ config, repository, drive, scanner, logger = f
   );
 
   const materialSync =
-    syncService || new MaterialSyncService({ repository, drive, logger: app.log });
+    syncService || new MaterialSyncService({
+      repository,
+      drive,
+      logger: app.log,
+      canonicalRootFolderId: config.curriculumDriveRootId,
+    });
+
+  async function startMaterialSync(request, reply, source) {
+    const input = parse(
+      z.object({ mode: z.enum(["incremental", "full"]).default("incremental") }),
+      request.body || {},
+      "INVALID_SYNC_MODE",
+    );
+    if (source.status !== "active") {
+      throw new ApiError(
+        409,
+        "SOURCE_DISABLED",
+        "Enable the Drive source before syncing.",
+      );
+    }
+    const run = await repository.createSyncRun({
+      sourceId: source.id,
+      mode: input.mode,
+      idempotencyKey:
+        idempotencyKey(request, { required: false }) || request.id,
+      actorId: request.auth.user.id,
+    });
+    const completed = await materialSync.process(run.id);
+    if (!completed) {
+      throw new ApiError(
+        409,
+        "SYNC_RUN_UNAVAILABLE",
+        "The Drive sync run could not be started.",
+      );
+    }
+    if (completed.status === "failed") {
+      throw new ApiError(
+        502,
+        completed.error_code || completed.errorCode || "DRIVE_SYNC_FAILED",
+        completed.error_message ||
+          completed.errorMessage ||
+          "The configured Drive source could not be synchronized.",
+        {
+          runId: completed.id,
+          statusUrl: `/v1/admin/drive/sync-runs/${completed.id}`,
+        },
+      );
+    }
+    return reply.status(200).send({
+      data: {
+        ...syncRunResponse(completed),
+        statusUrl: `/v1/admin/drive/sync-runs/${completed.id}`,
+      },
+    });
+  }
+
+  app.post(
+    "/v1/admin/drive/sync",
+    { preHandler: [requireRoles("teacher_admin"), requireCsrf] },
+    async (request, reply) => {
+      const source = await repository.getCanonicalDriveSource(
+        config.curriculumDriveRootId,
+      );
+      if (!source) {
+        throw new ApiError(
+          503,
+          "CANONICAL_DRIVE_SOURCE_UNAVAILABLE",
+          "The canonical Drive course source has not been configured.",
+        );
+      }
+      return startMaterialSync(request, reply, source);
+    },
+  );
 
   app.post(
     "/v1/admin/drive/sources/:sourceId/sync",
     { preHandler: [requireRoles("teacher_admin"), requireCsrf] },
     async (request, reply) => {
       const sourceId = parse(uuidSchema, request.params.sourceId, "INVALID_SOURCE_ID");
-      const input = parse(z.object({ mode: z.enum(["incremental", "full"]).default("incremental") }), request.body || {}, "INVALID_SYNC_MODE");
       const source = await repository.getDriveSource(sourceId);
       if (!source) throw new ApiError(404, "SOURCE_NOT_FOUND", "The Drive source was not found.");
-      if (source.status !== "active") throw new ApiError(409, "SOURCE_DISABLED", "Enable the Drive source before syncing.");
-      const run = await repository.createSyncRun({
-        sourceId,
-        mode: input.mode,
-        idempotencyKey: idempotencyKey(request, { required: false }) || request.id,
-        actorId: request.auth.user.id,
-      });
-      const completed = await materialSync.process(run.id);
-      if (!completed) {
-        throw new ApiError(
-          409,
-          "SYNC_RUN_UNAVAILABLE",
-          "The Drive sync run could not be started.",
-        );
-      }
-      if (completed.status === "failed") {
-        throw new ApiError(
-          502,
-          completed.error_code || completed.errorCode || "DRIVE_SYNC_FAILED",
-          completed.error_message ||
-            completed.errorMessage ||
-            "The configured Drive source could not be synchronized.",
-          {
-            runId: completed.id,
-            statusUrl: `/v1/admin/drive/sync-runs/${completed.id}`,
-          },
-        );
-      }
-      reply.status(200).send({
-        data: {
-          ...syncRunResponse(completed),
-          statusUrl: `/v1/admin/drive/sync-runs/${completed.id}`,
-        },
-      });
+      return startMaterialSync(request, reply, source);
     },
   );
 

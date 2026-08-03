@@ -28,6 +28,26 @@ function fakeDriveClient() {
     ]],
     ["coursebook", [
       { id: "lesson", name: "Unit 3 Reaction Rates.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "120" },
+      { id: "module-00", name: "Module 00", mimeType: folder },
+      { id: "module-11", name: "Module 11", mimeType: folder },
+      { id: "module-12", name: "Module 12", mimeType: folder },
+      { id: "unit-10", name: "Unit 10", mimeType: folder },
+      { id: "unit-11", name: "Unit 11", mimeType: folder },
+    ]],
+    ["module-00", [
+      { id: "orientation", name: "Orientation.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "10" },
+    ]],
+    ["module-11", [
+      { id: "final-module", name: "Final.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "10" },
+    ]],
+    ["module-12", [
+      { id: "invalid-module", name: "Out of range.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "10" },
+    ]],
+    ["unit-10", [
+      { id: "valid-unit", name: "Valid unit.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "10" },
+    ]],
+    ["unit-11", [
+      { id: "invalid-unit", name: "Out of range unit.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "10" },
     ]],
     ["assessment", [
       { id: "assessment-file", name: "Final Evaluation.pdf", mimeType: "application/pdf", modifiedTime: "2026-07-20T00:00:00Z", size: "200" },
@@ -48,6 +68,24 @@ function fakeDriveClient() {
 }
 
 describe("Google Drive curriculum adapter", () => {
+  test("checks curriculum root readability with a curriculum-specific error", async () => {
+    const readable = new GoogleDriveStore(fakeDriveClient());
+    assert.equal(
+      await readable.curriculumReady(
+        "root",
+        "Lotus Academy Formal Course Pilots - Text Based",
+      ),
+      true,
+    );
+    const unreadable = new GoogleDriveStore({
+      files: { async get() { throw new Error("permission denied"); } },
+    });
+    await assert.rejects(
+      unreadable.curriculumReady("root", "Curriculum Root"),
+      (error) => error.code === "CURRICULUM_DRIVE_UNAVAILABLE",
+    );
+  });
+
   test("indexes only Student_Materials from the real Lotus hierarchy", async () => {
     const drive = new GoogleDriveStore(fakeDriveClient());
     const result = await drive.listCurriculumFiles({
@@ -55,15 +93,22 @@ describe("Google Drive curriculum adapter", () => {
       root_folder_name: "Lotus Academy Formal Course Pilots - Text Based",
       drive_id: null,
     });
-    assert.equal(result.records.length, 3);
+    assert.equal(result.records.length, 8);
     assert.equal(result.records.every((item) => item.courseCode === "SCH4U"), true);
+    assert.deepEqual(result.discoveredCourseCodes, ["SCH4U"]);
+    assert.deepEqual(result.materialCourseCodes, ["SCH4U"]);
     const lesson = result.records.find((item) => item.driveFileId === "lesson");
     assert.equal(lesson.unitNumber, 3);
     assert.equal(lesson.category, "Lessons");
     assert.match(lesson.relativePath, /SCH4U - Chemistry\/Student_Materials\/01 Coursebook/);
     assert.equal(result.records.find((item) => item.driveFileId === "assessment-file").category, "Assessments");
-    assert.equal(result.records.find((item) => item.driveFileId === "assessment-file").unitNumber, 1);
+    assert.equal(result.records.find((item) => item.driveFileId === "assessment-file").unitNumber, null);
     assert.equal(result.records.find((item) => item.driveFileId === "reading-file").category, "Resources");
+    assert.equal(result.records.find((item) => item.driveFileId === "orientation").moduleId, "sch4u-m00");
+    assert.equal(result.records.find((item) => item.driveFileId === "final-module").moduleId, "sch4u-m11");
+    assert.equal(result.records.find((item) => item.driveFileId === "invalid-module").moduleId, null);
+    assert.equal(result.records.find((item) => item.driveFileId === "valid-unit").unitNumber, 10);
+    assert.equal(result.records.find((item) => item.driveFileId === "invalid-unit").unitNumber, null);
     assert.equal(result.records.some((item) => item.driveFileId === "zip"), false);
     assert.equal(result.records.some((item) => item.driveFileId === "form"), false);
     assert.equal(result.records.some((item) => item.driveFileId === "answer-key"), false);

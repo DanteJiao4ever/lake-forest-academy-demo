@@ -7,8 +7,11 @@ const catalogUrl = new URL("../catalog/lfa-course-catalog.json", import.meta.url
 const schemaUrl = new URL("../migrations/003_platform_catalog_schema.sql", import.meta.url);
 const seedUrl = new URL("../migrations/004_lotus_grade12_catalog_v1.sql", import.meta.url);
 const guardsUrl = new URL("../migrations/005_platform_catalog_guards_v1.sql", import.meta.url);
+const driveCatalogUrl = new URL("../migrations/006_drive_course_catalog_v1.sql", import.meta.url);
 const appUrl = new URL("../src/app.js", import.meta.url);
 const postgresUrl = new URL("../src/db/postgres.js", import.meta.url);
+const serverUrl = new URL("../src/server.js", import.meta.url);
+const configUrl = new URL("../src/config.js", import.meta.url);
 
 const immutableMigrationDigests = {
   "003_platform_catalog_schema.sql":
@@ -243,5 +246,33 @@ describe("course catalog migration contract", () => {
       postgres,
       /if \(!result\.rowCount\) \{[\s\S]+?"ACTIVITY_COMPLETION_LOCKED"/,
     );
+  });
+
+  test("keeps Drive bootstrap metadata separate from runtime verification", async () => {
+    const migration = await readFile(driveCatalogUrl, "utf8");
+    assert.match(migration, /ADD COLUMN module_id text REFERENCES course_modules/);
+    assert.match(migration, /ALTER COLUMN unit_number DROP NOT NULL/);
+    assert.match(migration, /ADD COLUMN configuration_origin text NOT NULL/);
+    assert.match(migration, /configuration_origin = 'system_config'/);
+    assert.match(migration, /verification_status IN \('pending', 'verified', 'failed'\)/);
+    assert.match(migration, /trigger_type IN \('manual', 'scheduled', 'webhook', 'system_bootstrap'\)/);
+    assert.match(migration, /system_bootstrap' AND requested_by IS NULL/);
+    assert.doesNotMatch(migration, /INSERT INTO drive_materials/i);
+    assert.doesNotMatch(migration, /INSERT INTO drive_sources/i);
+    assert.doesNotMatch(migration, /https:\/\/drive\.google\.com/i);
+  });
+
+  test("wires production bootstrap to runtime configuration and an actorless audit trigger", async () => {
+    const [server, config, postgres] = await Promise.all([
+      readFile(serverUrl, "utf8"),
+      readFile(configUrl, "utf8"),
+      readFile(postgresUrl, "utf8"),
+    ]);
+    assert.match(config, /env\.CURRICULUM_DRIVE_ROOT_ID/);
+    assert.match(server, /await bootstrapCanonicalDriveCatalog\(\{/);
+    assert.match(server, /rootFolderId: config\.curriculumDriveRootId/);
+    assert.match(postgres, /triggerType = "manual"/);
+    assert.match(postgres, /requested_by, trigger_type/);
+    assert.match(postgres, /actorId, triggerType/);
   });
 });

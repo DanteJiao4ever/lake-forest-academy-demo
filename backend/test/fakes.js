@@ -92,18 +92,47 @@ export class FakeRepository {
     this.materials = [
       {
         id: randomUUID(),
+        source_id: "00000000-0000-4000-8000-000000000006",
         course_code: "MHF4U",
+        module_id: "mhf4u-m02",
+        module_number: 2,
         unit_number: 2,
         category: "Lessons",
         file_name: "Quadratic models.pdf",
         mime_type: "application/pdf",
         size_bytes: 42,
         drive_modified_at: "2026-07-20T10:00:00.000Z",
+        source_last_successful_sync_at: "2026-08-03T00:00:00.000Z",
         drive_file_id: "drive-material-1",
         audience: "student",
       },
     ];
-    this.sources = [];
+    this.sources = [{
+      id: "00000000-0000-4000-8000-000000000006",
+      display_name: "Lotus Grade 12 Six-Course Library",
+      drive_kind: "my_drive",
+      drive_id: null,
+      root_folder_id: "canonical-root-test",
+      root_folder_name: "Lotus Academy Formal Course Pilots - Text Based",
+      credential_type: "service_account",
+      credential_ref: "adc://runtime-service-account",
+      configuration_origin: "system_config",
+      status: "active",
+      verification_status: "verified",
+      last_verification_at: "2026-08-03T00:00:00.000Z",
+      last_successful_sync_at: "2026-08-03T00:00:00.000Z",
+      created_at: "2026-08-03T00:00:00.000Z",
+    }];
+    this.driveCatalogStats = {
+      canonical_source_active: true,
+      verification_status: "verified",
+      active_material_count: 60,
+      course_count: 6,
+      minimum_course_distribution: true,
+      last_successful_sync_at: "2026-08-03T00:00:00.000Z",
+      last_verification_at: "2026-08-03T00:00:00.000Z",
+      last_verification_error_code: null,
+    };
     this.targets = [];
     this.syncRuns = [];
   }
@@ -195,16 +224,44 @@ export class FakeRepository {
     };
   }
 
+  async driveCatalogReady() {
+    return { ...this.driveCatalogStats };
+  }
+
+  materialSourceIsReadable(material) {
+    const source = material.source_id
+      ? this.sources.find((item) => item.id === material.source_id)
+      : this.sources[0];
+    return Boolean(
+      source &&
+      source.status === "active" &&
+      source.verification_status === "verified" &&
+      source.last_successful_sync_at,
+    );
+  }
+
   async listCoursesForUser(user) {
     const allowed = await this.listAccessibleCourseCodes(user);
     return allowed.map((code) => {
       const course = this.courseCatalog.get(code);
       const modules = this.modules.filter((item) => item.courseCode === code);
+      const readableMaterials = this.materials.filter(
+        (item) =>
+          item.course_code === code &&
+          this.materialSourceIsReadable(item) &&
+          (user.role !== "student" || item.audience === "student"),
+      );
       return course
         ? {
             ...course,
             moduleCount: modules.length,
             plannedHours: modules.reduce((total, item) => total + item.estimatedCreditHours, 0),
+            materials: {
+              count: readableMaterials.length,
+              lastSyncedAt: readableMaterials[0]
+                ?.source_last_successful_sync_at || null,
+              href: `/v1/courses/${encodeURIComponent(code)}/materials`,
+            },
           }
         : null;
     }).filter(Boolean);
@@ -728,13 +785,187 @@ export class FakeRepository {
   }
 
   async listMaterials(filters) {
-    return this.materials.filter(
-      (item) => filters.allowedCourseCodes.includes(item.course_code) &&
+    let records = this.materials.filter(
+      (item) =>
+        this.materialSourceIsReadable(item) &&
+        filters.allowedCourseCodes.includes(item.course_code) &&
         (filters.includeStaff || item.audience !== "staff"),
     );
+    if (filters.courseCode) {
+      records = records.filter((item) => item.course_code === filters.courseCode);
+    }
+    if (filters.moduleId) {
+      records = records.filter((item) => item.module_id === filters.moduleId);
+    }
+    if (filters.moduleNumber !== undefined) {
+      records = records.filter(
+        (item) => item.module_number === filters.moduleNumber,
+      );
+    }
+    if (filters.unitNumber !== undefined) {
+      records = records.filter((item) => item.unit_number === filters.unitNumber);
+    }
+    if (filters.category) {
+      records = records.filter((item) => item.category === filters.category);
+    }
+    const offset = filters.offset || 0;
+    const limit = filters.limit || 50;
+    return records.slice(offset, offset + limit + 1);
   }
-  async getMaterial(id) { return this.materials.find((item) => item.id === id) || null; }
+  async getMaterial(id) {
+    return this.materials.find(
+      (item) => item.id === id && this.materialSourceIsReadable(item),
+    ) || null;
+  }
   async recordAudit(event) { this.audit.push(event); }
+
+  async createDriveSource(input, actorId) {
+    const row = {
+      id: randomUUID(),
+      display_name: input.displayName,
+      drive_kind: input.driveKind,
+      drive_id: input.driveId || null,
+      root_folder_id: input.rootFolderId,
+      root_folder_name: input.rootFolderName,
+      credential_type: input.credentialType,
+      credential_ref: input.credentialRef,
+      configuration_origin: "admin_api",
+      status: "active",
+      verification_status: "pending",
+      last_verification_at: null,
+      created_by: actorId,
+      created_at: new Date().toISOString(),
+    };
+    this.sources.push(row);
+    return row;
+  }
+
+  async listDriveSources() { return [...this.sources]; }
+
+  async ensureSystemDriveSource({ rootFolderId, rootFolderName }) {
+    let source = this.sources.find(
+      (item) => item.drive_kind === "my_drive" && item.root_folder_id === rootFolderId,
+    );
+    if (!source) {
+      source = {
+        id: randomUUID(),
+        display_name: "Configured Grade 12 Six-Course Library",
+        drive_kind: "my_drive",
+        drive_id: null,
+        root_folder_id: rootFolderId,
+        root_folder_name: rootFolderName,
+        credential_type: "service_account",
+        credential_ref: "adc://runtime-service-account",
+        configuration_origin: "system_config",
+        status: "active",
+        verification_status: "pending",
+        last_verification_at: null,
+        last_successful_sync_at: null,
+      };
+      this.sources.push(source);
+    }
+    return source;
+  }
+
+  async getCanonicalDriveSource(rootFolderId) {
+    return this.sources.find(
+      (source) =>
+        source.drive_kind === "my_drive" &&
+        source.root_folder_id === rootFolderId,
+    ) || null;
+  }
+
+  async getDriveSource(sourceId) {
+    return this.sources.find((source) => source.id === sourceId) || null;
+  }
+
+  async updateDriveSourceStatus(sourceId, status) {
+    const source = await this.getDriveSource(sourceId);
+    if (!source) return null;
+    source.status = status;
+    return source;
+  }
+
+  async createSyncRun({
+    sourceId,
+    mode,
+    idempotencyKey,
+    actorId,
+    triggerType = "manual",
+  }) {
+    let effectiveIdempotencyKey = idempotencyKey;
+    let replay = this.syncRuns.find(
+      (run) =>
+        run.source_id === sourceId &&
+        run.idempotency_key === effectiveIdempotencyKey,
+    );
+    while (replay && triggerType === "system_bootstrap" && replay.status === "failed") {
+      effectiveIdempotencyKey = `system-bootstrap-retry:${replay.id}`;
+      replay = this.syncRuns.find(
+        (run) =>
+          run.source_id === sourceId &&
+          run.idempotency_key === effectiveIdempotencyKey,
+      );
+    }
+    if (replay) return replay;
+    const run = {
+      id: randomUUID(),
+      source_id: sourceId,
+      mode,
+      idempotency_key: effectiveIdempotencyKey,
+      requested_by: actorId,
+      trigger_type: triggerType,
+      status: "queued",
+      discovered_file_count: 0,
+      created_file_count: 0,
+      updated_file_count: 0,
+      deactivated_file_count: 0,
+      skipped_file_count: 0,
+    };
+    this.syncRuns.push(run);
+    return run;
+  }
+
+  async getSyncRun(runId) {
+    return this.syncRuns.find((run) => run.id === runId) || null;
+  }
+
+  async markSyncRunning(runId) {
+    const run = await this.getSyncRun(runId);
+    if (!run || run.status !== "queued") return null;
+    run.status = "running";
+    run.started_at = new Date().toISOString();
+    return run;
+  }
+
+  async finishMaterialSync(run, records, skippedCount = 0) {
+    const stored = await this.getSyncRun(run.id);
+    stored.status = "succeeded";
+    stored.discovered_file_count = records.length;
+    stored.created_file_count = records.length;
+    stored.skipped_file_count = skippedCount;
+    stored.finished_at = new Date().toISOString();
+    const source = await this.getDriveSource(run.source_id);
+    source.verification_status = "verified";
+    source.last_verification_at = stored.finished_at;
+    source.last_successful_sync_at = stored.finished_at;
+    source.last_verification_error_code = null;
+  }
+
+  async failSync(runId, code, message) {
+    const run = await this.getSyncRun(runId);
+    if (!run) return;
+    run.status = "failed";
+    run.error_code = code;
+    run.error_message = message;
+    run.finished_at = new Date().toISOString();
+    const source = await this.getDriveSource(run.source_id);
+    if (source) {
+      source.verification_status = "failed";
+      source.last_verification_at = run.finished_at;
+      source.last_verification_error_code = code;
+    }
+  }
 
   async createSubmissionTarget(input, actorId) {
     const row = {
@@ -754,7 +985,37 @@ export class FakeDrive {
     this.uploads = [];
     this.deleted = [];
     this.readyChecks = [];
+    this.curriculumReadyChecks = [];
     this.available = true;
+    this.curriculumAvailable = true;
+    this.curriculumRecords = [
+      "SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M",
+    ].flatMap((courseCode) =>
+      ["01", "02", "05", "06", "07"].flatMap((component) =>
+        ["docx", "pdf"].map((extension) => {
+          const fileName =
+            `Lotus_Academy_${courseCode}_${component}_Student_Material.${extension}`;
+          return {
+            driveFileId:
+              `drive-${courseCode.toLowerCase()}-${component}-${extension}`,
+            parentFolderId: `folder-${courseCode.toLowerCase()}`,
+            courseCode,
+            moduleId: null,
+            unitNumber: null,
+            category: component === "02" ? "Assessments" : "Resources",
+            fileName,
+            relativePath:
+              `Lotus Academy Formal Course Pilots - Text Based/${courseCode}/Student_Materials/${fileName}`,
+            mimeType: extension === "pdf"
+              ? "application/pdf"
+              : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            webViewLink: null,
+            modifiedAt: "2026-08-03T00:00:00.000Z",
+            sizeBytes: 100,
+          };
+        }),
+      ),
+    );
   }
 
   async ready(rootFolderId) {
@@ -764,6 +1025,18 @@ export class FakeDrive {
         503,
         "SUBMISSION_STORAGE_UNAVAILABLE",
         "Submission storage is temporarily unavailable.",
+      );
+    }
+    return true;
+  }
+
+  async curriculumReady(rootFolderId, rootFolderName) {
+    this.curriculumReadyChecks.push({ rootFolderId, rootFolderName });
+    if (!this.curriculumAvailable) {
+      throw new ApiError(
+        503,
+        "CURRICULUM_DRIVE_UNAVAILABLE",
+        "Curriculum storage is temporarily unavailable.",
       );
     }
     return true;
@@ -789,6 +1062,19 @@ export class FakeDrive {
       kind: "stream",
       stream: Readable.from(Buffer.from("private file")),
       metadata: { mimeType: "application/pdf" },
+    };
+  }
+
+  async listCurriculumFiles() {
+    return {
+      records: this.curriculumRecords.map((record) => ({ ...record })),
+      skippedCount: 0,
+      discoveredCourseCodes: [...new Set(
+        this.curriculumRecords.map((record) => record.courseCode),
+      )],
+      materialCourseCodes: [...new Set(
+        this.curriculumRecords.map((record) => record.courseCode),
+      )],
     };
   }
 }

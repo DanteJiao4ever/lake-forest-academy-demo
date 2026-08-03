@@ -34,6 +34,8 @@ const configSchema = z.object({
   clamavRequired: z.boolean(),
   googleCredentialsBase64: z.string(),
   googleCredentialsPath: z.string(),
+  curriculumDriveRootId: z.string(),
+  curriculumDriveRootName: z.string().min(1),
   submissionTargetRootId: z.string(),
 });
 
@@ -79,6 +81,10 @@ export function loadConfig(env = process.env) {
     ),
     googleCredentialsBase64: env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 || "",
     googleCredentialsPath: env.GOOGLE_APPLICATION_CREDENTIALS || "",
+    curriculumDriveRootId: env.CURRICULUM_DRIVE_ROOT_ID || "",
+    curriculumDriveRootName:
+      env.CURRICULUM_DRIVE_ROOT_NAME ||
+      "Lotus Academy Formal Course Pilots - Text Based",
     submissionTargetRootId: env.SUBMISSION_TARGET_ROOT_ID || "",
   });
 
@@ -93,6 +99,9 @@ export function loadConfig(env = process.env) {
   }
   if (config.nodeEnv === "production" && config.csrfSecret.length < 32) {
     throw new Error("CSRF_SECRET must contain at least 32 characters in production.");
+  }
+  if (config.nodeEnv === "production" && !config.curriculumDriveRootId.trim()) {
+    throw new Error("CURRICULUM_DRIVE_ROOT_ID is required in production.");
   }
   return Object.freeze(config);
 }

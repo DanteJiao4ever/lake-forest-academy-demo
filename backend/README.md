@@ -34,11 +34,11 @@ Registration starts with no active course access. `PUT /v1/me/enrollments` is
 the canonical endpoint for selecting from the six configured Grade 12 courses;
 the API validates that allowlist before changing authorization.
 
-The approved staff-only submission folder is identified by
-`SUBMISSION_TARGET_ROOT_ID=1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK`. A Drive folder
-ID is navigation/configuration metadata rather than a secret, but it still does
-not grant access: the service account must be shared onto that exact folder and
-the API must create an active submission-target record before uploads begin.
+The approved staff-only submission folder is supplied through
+`SUBMISSION_TARGET_ROOT_ID` in deployment configuration. The service account
+must be shared onto that exact folder and the API must create an active
+submission-target record before uploads begin; the identifier is not placed in
+browser configuration or source-controlled examples.
 
 ## Browser configuration
 
@@ -145,59 +145,22 @@ backend `openUrl` values rather than Drive IDs.
 
 ### Bootstrap the current Drive folders
 
-Provision a `teacher_admin` with the CLI above (change `--role`), sign in, then
-create the two records once. The current curriculum root ID is
-`1gwLFDrzh77HkYIV68mCErKkBbHEmikrG`; the submission root ID is
-`1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK`. Folder IDs are not secrets. Cookie and
-CSRF values below are temporary local shell variables and must not be logged:
+Set `CURRICULUM_DRIVE_ROOT_ID` in protected deployment configuration and share
+that folder with the Cloud Run runtime service account as Viewer. The browser
+bundle and repository do not contain the root or file IDs. On production
+startup, the API provisions the logical system source and performs an audited,
+fail-closed scan. Readiness succeeds only after all six course folders and the
+required baseline Student Materials are present; an incomplete scan never
+deactivates the last verified catalogue.
 
-```bash
-API=https://api.lakeforestacademy.ca
-ORIGIN=https://lakeforestacademy.ca
+A `teacher_admin` can later refresh or retry verification with
+`POST /v1/admin/drive/sync`. Students and teachers read only the authorized
+course endpoint and open files through `/v1/materials/:id/open`; they never
+receive a Drive ID or private Drive URL.
 
-AUTH=$(curl --silent --show-error --fail \
-  --cookie-jar /tmp/lfa-cookie \
-  -H "Origin: $ORIGIN" -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lakeforestacademy.ca","password":"<read-from-secret-manager>","portal":"faculty"}' \
-  "$API/v1/auth/login")
-CSRF=$(printf '%s' "$AUTH" | jq -r .csrfToken)
-
-SOURCE=$(curl --silent --show-error --fail \
-  --cookie /tmp/lfa-cookie -H "Origin: $ORIGIN" \
-  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{
-    "displayName":"Lotus formal course pilots",
-    "driveKind":"my_drive",
-    "driveId":null,
-    "rootFolderId":"1gwLFDrzh77HkYIV68mCErKkBbHEmikrG",
-    "rootFolderName":"Lotus Academy Formal Course Pilots - Text Based",
-    "credentialType":"service_account",
-    "credentialRef":"env://GOOGLE_SERVICE_ACCOUNT_JSON_BASE64"
-  }' "$API/v1/admin/drive/sources")
-SOURCE_ID=$(printf '%s' "$SOURCE" | jq -r .data.id)
-
-curl --silent --show-error --fail \
-  --cookie /tmp/lfa-cookie -H "Origin: $ORIGIN" \
-  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -d '{
-    "displayName":"Lake Forest student submissions",
-    "driveKind":"my_drive",
-    "driveId":null,
-    "rootFolderId":"1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK",
-    "rootFolderName":"Lake Forest Learning - Student Submissions",
-    "credentialType":"service_account",
-    "credentialRef":"env://GOOGLE_SERVICE_ACCOUNT_JSON_BASE64"
-  }' "$API/v1/admin/drive/submission-targets"
-
-curl --silent --show-error --fail \
-  --cookie /tmp/lfa-cookie -H "Origin: $ORIGIN" \
-  -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: first-lotus-full-sync-2026-07' \
-  -d '{"mode":"full"}' "$API/v1/admin/drive/sources/$SOURCE_ID/sync"
-
-rm -f /tmp/lfa-cookie
-unset AUTH CSRF SOURCE SOURCE_ID
-```
+Configure `SUBMISSION_TARGET_ROOT_ID` separately for student uploads. Both
+folder IDs belong in deployment configuration, not browser configuration or
+source-controlled examples.
 
 The Google Workspace OAuth start/callback endpoints are **not implemented in
 this service yet**. Faculty login currently uses the same server-side bcrypt

@@ -4,6 +4,7 @@ import { createPool, PostgresRepository } from "./db/postgres.js";
 import { createGoogleDrive } from "./drive/google-drive.js";
 import { ClamAvScanner } from "./lib/clamav.js";
 import { createApp } from "./app.js";
+import { bootstrapCanonicalDriveCatalog } from "./services/material-sync.js";
 
 try {
   process.loadEnvFile?.();
@@ -33,6 +34,24 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 try {
+  if (config.nodeEnv === "production") {
+    try {
+      await bootstrapCanonicalDriveCatalog({
+        repository,
+        drive,
+        logger: app.log,
+        rootFolderId: config.curriculumDriveRootId,
+        rootFolderName: config.curriculumDriveRootName,
+      });
+    } catch (error) {
+      // Keep the authenticated admin recovery endpoint reachable, while the
+      // dedicated deployment/release health gate remains fail-closed.
+      app.log.error(
+        { code: error?.code || "DRIVE_BOOTSTRAP_FAILED" },
+        "Drive startup bootstrap failed; release readiness remains closed",
+      );
+    }
+  }
   await app.listen({ host: config.host, port: config.port });
 } catch (error) {
   app.log.error({ err: error }, "server failed to start");

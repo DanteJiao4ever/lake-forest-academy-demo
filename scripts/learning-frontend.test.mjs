@@ -24,6 +24,10 @@ test("runtime configuration separates core and upload readiness", async () => {
     bootstrap,
     /uploadHealthPath:\s*"\/health\/upload-ready"/,
   );
+  assert.match(
+    bootstrap,
+    /driveCatalogHealthPath:\s*"\/health\/drive-catalog-ready"/,
+  );
   assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
   assert.match(
     viteConfig,
@@ -34,6 +38,7 @@ test("runtime configuration separates core and upload readiness", async () => {
 async function bootstrapConfiguration({
   coreReady = true,
   uploadReady = true,
+  driveCatalogReady = true,
 } = {}) {
   const requestedUrls = [];
   const loadedScripts = [];
@@ -43,6 +48,7 @@ async function bootstrapConfiguration({
       apiOrigin: "https://api.example.test",
       healthPath: "/health/ready",
       uploadHealthPath: "/health/upload-ready",
+      driveCatalogHealthPath: "/health/drive-catalog-ready",
       healthTimeoutMs: 1000,
       driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
     },
@@ -80,6 +86,9 @@ async function bootstrapConfiguration({
     if (url.pathname === "/health/upload-ready") {
       return readinessResponse(uploadReady);
     }
+    if (url.pathname === "/health/drive-catalog-ready") {
+      return readinessResponse(driveCatalogReady);
+    }
     throw new Error(`Unexpected bootstrap request: ${value}`);
   };
   const context = vm.createContext({
@@ -112,12 +121,20 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
 
   assert.equal(window.LFA_API_STATUS.state, "ready");
   assert.equal(window.LFA_UPLOAD_STATUS.state, "unavailable");
+  assert.equal(window.LFA_DRIVE_CATALOG_STATUS.state, "ready");
   assert.equal(
     window.LFA_AUTH_CONFIG.loginEndpoint,
     "https://api.example.test/v1/auth/login",
   );
   assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
-  assert.equal(window.LFA_DRIVE_CONFIG.syncEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.catalogReady, true);
+  assert.equal(window.LFA_DRIVE_CONFIG.sourceConfigured, true);
+  assert.equal("rootFolderId" in window.LFA_DRIVE_CONFIG, false);
+  assert.equal("rootFolderUrl" in window.LFA_DRIVE_CONFIG, false);
+  assert.equal(
+    window.LFA_DRIVE_CONFIG.syncEndpoint,
+    "https://api.example.test/v1/admin/drive/sources/source-1/sync",
+  );
   assert.equal(
     window.LFA_DRIVE_CONFIG.submissionsEndpoint,
     "https://api.example.test/v1/submissions",
@@ -125,6 +142,11 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
   assert.ok(requestedUrls.some((url) => url.endsWith("/health/ready")));
   assert.ok(
     requestedUrls.some((url) => url.endsWith("/health/upload-ready")),
+  );
+  assert.ok(
+    requestedUrls.some((url) =>
+      url.endsWith("/health/drive-catalog-ready"),
+    ),
   );
   assert.deepEqual(loadedScripts, [
     "./course-catalog.js?v=grade12-login-readiness-v3",
@@ -143,6 +165,53 @@ test("failed core readiness keeps password sign-in fail-closed", async () => {
   assert.equal(window.LFA_AUTH_CONFIG.loginEndpoint, "");
   assert.equal(window.LFA_DRIVE_CONFIG.submissionsEndpoint, "");
   assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
+  assert.equal(window.LFA_DRIVE_CONFIG.catalogReady, false);
+  assert.equal(window.LFA_DRIVE_CONFIG.sourceConfigured, false);
+  assert.equal(window.LFA_DRIVE_CATALOG_STATUS.state, "unavailable");
+});
+
+test("failed Drive catalogue readiness leaves courses usable and material actions closed", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: true,
+    uploadReady: true,
+    driveCatalogReady: false,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_UPLOAD_STATUS.state, "ready");
+  assert.equal(window.LFA_DRIVE_CATALOG_STATUS.state, "unavailable");
+  assert.equal(window.LFA_DRIVE_CONFIG.catalogReady, false);
+  assert.equal(window.LFA_DRIVE_CONFIG.materialsEndpoint, "");
+  assert.equal(window.LFA_DRIVE_CONFIG.sourceConfigured, true);
+  assert.equal(
+    window.LFA_DRIVE_CONFIG.syncEndpoint,
+    "https://api.example.test/v1/admin/drive/sources/source-1/sync",
+  );
+  assert.equal(
+    window.LFA_PLATFORM_API_CONFIG.coursesEndpoint,
+    "https://api.example.test/v1/courses",
+  );
+
+  const html = await renderPortal(
+    "#/courses",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+    {
+      platformApiConfig: {
+        coursesEndpoint: "https://api.example.test/v1/courses",
+      },
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = {
+          state: "unavailable",
+          message:
+            "Course materials are temporarily unavailable. Courses remain available.",
+        };
+      },
+    },
+  );
+  assert.match(html, /My Courses/);
+  assert.match(html, /Open Course/);
+  assert.match(html, /Materials Temporarily Unavailable/);
+  assert.doesNotMatch(html, /data-action="toggle-course-materials"/);
 });
 
 function memoryStorage(seed = {}) {
@@ -1362,6 +1431,7 @@ test("catalog and module links expose only credential-free HTTPS destinations", 
     role: "student",
   };
   const mutateResources = (window) => {
+    window.LFA_DRIVE_CATALOG_STATUS = { state: "ready", message: "" };
     const resources =
       window.LFA_PLATFORM_SEQUENCES.coursesByCode.SCH4U.modules[1]
         .selfStudyResources;
@@ -1392,20 +1462,310 @@ test("catalog and module links expose only credential-free HTTPS destinations", 
   assert.match(module, /https:\/\/safe\.example\.test\/resource/);
   assert.match(module, /Secure link unavailable/);
 
-  const syllabus = await renderPortal("#/syllabus/sch4u", session, {
-    beforeApp(window) {
-      const course = window.LFA_COURSE_CATALOG.find(
-        (candidate) => candidate.id === "sch4u",
-      );
-      course.syllabus.drive.curriculumMapUrl = "javascript:alert(1)";
-      course.syllabus.drive.coursebookUrl =
-        "https://user:secret@unsafe.example.test/coursebook";
-      course.syllabus.drive.assessmentUrl =
-        "https://safe.example.test/assessment";
+  const syllabus = await renderPortal("#/syllabus/sch4u", session);
+  assert.match(syllabus, /Course Materials/);
+  const catalog = await source("public/learning/course-catalog.js");
+  assert.doesNotMatch(
+    catalog,
+    /studentMaterialsFolderUrl|coursebookUrl|assessmentUrl|curriculumMapUrl/,
+  );
+  assert.doesNotMatch(
+    catalog,
+    /drive\.google\.com\/(?:file\/d|drive\/folders)/,
+  );
+});
+
+test("course lists disclose private Drive materials through course-scoped API links", async () => {
+  const requests = [];
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    requests.push(url.toString());
+    if (url.pathname === "/v1/courses") {
+      return jsonResponse({
+        data: [
+          {
+            code: "SCH4U",
+            materials: {
+              count: 2,
+              lastSyncedAt: "2026-08-03T08:30:00.000Z",
+              href: "/v1/courses/SCH4U/materials",
+            },
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/materials") {
+      return jsonResponse({
+        data: [
+          {
+            id: "material-1",
+            courseCode: "SCH4U",
+            unitNumber: null,
+            category: "Lessons",
+            name: "SCH4U Coursebook.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 2048,
+            openUrl: "/v1/materials/material-1/open",
+          },
+          {
+            id: "material-2",
+            courseCode: "SCH4U",
+            unitNumber: null,
+            category: "Assessments",
+            name: "SCH4U Assessment Guide.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 1024,
+            openUrl:
+              "https://drive.google.com/file/d/private-file-id/view",
+            webViewLink:
+              "https://drive.google.com/file/d/private-file-id/view",
+          },
+        ],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const clickDisclosure = async ({ listeners }) => {
+    const button = {
+      dataset: {
+        action: "toggle-course-materials",
+        course: "sch4u",
+        context: "student",
+      },
+      closest(selector) {
+        return selector === "[data-action], [data-route]" ? this : null;
+      },
+    };
+    await listeners.get("click")[0]({ target: button });
+  };
+  const result = await renderPortal(
+    "#/courses",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+    {
+      platformApiConfig: {
+        coursesEndpoint: "https://api.example.test/v1/courses",
+      },
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = { state: "ready", message: "" };
+      },
+      fetch,
+      settleTurns: 16,
+      interact: clickDisclosure,
+      interactionSettleTurns: 8,
+      returnHarness: true,
     },
-  });
-  assert.doesNotMatch(syllabus, /javascript:|user:secret@unsafe/);
-  assert.match(syllabus, /https:\/\/safe\.example\.test\/assessment/);
+  );
+
+  assert.match(result.html, /<article class="course-card[^>]*>/);
+  assert.doesNotMatch(result.html, /<a class="course-card/);
+  assert.match(result.html, /Open Course/);
+  assert.match(result.html, /aria-expanded="true"/);
+  assert.match(result.html, /SCH4U Coursebook\.pdf/);
+  assert.match(result.html, /SCH4U Assessment Guide\.pdf/);
+  assert.match(result.html, /Course Resources/);
+  assert.doesNotMatch(result.html, /Unit 0/);
+  assert.match(
+    result.html,
+    /https:\/\/api\.example\.test\/v1\/materials\/material-1\/open/,
+  );
+  assert.doesNotMatch(
+    result.html,
+    /drive\.google\.com\/file\/d|private-file-id/,
+  );
+  assert.ok(requests.some((url) => new URL(url).pathname === "/v1/courses"));
+  assert.ok(
+    requests.some(
+      (url) =>
+        new URL(url).pathname === "/v1/courses/SCH4U/materials" &&
+        new URL(url).searchParams.get("limit") === "100",
+    ),
+  );
+});
+
+test("faculty course resources are interactive while Drive sync remains admin-only", async () => {
+  const fetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/courses") {
+      return jsonResponse({
+        data: [
+          {
+            code: "SCH4U",
+            materials: {
+              count: 1,
+              href: "/v1/courses/SCH4U/materials",
+            },
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/materials") {
+      return jsonResponse({
+        data: [
+          {
+            id: "teacher-material-1",
+            courseCode: "SCH4U",
+            category: "Lessons",
+            name: "Teacher-visible Course File.pdf",
+            openUrl: "/v1/materials/teacher-material-1/open",
+          },
+        ],
+        page: { nextCursor: null },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const result = await renderPortal(
+    "#/teacher/courses",
+    {
+      email: "james.whitmore@lakeforestacademy.ca",
+      role: "teacher",
+    },
+    {
+      platformApiConfig: {
+        coursesEndpoint: "https://api.example.test/v1/courses",
+      },
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = { state: "ready", message: "" };
+        window.LFA_DRIVE_CONFIG = {
+          sourceConfigured: true,
+          syncEndpoint: "https://api.example.test/v1/admin/drive/sync",
+        };
+      },
+      fetch,
+      settleTurns: 16,
+      interact: async ({ listeners }) => {
+        const button = {
+          dataset: {
+            action: "toggle-course-materials",
+            course: "sch4u",
+            context: "teacher",
+          },
+          closest(selector) {
+            return selector === "[data-action], [data-route]" ? this : null;
+          },
+        };
+        await listeners.get("click")[0]({ target: button });
+      },
+      interactionSettleTurns: 8,
+      returnHarness: true,
+    },
+  );
+
+  assert.match(result.html, /Open Workspace/);
+  assert.match(result.html, /aria-expanded="true"/);
+  assert.match(result.html, /Teacher-visible Course File\.pdf/);
+  assert.doesNotMatch(result.html, /Sync from Drive/);
+
+  const materials = await renderPortal(
+    "#/teacher/materials",
+    {
+      email: "james.whitmore@lakeforestacademy.ca",
+      role: "teacher",
+    },
+    {
+      platformApiConfig: {
+        coursesEndpoint: "https://api.example.test/v1/courses",
+      },
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = { state: "ready", message: "" };
+        window.LFA_DRIVE_CONFIG = {
+          sourceConfigured: true,
+          syncEndpoint: "https://api.example.test/v1/admin/drive/sync",
+        };
+      },
+      fetch,
+      settleTurns: 16,
+    },
+  );
+  assert.match(materials, /Course Materials/);
+  assert.doesNotMatch(materials, /Sync from Drive/);
+});
+
+test("teacher administrators can verify a protected Drive source before the read catalogue is ready", async () => {
+  const syncRequests = [];
+  const result = await renderPortal(
+    "#/teacher/materials",
+    {
+      email: "platform.admin@lakeforestacademy.ca",
+      role: "teacher_admin",
+      firstName: "Platform",
+      lastName: "Administrator",
+      displayName: "Platform Administrator",
+      publicId: "admin-1",
+    },
+    {
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = {
+          state: "unavailable",
+          message: "The protected course catalogue has not passed verification.",
+        };
+        window.LFA_DRIVE_CONFIG = {
+          sourceName: "Protected Six-Course Library",
+          sourceConfigured: true,
+          syncEndpoint: "https://api.example.test/v1/admin/drive/sync",
+        };
+      },
+      fetch: async (request, options = {}) => {
+        const url = new URL(String(request));
+        if (url.pathname === "/v1/admin/drive/sync") {
+          syncRequests.push({ url: url.toString(), options });
+          return jsonResponse({ data: { status: "queued" } });
+        }
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      },
+      interact: async ({ listeners }) => {
+        const button = {
+          dataset: { action: "sync-drive-materials" },
+          closest(selector) {
+            return selector === "[data-action], [data-route]" ? this : null;
+          },
+        };
+        await listeners.get("click")[0]({ target: button });
+      },
+      interactionSettleTurns: 8,
+      returnHarness: true,
+    },
+  );
+
+  assert.match(result.html, /Verification required/);
+  assert.match(result.html, /Retry Drive Verification/);
+  assert.match(result.html, /data-action="sync-drive-materials"/);
+  assert.doesNotMatch(
+    result.html,
+    /Open Drive Folder|Folder ID|drive\.google\.com\/drive\/folders/,
+  );
+  assert.equal(syncRequests.length, 1);
+  assert.equal(syncRequests[0].options.method, "POST");
+});
+
+test("the browser bundle exposes no Drive identifiers or direct file and folder links", async () => {
+  const [app, bootstrap, courseCatalog] = await Promise.all([
+    source("public/learning/app.js"),
+    source("public/learning/bootstrap.js"),
+    source("public/learning/course-catalog.js"),
+  ]);
+  for (const browserSource of [app, bootstrap, courseCatalog]) {
+    assert.doesNotMatch(browserSource, /rootFolderId|rootFolderUrl/);
+    assert.doesNotMatch(
+      browserSource,
+      /Open Drive Folder|Folder ID|drive\.google\.com\/(?:file\/d|drive\/folders)/,
+    );
+  }
+  assert.doesNotMatch(
+    courseCatalog,
+    /\bdrive\s*:|studentMaterialsFolderUrl|coursebookUrl|assessmentUrl|curriculumMapUrl/,
+  );
+});
+
+test("Drive material cache keys are account- and role-scoped", async () => {
+  const app = await source("public/learning/app.js");
+  assert.match(
+    app,
+    /session\?\.publicId \|\| normalizeEmail\(session\?\.email\) \|\| "anonymous"/,
+  );
+  assert.match(app, /return `\$\{sourceKey\}::\$\{role\}:\$\{accountKey\}`/);
+  assert.match(app, /function resetDriveMaterialsForSession\(\)/);
 });
 
 test("student progress uses only published direct grades and weights supervised and participation results", async () => {
