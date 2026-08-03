@@ -67,6 +67,55 @@ function fakeDriveClient() {
   };
 }
 
+function upstreamError(status, reason, secret = "sensitive-upstream-message") {
+  const error = new Error(secret);
+  error.response = {
+    status,
+    data: {
+      error: {
+        message: secret,
+        errors: [{ reason }],
+      },
+    },
+  };
+  return error;
+}
+
+function submissionDriveClient({ failAt, error }) {
+  return {
+    files: {
+      async get() {
+        if (failAt === "rootMetadata") throw error;
+        return {
+          data: {
+            id: "submission-root",
+            name: "Lake Forest Learning - Student Submissions",
+            mimeType: folder,
+          },
+        };
+      },
+      async list() {
+        if (failAt === "folderList") throw error;
+        return { data: { files: [] } };
+      },
+      async create(input) {
+        const creatingFolder = input.requestBody?.mimeType === folder;
+        if (
+          (failAt === "folderCreate" && creatingFolder) ||
+          (failAt === "fileCreate" && !creatingFolder)
+        ) {
+          throw error;
+        }
+        return {
+          data: creatingFolder
+            ? { id: "created-folder" }
+            : { id: "created-file", createdTime: "2026-08-04T00:00:00.000Z" },
+        };
+      },
+    },
+  };
+}
+
 describe("Google Drive curriculum adapter", () => {
   test("checks curriculum root readability with a curriculum-specific error", async () => {
     const readable = new GoogleDriveStore(fakeDriveClient());
@@ -149,5 +198,116 @@ describe("Google Drive curriculum adapter", () => {
       },
       options: { responseType: "stream" },
     });
+  });
+});
+
+describe("Google Drive submission error mapping", () => {
+  const target = {
+    root_folder_id: "submission-root",
+    root_folder_name: "Lake Forest Learning - Student Submissions",
+    drive_id: null,
+  };
+
+  for (const scenario of [
+    {
+      name: "maps a file-create permission error",
+      failAt: "fileCreate",
+      pathSegments: [],
+      status: 403,
+      reason: "insufficientFilePermissions",
+      code: "SUBMISSION_DRIVE_PERMISSION_DENIED",
+      operation: "submission_file_create",
+      safeReason: "insufficient_file_permissions",
+    },
+    {
+      name: "maps a file-create storage quota error before generic 403 handling",
+      failAt: "fileCreate",
+      pathSegments: [],
+      status: 403,
+      reason: "storageQuotaExceeded",
+      code: "SUBMISSION_DRIVE_QUOTA_EXCEEDED",
+      operation: "submission_file_create",
+      safeReason: "storage_quota_exceeded",
+    },
+    {
+      name: "maps a folder-list rate limit error",
+      failAt: "folderList",
+      pathSegments: ["SCH4U"],
+      status: 429,
+      reason: "userRateLimitExceeded",
+      code: "SUBMISSION_DRIVE_RATE_LIMITED",
+      operation: "submission_folder_list",
+      safeReason: "user_rate_limit_exceeded",
+    },
+    {
+      name: "maps a folder-create unavailable error",
+      failAt: "folderCreate",
+      pathSegments: ["SCH4U"],
+      status: 503,
+      reason: "backendError",
+      code: "SUBMISSION_DRIVE_UNAVAILABLE",
+      operation: "submission_folder_create",
+      safeReason: "backend_error",
+    },
+  ]) {
+    test(scenario.name, async () => {
+      const secret = `secret-${scenario.failAt}`;
+      const drive = new GoogleDriveStore(
+        submissionDriveClient({
+          failAt: scenario.failAt,
+          error: upstreamError(scenario.status, scenario.reason, secret),
+        }),
+      );
+      await assert.rejects(
+        drive.uploadSubmission({
+          target,
+          pathSegments: scenario.pathSegments,
+          storedName: "safe.pdf",
+          mimeType: "application/pdf",
+          buffer: Buffer.from("%PDF-1.7"),
+        }),
+        (error) => {
+          assert.equal(error.statusCode, 503);
+          assert.equal(error.code, scenario.code);
+          assert.equal(error.message, "Submission storage is temporarily unavailable.");
+          assert.deepEqual(error.logContext, {
+            operation: scenario.operation,
+            upstreamStatus: scenario.status,
+            upstreamReason: scenario.safeReason,
+          });
+          assert.equal(error.cause, undefined);
+          assert.equal(JSON.stringify(error).includes(secret), false);
+          return true;
+        },
+      );
+    });
+  }
+
+  test("does not copy an unknown upstream reason into diagnostics", async () => {
+    const drive = new GoogleDriveStore(
+      submissionDriveClient({
+        failAt: "rootMetadata",
+        error: upstreamError(500, "credential-token-secret-value"),
+      }),
+    );
+    await assert.rejects(
+      drive.uploadSubmission({
+        target,
+        pathSegments: [],
+        storedName: "safe.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from("%PDF-1.7"),
+      }),
+      (error) => {
+        assert.equal(error.code, "SUBMISSION_DRIVE_UNAVAILABLE");
+        assert.deepEqual(error.logContext, {
+          operation: "submission_root_metadata",
+          upstreamStatus: 500,
+          upstreamReason: "unavailable",
+        });
+        assert.equal(JSON.stringify(error).includes("credential-token-secret-value"), false);
+        return true;
+      },
+    );
   });
 });

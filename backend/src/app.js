@@ -500,7 +500,29 @@ export async function createApp({
     }
     const statusCode = Number.isInteger(error.statusCode) ? error.statusCode : 500;
     if (statusCode >= 500) {
-      request.log.error({ err: error, requestId: request.id }, "request failed");
+      const storageLogContext = error?.logContext;
+      const operation = [
+        "submission_root_metadata",
+        "submission_folder_list",
+        "submission_folder_create",
+        "submission_file_create",
+      ].includes(storageLogContext?.operation)
+        ? storageLogContext.operation
+        : undefined;
+      const upstreamStatus = Number.isInteger(storageLogContext?.upstreamStatus)
+        ? storageLogContext.upstreamStatus
+        : null;
+      const upstreamReason = /^[a-z0-9_]{1,64}$/.test(storageLogContext?.upstreamReason || "")
+        ? storageLogContext.upstreamReason
+        : undefined;
+      request.log.error(
+        {
+          err: error,
+          requestId: request.id,
+          ...(operation ? { operation, upstreamStatus, upstreamReason } : {}),
+        },
+        "request failed",
+      );
     }
     reply.status(statusCode).send(errorEnvelope(error, request.id));
   });

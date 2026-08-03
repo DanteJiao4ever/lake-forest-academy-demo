@@ -8,6 +8,53 @@ const shortcutMime = "application/vnd.google-apps.shortcut";
 const launchCourseCodes = ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
 const catalogModuleNumbers = new Set(Array.from({ length: 12 }, (_, index) => index));
 const curriculumUnitNumbers = new Set(Array.from({ length: 10 }, (_, index) => index + 1));
+const submissionDriveReasonAliases = new Map([
+  ["autherror", "auth_error"],
+  ["insufficientfilepermissions", "insufficient_file_permissions"],
+  ["insufficientpermissions", "insufficient_permissions"],
+  ["permissiondenied", "permission_denied"],
+  ["forbidden", "forbidden"],
+  ["storagequotaexceeded", "storage_quota_exceeded"],
+  ["quotaexceeded", "quota_exceeded"],
+  ["teamdrivefilelimitexceeded", "team_drive_file_limit_exceeded"],
+  ["activeitemcreationlimitexceeded", "active_item_creation_limit_exceeded"],
+  ["dailylimitexceeded", "daily_limit_exceeded"],
+  ["dailylimitexceededunreg", "daily_limit_exceeded_unregistered"],
+  ["downloadquotaexceeded", "download_quota_exceeded"],
+  ["ratelimitexceeded", "rate_limit_exceeded"],
+  ["userratelimitexceeded", "user_rate_limit_exceeded"],
+  ["sharingratelimitexceeded", "sharing_rate_limit_exceeded"],
+  ["resourceexhausted", "resource_exhausted"],
+  ["backenderror", "backend_error"],
+  ["internalerror", "internal_error"],
+  ["serviceunavailable", "service_unavailable"],
+  ["notfound", "not_found"],
+  ["econnreset", "connection_reset"],
+  ["enotfound", "host_not_found"],
+  ["etimedout", "timed_out"],
+]);
+const submissionDrivePermissionReasons = new Set([
+  "auth_error",
+  "insufficient_file_permissions",
+  "insufficient_permissions",
+  "permission_denied",
+  "forbidden",
+]);
+const submissionDriveQuotaReasons = new Set([
+  "storage_quota_exceeded",
+  "quota_exceeded",
+  "team_drive_file_limit_exceeded",
+  "active_item_creation_limit_exceeded",
+  "daily_limit_exceeded",
+  "daily_limit_exceeded_unregistered",
+  "download_quota_exceeded",
+]);
+const submissionDriveRateLimitReasons = new Set([
+  "rate_limit_exceeded",
+  "user_rate_limit_exceeded",
+  "sharing_rate_limit_exceeded",
+  "resource_exhausted",
+]);
 const googleExportFormats = new Map([
   [
     "application/vnd.google-apps.document",
@@ -66,6 +113,68 @@ function catalogNumberFromPath(pathText, label, allowedNumbers) {
   if (!match) return null;
   const value = Number(match[1]);
   return allowedNumbers.has(value) ? value : null;
+}
+
+function googleUpstreamStatus(error) {
+  const candidates = [error?.response?.status, error?.status, error?.code];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isInteger(value) && value >= 100 && value <= 599) return value;
+  }
+  return null;
+}
+
+function googleUpstreamReason(error) {
+  const candidates = [
+    error?.response?.data?.error?.errors?.[0]?.reason,
+    error?.response?.data?.error?.reason,
+    error?.response?.data?.error?.status,
+    error?.errors?.[0]?.reason,
+    error?.reason,
+    typeof error?.code === "string" ? error.code : null,
+  ];
+  for (const candidate of candidates) {
+    const key = String(candidate || "").toLowerCase().replaceAll(/[^a-z0-9]+/g, "");
+    if (submissionDriveReasonAliases.has(key)) {
+      return submissionDriveReasonAliases.get(key);
+    }
+  }
+  return null;
+}
+
+function mapSubmissionDriveError(error, operation) {
+  if (error instanceof ApiError) return error;
+  const upstreamStatus = googleUpstreamStatus(error);
+  const knownReason = googleUpstreamReason(error);
+  let category = "unavailable";
+  if (upstreamStatus === 429 || submissionDriveRateLimitReasons.has(knownReason)) {
+    category = "rate_limited";
+  } else if (submissionDriveQuotaReasons.has(knownReason)) {
+    category = "quota_exceeded";
+  } else if (
+    upstreamStatus === 401 ||
+    upstreamStatus === 403 ||
+    submissionDrivePermissionReasons.has(knownReason)
+  ) {
+    category = "permission_denied";
+  }
+  const codes = {
+    permission_denied: "SUBMISSION_DRIVE_PERMISSION_DENIED",
+    quota_exceeded: "SUBMISSION_DRIVE_QUOTA_EXCEEDED",
+    rate_limited: "SUBMISSION_DRIVE_RATE_LIMITED",
+    unavailable: "SUBMISSION_DRIVE_UNAVAILABLE",
+  };
+  const mapped = new ApiError(
+    503,
+    codes[category],
+    "Submission storage is temporarily unavailable.",
+  );
+  mapped.logContext = Object.freeze({
+    operation,
+    upstreamStatus,
+    upstreamReason: knownReason || category,
+  });
+  return mapped;
 }
 
 export async function createGoogleDrive(config) {
@@ -300,19 +409,29 @@ export class GoogleDriveStore {
   async ensureFolder(parentId, name, driveId = null) {
     const key = `${parentId}:${name}`;
     if (this.folderCache.has(key)) return this.folderCache.get(key);
-    const response = await this.client.files.list({
-      q: `'${escapeQuery(parentId)}' in parents and name = '${escapeQuery(name)}' and mimeType = '${folderMime}' and trashed = false`,
-      fields: "files(id,name)",
-      pageSize: 2,
-      ...this.requestOptions(driveId),
-    });
+    let response;
+    try {
+      response = await this.client.files.list({
+        q: `'${escapeQuery(parentId)}' in parents and name = '${escapeQuery(name)}' and mimeType = '${folderMime}' and trashed = false`,
+        fields: "files(id,name)",
+        pageSize: 2,
+        ...this.requestOptions(driveId),
+      });
+    } catch (error) {
+      throw mapSubmissionDriveError(error, "submission_folder_list");
+    }
     let folderId = response.data.files?.[0]?.id;
     if (!folderId) {
-      const created = await this.client.files.create({
-        requestBody: { name, mimeType: folderMime, parents: [parentId] },
-        fields: "id",
-        supportsAllDrives: true,
-      });
+      let created;
+      try {
+        created = await this.client.files.create({
+          requestBody: { name, mimeType: folderMime, parents: [parentId] },
+          fields: "id",
+          supportsAllDrives: true,
+        });
+      } catch (error) {
+        throw mapSubmissionDriveError(error, "submission_folder_create");
+      }
       folderId = created.data.id;
     }
     this.folderCache.set(key, folderId);
@@ -320,7 +439,12 @@ export class GoogleDriveStore {
   }
 
   async uploadSubmission({ target, pathSegments, storedName, mimeType, buffer }) {
-    const root = await this.getMetadata(target.root_folder_id);
+    let root;
+    try {
+      root = await this.getMetadata(target.root_folder_id);
+    } catch (error) {
+      throw mapSubmissionDriveError(error, "submission_root_metadata");
+    }
     const expectedName =
       target.root_folder_name ||
       target.rootFolderName ||
@@ -336,12 +460,17 @@ export class GoogleDriveStore {
     for (const segment of pathSegments) {
       parentId = await this.ensureFolder(parentId, segment, target.drive_id);
     }
-    const created = await this.client.files.create({
-      requestBody: { name: storedName, parents: [parentId] },
-      media: { mimeType, body: Readable.from(buffer) },
-      fields: "id,name,mimeType,parents,webViewLink,createdTime,modifiedTime,size",
-      supportsAllDrives: true,
-    });
+    let created;
+    try {
+      created = await this.client.files.create({
+        requestBody: { name: storedName, parents: [parentId] },
+        media: { mimeType, body: Readable.from(buffer) },
+        fields: "id,name,mimeType,parents,webViewLink,createdTime,modifiedTime,size",
+        supportsAllDrives: true,
+      });
+    } catch (error) {
+      throw mapSubmissionDriveError(error, "submission_file_create");
+    }
     return {
       driveFileId: created.data.id,
       parentFolderId: parentId,

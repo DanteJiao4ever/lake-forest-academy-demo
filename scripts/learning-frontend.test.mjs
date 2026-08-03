@@ -2950,6 +2950,106 @@ test("background refreshes do not replace a dirty assignment upload form", async
   assert.equal(result.html, sentinel);
 });
 
+test("failed uploads show safe request references without exposing server details", async () => {
+  const submitFailedUpload = async ({ errorPayload, headerRequestId }) => {
+    const email = "upload-diagnostics@example.test";
+    const form = interactiveForm(
+      "assignment-form",
+      { id: "sch4u-m02-assignment" },
+      {
+        note: "Safe diagnostic test.",
+        file: new SubmissionTestFile("diagnostic-evidence.pdf", "application/pdf"),
+        integrity: "confirmed",
+      },
+    );
+    await renderPortal(
+      "#/assignment/sch4u-m02-assignment",
+      { email, displayName: "Upload Diagnostics", role: "student" },
+      {
+        FormData: SubmissionTestFormData,
+        File: SubmissionTestFile,
+        submissionConfig: {
+          submissionsEndpoint: "https://api.example.test/v1/submissions",
+          uploadReady: true,
+        },
+        sessionStorageSeed: {
+          "lake-forest-learning-csrf-v1": "csrf-upload-diagnostics",
+        },
+        localStorageSeed: studentStateStorage(email),
+        fetch: async (request, init = {}) => {
+          const url = new URL(String(request));
+          if (url.pathname !== "/v1/submissions") {
+            throw new Error(`Unexpected diagnostic request: ${url.pathname}`);
+          }
+          if (init.method !== "POST") {
+            return jsonResponse({
+              data: [],
+              page: { nextCursor: null, limit: 100 },
+            });
+          }
+          return {
+            ok: false,
+            status: 500,
+            headers: {
+              get(name) {
+                return name.toLowerCase() === "x-request-id"
+                  ? headerRequestId
+                  : null;
+              },
+            },
+            text: async () => JSON.stringify({ error: errorPayload }),
+          };
+        },
+        settleTurns: 12,
+        interact: async ({ listeners }) => {
+          const submitListener = listeners.get("submit")?.[0];
+          assert.equal(typeof submitListener, "function");
+          await submitListener({ target: form, preventDefault() {} });
+        },
+      },
+    );
+    return form.alert.textContent;
+  };
+
+  const payloadReference = await submitFailedUpload({
+    errorPayload: {
+      code: "SUBMISSION_DRIVE_UPLOAD_FAILED",
+      message: "Private provider response containing an access token.",
+      requestId: "req_payload_1234",
+      details: { accessToken: "must-not-render" },
+    },
+    headerRequestId: "req_header_ignored",
+  });
+  assert.equal(
+    payloadReference,
+    "The service could not complete the upload. Your work was not submitted. Reference: req_payload_1234 · Code: SUBMISSION_DRIVE_UPLOAD_FAILED.",
+  );
+  assert.doesNotMatch(payloadReference, /Private provider|access token|must-not-render/);
+
+  const headerFallback = await submitFailedUpload({
+    errorPayload: {
+      code: "unsafe code <script>",
+      message: "Private database driver details.",
+      requestId: "unsafe request <script>",
+    },
+    headerRequestId: "req_header_5678",
+  });
+  assert.equal(
+    headerFallback,
+    "The service could not complete the upload. Your work was not submitted. Reference: req_header_5678.",
+  );
+  assert.doesNotMatch(headerFallback, /Private database|script|unsafe code/);
+});
+
+test("submission UI source contains intended punctuation instead of mojibake", async () => {
+  const app = await source("public/learning/app.js");
+  assert.doesNotMatch(app, /(?:鈥|路|\uFFFD)/);
+  assert.match(app, /Add a short note for your instructor…/);
+  assert.match(app, /maximum 25 MB/);
+  assert.match(app, /Uploading to Lotus Drive…/);
+  assert.match(app, /formatFileSize\(file\.size\)\} · \$\{file\.type/);
+});
+
 test("note-only submissions stay central while attachments are identified as Lotus Drive uploads", async () => {
   const submit = async (file) => {
     const email = file
