@@ -79,4 +79,6 @@ jobs:
           --command "SELECT count(*) FROM course_modules; SELECT count(*) FROM gradebook_items;"
       - run: pnpm check
       - run: pnpm test
+        env:
+          RUNTIME_DATABASE_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
       - run: docker build --tag lfa-learning-api:${GITHUB_SHA} .
