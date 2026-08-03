@@ -24,6 +24,7 @@ export class FakeRepository {
   constructor() {
     this.users = [];
     this.sessions = new Map();
+    this.passwordResetTokens = [];
     this.enrollments = new Map();
     this.teacherCourses = new Map();
     this.submissions = [];
@@ -190,6 +191,97 @@ export class FakeRepository {
     }
   }
 
+  async createPasswordResetToken({
+    id,
+    userId,
+    tokenHash,
+    expiresAt,
+    notBefore,
+  }) {
+    const recent = this.passwordResetTokens
+      .filter((item) => item.userId === userId)
+      .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))[0];
+    if (recent && new Date(recent.createdAt) >= new Date(notBefore)) {
+      return { created: false };
+    }
+    for (const item of this.passwordResetTokens) {
+      if (item.userId === userId && !item.consumedAt) {
+        item.consumedAt = new Date().toISOString();
+      }
+    }
+    const record = {
+      id,
+      userId,
+      tokenHash,
+      expiresAt: new Date(expiresAt).toISOString(),
+      consumedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.passwordResetTokens.push(record);
+    return { created: true, id, expiresAt: record.expiresAt };
+  }
+
+  async revokePasswordResetToken(tokenHash) {
+    const token = this.passwordResetTokens.find(
+      (item) => item.tokenHash === tokenHash,
+    );
+    if (token && !token.consumedAt) token.consumedAt = new Date().toISOString();
+  }
+
+  async findPasswordResetTokenUser(tokenHash) {
+    const token = this.passwordResetTokens.find(
+      (item) =>
+        item.tokenHash === tokenHash &&
+        !item.consumedAt &&
+        new Date(item.expiresAt) > new Date(),
+    );
+    if (!token) return null;
+    const user = this.users.find((item) => item.id === token.userId);
+    return user?.status === "active" ? user : null;
+  }
+
+  async consumePasswordResetToken({ tokenHash, userId, passwordHash }) {
+    const token = this.passwordResetTokens.find(
+      (item) =>
+        item.tokenHash === tokenHash &&
+        item.userId === userId &&
+        !item.consumedAt &&
+        new Date(item.expiresAt) > new Date(),
+    );
+    if (!token) return false;
+    const user = this.users.find(
+      (item) => item.id === userId && item.status === "active",
+    );
+    if (!user) return false;
+    user.passwordHash = passwordHash;
+    for (const item of this.passwordResetTokens) {
+      if (item.userId === userId && !item.consumedAt) {
+        item.consumedAt = new Date().toISOString();
+      }
+    }
+    for (const [key, session] of this.sessions) {
+      if (session.userId === userId) this.sessions.delete(key);
+    }
+    return true;
+  }
+
+  async updatePasswordAndRevokeSessions({ userId, passwordHash }) {
+    const user = this.users.find(
+      (item) => item.id === userId && item.status === "active",
+    );
+    if (!user) throw new ApiError(404, "USER_NOT_FOUND", "The account is unavailable.");
+    user.passwordHash = passwordHash;
+    for (const [key, session] of this.sessions) {
+      if (session.userId === userId) this.sessions.delete(key);
+    }
+    for (const item of this.passwordResetTokens) {
+      if (item.userId === userId && !item.consumedAt) {
+        item.consumedAt = new Date().toISOString();
+      }
+    }
+    return true;
+  }
+
   async listEnrollments(userId) {
     return this.enrollments.get(userId) || [];
   }
@@ -340,11 +432,14 @@ export class FakeRepository {
         (item) => item.studentUserId === studentUserId && item.moduleId === module.id && item.active &&
           (!item.expiresAt || new Date(item.expiresAt) > new Date()),
       );
+      const recordedStatus = ["in_progress", "completed"].includes(saved?.status)
+        ? saved.status
+        : null;
       return {
         courseCode,
         moduleId: module.id,
         moduleNumber: module.moduleNumber,
-        status: saved?.status || (module.moduleNumber === 0 || previous?.status === "completed" || override ? "available" : "locked"),
+        status: recordedStatus || (module.moduleNumber === 0 || previous?.status === "completed" || override ? "available" : "locked"),
         startedAt: saved?.startedAt || null,
         completedAt: saved?.completedAt || null,
         override: override ? { active: true, reason: override.reason, expiresAt: override.expiresAt } : null,

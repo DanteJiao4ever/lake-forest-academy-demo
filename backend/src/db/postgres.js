@@ -379,6 +379,162 @@ export class PostgresRepository {
     await this.pool.query("DELETE FROM auth_sessions WHERE id = $1", [sessionId]);
   }
 
+  async createPasswordResetToken({
+    id,
+    userId,
+    tokenHash,
+    expiresAt,
+    notBefore,
+  }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const lockedUser = await client.query(
+        "SELECT id FROM app_users WHERE id = $1 AND status = 'active' FOR UPDATE",
+        [userId],
+      );
+      if (!lockedUser.rows[0]) {
+        await client.query("ROLLBACK");
+        return { created: false };
+      }
+      const recent = await client.query(
+        `SELECT created_at
+           FROM password_reset_tokens
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [userId],
+      );
+      if (
+        recent.rows[0] &&
+        new Date(recent.rows[0].created_at) >= new Date(notBefore)
+      ) {
+        await client.query("COMMIT");
+        return { created: false };
+      }
+      await client.query(
+        `UPDATE password_reset_tokens
+            SET consumed_at = COALESCE(consumed_at, now())
+          WHERE user_id = $1 AND consumed_at IS NULL`,
+        [userId],
+      );
+      const inserted = await client.query(
+        `INSERT INTO password_reset_tokens
+          (id, user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, expires_at`,
+        [id, userId, tokenHash, expiresAt],
+      );
+      await client.query("COMMIT");
+      return {
+        created: true,
+        id: inserted.rows[0].id,
+        expiresAt: inserted.rows[0].expires_at,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokePasswordResetToken(tokenHash) {
+    await this.pool.query(
+      `UPDATE password_reset_tokens
+          SET consumed_at = COALESCE(consumed_at, now())
+        WHERE token_hash = $1`,
+      [tokenHash],
+    );
+  }
+
+  async findPasswordResetTokenUser(tokenHash) {
+    const result = await this.pool.query(
+      `SELECT u.*
+         FROM password_reset_tokens token
+         JOIN app_users u ON u.id = token.user_id
+        WHERE token.token_hash = $1
+          AND token.consumed_at IS NULL
+          AND token.expires_at > now()
+          AND u.status = 'active'
+        LIMIT 1`,
+      [tokenHash],
+    );
+    return mapUser(result.rows[0]);
+  }
+
+  async consumePasswordResetToken({ tokenHash, userId, passwordHash }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const token = await client.query(
+        `SELECT token.id
+           FROM password_reset_tokens token
+           JOIN app_users u ON u.id = token.user_id
+          WHERE token.token_hash = $1
+            AND token.user_id = $2
+            AND token.consumed_at IS NULL
+            AND token.expires_at > now()
+            AND u.status = 'active'
+          FOR UPDATE OF token, u`,
+        [tokenHash, userId],
+      );
+      if (!token.rows[0]) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        "UPDATE app_users SET password_hash = $2, updated_at = now() WHERE id = $1",
+        [userId, passwordHash],
+      );
+      await client.query(
+        `UPDATE password_reset_tokens
+            SET consumed_at = COALESCE(consumed_at, now())
+          WHERE user_id = $1 AND consumed_at IS NULL`,
+        [userId],
+      );
+      await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [userId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async updatePasswordAndRevokeSessions({ userId, passwordHash }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query(
+        `UPDATE app_users
+            SET password_hash = $2, updated_at = now()
+          WHERE id = $1 AND status = 'active'
+          RETURNING id`,
+        [userId, passwordHash],
+      );
+      if (!updated.rows[0]) {
+        throw new ApiError(404, "USER_NOT_FOUND", "The account is unavailable.");
+      }
+      await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [userId]);
+      await client.query(
+        `UPDATE password_reset_tokens
+            SET consumed_at = COALESCE(consumed_at, now())
+          WHERE user_id = $1 AND consumed_at IS NULL`,
+        [userId],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
   async replaceEnrollments(studentUserId, courseCodes) {
     const client = await this.pool.connect();
     try {
@@ -862,7 +1018,12 @@ export class PostgresRepository {
       [studentUserId, courseCode],
     );
     return result.rows.map((row) => {
-      const status = row.recorded_status ||
+      const recordedStatus = ["in_progress", "completed"].includes(
+        row.recorded_status,
+      )
+        ? row.recorded_status
+        : null;
+      const status = recordedStatus ||
         (row.module_number === 0 || row.override_id || row.previous_status === "completed"
           ? "available"
           : "locked");
@@ -1180,7 +1341,12 @@ export class PostgresRepository {
         byStudent.set(row.student_id, student);
         students.push(student);
       }
-      const status = row.recorded_status ||
+      const recordedStatus = ["in_progress", "completed"].includes(
+        row.recorded_status,
+      )
+        ? row.recorded_status
+        : null;
+      const status = recordedStatus ||
         (row.module_number === 0 || row.override_id || row.previous_status === "completed"
           ? "available"
           : "locked");

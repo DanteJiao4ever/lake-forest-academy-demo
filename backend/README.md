@@ -25,7 +25,8 @@ Drive file ID or access token.
 
 5. Run `pnpm dev`. Process and database checks are available at `/health/live`
    and `/health/ready`; `/health/upload-ready` additionally verifies ClamAV and
-   the configured Drive submission root.
+   the configured Drive submission root. `/health/password-reset-ready`
+   verifies that the configured Gmail sender can obtain an access token.
 
 No user or default password is embedded in this repository. Public student
 registration always creates the `student` role. Teacher and administrator roles
@@ -48,6 +49,9 @@ Configure the frontend with these HTTPS URLs:
 window.LFA_AUTH_CONFIG = {
   loginEndpoint: "https://api.lakeforestacademy.ca/v1/auth/login",
   registrationEndpoint: "https://api.lakeforestacademy.ca/v1/auth/register",
+  passwordResetRequestEndpoint: "https://api.lakeforestacademy.ca/v1/auth/password-reset-requests",
+  passwordResetEndpoint: "https://api.lakeforestacademy.ca/v1/auth/password-resets",
+  passwordChangeEndpoint: "https://api.lakeforestacademy.ca/v1/auth/password-change",
   enrollmentsEndpoint: "https://api.lakeforestacademy.ca/v1/me/enrollments",
   googleWorkspaceAuthStart: "",
   workspaceSessionEndpoint: "https://api.lakeforestacademy.ca/v1/auth/session",
@@ -79,6 +83,12 @@ session receive the same value and PostgreSQL stores no raw CSRF token.
 - `POST /v1/auth/login` — student or faculty login using `{email,password,portal}`.
 - `GET /v1/auth/session` — restores the current cookie session.
 - `POST /v1/auth/logout` — revokes the current session and clears the cookie.
+- `POST /v1/auth/password-reset-requests` — accepts `{email}` and always returns
+  the same `202` envelope for active and unknown accounts.
+- `POST /v1/auth/password-resets` — consumes a one-time token with
+  `{token,newPassword,confirmPassword}` and revokes every previous session.
+- `POST /v1/auth/password-change` — requires the current cookie, CSRF token and
+  `{currentPassword,newPassword,confirmPassword}`, then revokes every session.
 
 Other browser contracts:
 
@@ -121,6 +131,19 @@ Successful authentication returns both a nested user and compatibility fields:
 Passwords are stored only as bcrypt hashes. Registration enforces the same
 12-128 character, mixed-case, number and symbol policy shown by the frontend,
 and rejects passwords containing the email local-part.
+
+Password recovery stores only a SHA-256 digest of each random one-time token;
+tokens expire after 30 minutes by default and are consumed atomically with the
+password update and session revocation. Production email delivery is disabled
+until `PASSWORD_RESET_MAIL_PROVIDER=gmail_api` is explicitly configured. The
+service account JSON is preferably supplied through the dedicated protected
+`GMAIL_SERVICE_ACCOUNT_JSON_BASE64` setting (with the existing Google
+credential setting as a fallback) and must have Workspace domain-wide delegation
+for `gmail.send` and `gmail.metadata`, impersonating
+`GMAIL_IMPERSONATED_USER`. `PASSWORD_RESET_FROM_EMAIL` must be that same mailbox;
+the readiness check verifies its Gmail profile before the frontend exposes email
+recovery. The public link is set with `PASSWORD_RESET_URL`. A missing or invalid
+mail configuration fails closed and never returns or emails an existing password.
 
 ## Lotus Drive mapping
 
