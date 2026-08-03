@@ -62,6 +62,18 @@ test("production deployment gates email recovery on delegated Gmail readiness", 
     workflow,
     /probe "\/health\/account-security-ready" "account-security-ready"/,
   );
+  assert.match(
+    workflow,
+    /SUBMISSION_TARGET_ROOT_ID: \$\{\{ vars\.SUBMISSION_TARGET_ROOT_ID \}\}/,
+  );
+  assert.match(
+    workflow,
+    /SUBMISSION_TARGET_ROOT_ID=\$\{\{ env\.SUBMISSION_TARGET_ROOT_ID \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /SUBMISSION_TARGET_ROOT_ID=[A-Za-z0-9_-]{20,}/,
+  );
 });
 
 async function bootstrapConfiguration({

@@ -48,6 +48,48 @@ test(
         title_update: false,
       });
 
+      const targetPrivileges = await pool.query(
+        `SELECT
+           has_table_privilege(current_user, 'drive_submission_targets', 'SELECT') AS can_select,
+           has_table_privilege(current_user, 'drive_submission_targets', 'INSERT') AS can_insert,
+           has_table_privilege(current_user, 'drive_submission_targets', 'UPDATE') AS can_update,
+           has_table_privilege(current_user, 'drive_submission_targets', 'DELETE') AS can_delete`,
+      );
+      assert.deepEqual(targetPrivileges.rows[0], {
+        can_select: true,
+        can_insert: true,
+        can_update: false,
+        can_delete: false,
+      });
+
+      const systemTargetInput = {
+        rootFolderId: `ci-system-submissions-${suffix}`,
+        rootFolderName: "Lake Forest Learning - Student Submissions",
+        driveKind: "shared_drive",
+        driveId: `ci-shared-drive-${suffix}`,
+      };
+      const [systemTargetA, systemTargetB] = await Promise.all([
+        repository.ensureSystemSubmissionTarget(systemTargetInput),
+        repository.ensureSystemSubmissionTarget(systemTargetInput),
+      ]);
+      assert.equal(systemTargetA.id, systemTargetB.id);
+      const systemTargetRows = await pool.query(
+        `SELECT id, created_by, configuration_origin, credential_type,
+                credential_ref, status
+           FROM drive_submission_targets
+          WHERE drive_kind = 'shared_drive' AND root_folder_id = $1`,
+        [systemTargetInput.rootFolderId],
+      );
+      assert.equal(systemTargetRows.rowCount, 1);
+      assert.equal(systemTargetRows.rows[0].created_by, null);
+      assert.equal(systemTargetRows.rows[0].configuration_origin, "system_config");
+      assert.equal(systemTargetRows.rows[0].credential_type, "service_account");
+      assert.equal(
+        systemTargetRows.rows[0].credential_ref,
+        "adc://runtime-service-account",
+      );
+      assert.equal(systemTargetRows.rows[0].status, "active");
+
       const user = await repository.createUser({
         publicId: `ci-progress-${suffix}`,
         email: `ci-progress-${suffix}@example.invalid`,
@@ -75,15 +117,20 @@ test(
           displayName: `CI submission target ${suffix}`,
           driveKind: "my_drive",
           driveId: null,
-          rootFolderId: `ci-submissions-${suffix}`,
+          rootFolderId: systemTargetInput.rootFolderId,
           rootFolderName: "CI Student Submissions",
           credentialType: "service_account",
-          credentialRef: `ci-secret-${suffix}`,
+          credentialRef: "adc://runtime-service-account",
         },
         user.id,
       );
       const activeSubmissionTarget = await repository.getActiveSubmissionTarget();
-      assert.equal(activeSubmissionTarget.id, submissionTarget.id);
+      assert.equal(activeSubmissionTarget.id, systemTargetA.id);
+      assert.notEqual(activeSubmissionTarget.id, submissionTarget.id);
+      const exactTopologyTarget = await repository.getActiveSubmissionTarget(
+        systemTargetInput.rootFolderId,
+      );
+      assert.equal(exactTopologyTarget.id, systemTargetA.id);
 
       const submissionId = randomUUID();
       const submissionFileId = randomUUID();

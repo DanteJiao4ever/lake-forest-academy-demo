@@ -93,8 +93,14 @@ export class FakeRepository {
     ]);
     this.target = {
       id: randomUUID(),
-      root_folder_id: "1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK",
-      drive_id: null,
+      root_folder_id: "submission-root-test",
+      root_folder_name: "Lake Forest Learning - Student Submissions",
+      drive_kind: "shared_drive",
+      drive_id: "submission-shared-drive-test",
+      credential_type: "service_account",
+      credential_ref: "adc://runtime-service-account",
+      status: "active",
+      configuration_origin: "system_config",
     };
     this.materials = [
       {
@@ -773,7 +779,19 @@ export class FakeRepository {
   }
 
   async getAssignment(id) { return this.assignments.get(id) || null; }
-  async getActiveSubmissionTarget() { return this.target; }
+  async getActiveSubmissionTarget(rootFolderId = null) {
+    if (!this.target || this.target.status !== "active") return null;
+    if (rootFolderId && this.target.root_folder_id !== rootFolderId) return null;
+    if (
+      rootFolderId &&
+      (
+        this.target.drive_kind !== "shared_drive" ||
+        this.target.credential_type !== "service_account" ||
+        this.target.credential_ref !== "adc://runtime-service-account"
+      )
+    ) return null;
+    return this.target;
+  }
 
   messagesForSubmissionThread(submission) {
     return this.submissionMessages
@@ -1346,21 +1364,54 @@ export class FakeRepository {
       id: randomUUID(), display_name: input.displayName, drive_kind: input.driveKind,
       drive_id: input.driveId || null, root_folder_id: input.rootFolderId,
       root_folder_name: input.rootFolderName, credential_type: input.credentialType,
-      status: "active", created_by: actorId, created_at: new Date().toISOString(),
+      configuration_origin: "admin_api", status: "active", created_by: actorId,
+      created_at: new Date().toISOString(),
     };
     this.targets.push(row);
     return row;
   }
   async listSubmissionTargets() { return this.targets; }
+
+  async ensureSystemSubmissionTarget(input) {
+    let row = this.targets.find(
+      (item) =>
+        item.drive_kind === input.driveKind &&
+        item.root_folder_id === input.rootFolderId,
+    );
+    if (!row) {
+      row = {
+        id: randomUUID(),
+        display_name: "Configured Student Submission Storage",
+        drive_kind: input.driveKind,
+        drive_id: input.driveId || null,
+        root_folder_id: input.rootFolderId,
+        root_folder_name: input.rootFolderName,
+        credential_type: "service_account",
+        credential_ref: "adc://runtime-service-account",
+        configuration_origin: "system_config",
+        status: "active",
+        created_by: null,
+        created_at: new Date().toISOString(),
+      };
+      this.targets.push(row);
+    }
+    return row;
+  }
 }
 
 export class FakeDrive {
   constructor() {
     this.uploads = [];
-    this.deleted = [];
+    this.trashed = [];
     this.readyChecks = [];
+    this.submissionTargetChecks = [];
     this.curriculumReadyChecks = [];
     this.available = true;
+    this.submissionDriveKind = "shared_drive";
+    this.submissionDriveId = "submission-shared-drive-test";
+    this.submissionCanAddChildren = true;
+    this.submissionCanListChildren = true;
+    this.submissionCanTrashChildren = true;
     this.curriculumAvailable = true;
     this.curriculumRecords = [
       "SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M",
@@ -1392,8 +1443,8 @@ export class FakeDrive {
     );
   }
 
-  async ready(rootFolderId) {
-    this.readyChecks.push(rootFolderId);
+  async inspectSubmissionTarget(rootFolderId, rootFolderName = "") {
+    this.submissionTargetChecks.push({ rootFolderId, rootFolderName });
     if (!this.available) {
       throw new ApiError(
         503,
@@ -1401,7 +1452,18 @@ export class FakeDrive {
         "Submission storage is temporarily unavailable.",
       );
     }
-    return true;
+    return {
+      driveKind: this.submissionDriveKind,
+      driveId: this.submissionDriveId,
+      canAddChildren: this.submissionCanAddChildren,
+      canListChildren: this.submissionCanListChildren,
+      canTrashChildren: this.submissionCanTrashChildren,
+    };
+  }
+
+  async ready(rootFolderId, rootFolderName = "") {
+    this.readyChecks.push(rootFolderId);
+    return this.inspectSubmissionTarget(rootFolderId, rootFolderName);
   }
 
   async curriculumReady(rootFolderId, rootFolderName) {
@@ -1429,7 +1491,7 @@ export class FakeDrive {
     };
   }
 
-  async deleteFile(id) { this.deleted.push(id); }
+  async trashFile(id) { this.trashed.push(id); }
 
   async openFile() {
     return {

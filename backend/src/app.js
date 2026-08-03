@@ -668,11 +668,66 @@ export async function createApp({
     return { status: "ready", catalog: counts };
   });
   app.get("/health/upload-ready", async () => {
-    await Promise.all([
-      repository.ready(),
+    await repository.ready();
+    const target = await repository.getActiveSubmissionTarget(
+      config.submissionTargetRootId,
+    );
+    if (!target) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_UNAVAILABLE",
+        "Submission storage has not been configured.",
+      );
+    }
+    const targetRootId = target.root_folder_id ?? target.rootFolderId;
+    const targetRootName = target.root_folder_name ?? target.rootFolderName;
+    const targetDriveKind = target.drive_kind ?? target.driveKind;
+    const targetDriveId = target.drive_id ?? target.driveId ?? null;
+    if (
+      targetRootId !== config.submissionTargetRootId ||
+      targetRootName !== config.submissionTargetRootName
+    ) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_TARGET_MISMATCH",
+        "Submission storage configuration could not be verified.",
+      );
+    }
+    if (targetDriveKind !== "shared_drive" || !targetDriveId) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_REQUIRES_SHARED_DRIVE",
+        "Student submission storage must use a Shared Drive.",
+      );
+    }
+    const [, descriptor] = await Promise.all([
       scanner.ready(),
-      drive.ready(config.submissionTargetRootId),
+      drive.ready(
+        targetRootId,
+        targetRootName,
+      ),
     ]);
+    if (
+      targetDriveKind !== descriptor.driveKind ||
+      targetDriveId !== (descriptor.driveId || null)
+    ) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_TARGET_MISMATCH",
+        "Submission storage configuration could not be verified.",
+      );
+    }
+    if (
+      descriptor.canAddChildren !== true ||
+      descriptor.canListChildren !== true ||
+      descriptor.canTrashChildren !== true
+    ) {
+      throw new ApiError(
+        503,
+        "SUBMISSION_STORAGE_NOT_WRITABLE",
+        "Student submission storage is not writable by the runtime service.",
+      );
+    }
     return { status: "ready" };
   });
   app.get("/health/drive-catalog-ready", async (request) => {
@@ -1794,9 +1849,62 @@ export async function createApp({
           "A new attempt must replace your latest submission.",
         );
       }
-      const target = validatedFiles.length ? await repository.getActiveSubmissionTarget() : null;
+      const target = validatedFiles.length
+        ? await repository.getActiveSubmissionTarget(config.submissionTargetRootId)
+        : null;
       if (validatedFiles.length && !target) {
         throw new ApiError(503, "SUBMISSION_STORAGE_UNAVAILABLE", "Submission storage has not been configured.");
+      }
+      if (
+        validatedFiles.length &&
+        ((target.root_folder_id ?? target.rootFolderId) !==
+          config.submissionTargetRootId ||
+          (target.root_folder_name ?? target.rootFolderName) !==
+            config.submissionTargetRootName)
+      ) {
+        throw new ApiError(
+          503,
+          "SUBMISSION_STORAGE_TARGET_MISMATCH",
+          "Submission storage configuration could not be verified.",
+        );
+      }
+      if (
+        validatedFiles.length &&
+        ((target.drive_kind ?? target.driveKind) !== "shared_drive" ||
+          !(target.drive_id ?? target.driveId))
+      ) {
+        throw new ApiError(
+          503,
+          "SUBMISSION_STORAGE_REQUIRES_SHARED_DRIVE",
+          "Student submission storage must use a Shared Drive.",
+        );
+      }
+      if (validatedFiles.length) {
+        const targetRootId = target.root_folder_id ?? target.rootFolderId;
+        const targetRootName = target.root_folder_name ?? target.rootFolderName;
+        const targetDriveId = target.drive_id ?? target.driveId;
+        const descriptor = await drive.ready(targetRootId, targetRootName);
+        if (
+          descriptor.driveKind !== "shared_drive" ||
+          descriptor.driveId !== targetDriveId
+        ) {
+          throw new ApiError(
+            503,
+            "SUBMISSION_STORAGE_TARGET_MISMATCH",
+            "Submission storage configuration could not be verified.",
+          );
+        }
+        if (
+          descriptor.canAddChildren !== true ||
+          descriptor.canListChildren !== true ||
+          descriptor.canTrashChildren !== true
+        ) {
+          throw new ApiError(
+            503,
+            "SUBMISSION_STORAGE_NOT_WRITABLE",
+            "Student submission storage is not writable by the runtime service.",
+          );
+        }
       }
       const submissionId = randomUUID();
       const driveFiles = [];
@@ -1870,9 +1978,44 @@ export async function createApp({
         reply.status(201).send({ data: serializeSubmission(complete) });
       } catch (error) {
         if (!submissionPersisted) {
-          await Promise.allSettled(
-            driveFiles.map((file) => drive.deleteFile(file.driveFileId)),
+          const cleanup = await Promise.allSettled(
+            driveFiles.map((file) => drive.trashFile(file.driveFileId)),
           );
+          const cleanupFailureCount = cleanup.filter(
+            (result) => result.status === "rejected",
+          ).length;
+          if (cleanupFailureCount) {
+            request.log.error(
+              {
+                requestId: request.id,
+                submissionId,
+                orphanedFileCount: cleanupFailureCount,
+              },
+              "Submission rollback could not trash every uploaded file",
+            );
+            try {
+              await repository.recordAudit?.({
+                requestId: request.id,
+                actorUserId: request.auth.user.id,
+                action: "submission.rollback_cleanup",
+                resourceType: "submission",
+                resourceId: submissionId,
+                outcome: "failure",
+                details: {
+                  uploadedFileCount: driveFiles.length,
+                  orphanedFileCount: cleanupFailureCount,
+                },
+              });
+            } catch (auditError) {
+              request.log.error(
+                {
+                  requestId: request.id,
+                  code: auditError?.code || "SUBMISSION_ROLLBACK_AUDIT_FAILED",
+                },
+                "Submission rollback cleanup failure could not be audited",
+              );
+            }
+          }
         }
         throw error;
       }
@@ -2324,6 +2467,16 @@ export async function createApp({
       }
       if (value.driveKind === "my_drive" && value.driveId) {
         context.addIssue({ code: "custom", path: ["driveId"], message: "driveId must be null for My Drive" });
+      }
+      if (
+        value.driveKind === "my_drive" &&
+        value.credentialType === "service_account"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["driveKind"],
+          message: "Service-account submission storage must use a Shared Drive",
+        });
       }
     });
 

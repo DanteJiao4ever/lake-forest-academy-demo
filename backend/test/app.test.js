@@ -38,7 +38,7 @@ describe("Lake Forest Learning API", () => {
       COOKIE_SECURE: "false",
       BCRYPT_COST: "10",
       CLAMAV_REQUIRED: "false",
-      SUBMISSION_TARGET_ROOT_ID: "1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK",
+      SUBMISSION_TARGET_ROOT_ID: "submission-root-test",
     });
     repository = new FakeRepository();
     drive = new FakeDrive();
@@ -376,6 +376,112 @@ describe("Lake Forest Learning API", () => {
     assert.deepEqual(drive.readyChecks, [config.submissionTargetRootId]);
   });
 
+  test("fails upload readiness before touching Drive when the configured DB target is absent", async () => {
+    repository.target = null;
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "SUBMISSION_STORAGE_UNAVAILABLE");
+    assert.deepEqual(drive.readyChecks, []);
+  });
+
+  test("ignores an active target for a different legacy root", async () => {
+    repository.target.root_folder_id = "legacy-submission-root";
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "SUBMISSION_STORAGE_UNAVAILABLE");
+    assert.deepEqual(drive.readyChecks, []);
+  });
+
+  test("checks Drive using the exact root returned by the configured-target lookup", async () => {
+    repository.getActiveSubmissionTarget = async (requestedRootId) => {
+      assert.equal(requestedRootId, config.submissionTargetRootId);
+      return {
+        ...repository.target,
+        root_folder_id: config.submissionTargetRootId,
+      };
+    };
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(drive.readyChecks, [repository.target.root_folder_id]);
+  });
+
+  test("keeps upload readiness closed for conflicting exact-target metadata", async () => {
+    repository.target.root_folder_name = "Unexpected Folder";
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_TARGET_MISMATCH",
+    );
+    assert.deepEqual(drive.readyChecks, []);
+  });
+
+  test("keeps upload readiness closed when the stored Drive topology is stale", async () => {
+    repository.target.drive_id = "stale-shared-drive";
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_TARGET_MISMATCH",
+    );
+    assert.deepEqual(drive.readyChecks, [config.submissionTargetRootId]);
+  });
+
+  test("ignores a legacy service-account target in My Drive", async () => {
+    repository.target.drive_kind = "my_drive";
+    repository.target.drive_id = null;
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_UNAVAILABLE",
+    );
+    assert.deepEqual(drive.readyChecks, []);
+  });
+
+  test("keeps upload readiness closed when the Shared Drive cannot accept children", async () => {
+    drive.submissionCanAddChildren = false;
+
+    const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_NOT_WRITABLE",
+    );
+    assert.deepEqual(drive.readyChecks, [config.submissionTargetRootId]);
+  });
+
+  for (const capability of [
+    ["list children", "submissionCanListChildren"],
+    ["trash rollback files", "submissionCanTrashChildren"],
+  ]) {
+    test(`keeps upload readiness closed when the Shared Drive cannot ${capability[0]}`, async () => {
+      drive[capability[1]] = false;
+
+      const response = await app.inject({ method: "GET", url: "/health/upload-ready" });
+
+      assert.equal(response.statusCode, 503);
+      assert.equal(
+        response.json().error.code,
+        "SUBMISSION_STORAGE_NOT_WRITABLE",
+      );
+      assert.deepEqual(drive.readyChecks, [config.submissionTargetRootId]);
+    });
+  }
+
   test("fails upload readiness closed when the malware scanner is unavailable", async () => {
     scanner.available = false;
 
@@ -383,6 +489,67 @@ describe("Lake Forest Learning API", () => {
 
     assert.equal(response.statusCode, 503);
     assert.equal(response.json().error.code, "MALWARE_SCANNER_UNAVAILABLE");
+  });
+
+  test("preserves the administrator target response contract without exposing credential references", async () => {
+    const admin = await addFaculty("teacher_admin");
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/drive/submission-targets",
+      headers: {
+        origin,
+        cookie: admin.cookie,
+        "x-csrf-token": admin.body.csrfToken,
+      },
+      payload: {
+        displayName: "Protected student submissions",
+        driveKind: "shared_drive",
+        driveId: "private-shared-drive-id",
+        rootFolderId: "private-submission-root-id",
+        rootFolderName: "Lake Forest Learning - Student Submissions",
+        credentialType: "service_account",
+        credentialRef: "secret-manager://test-only",
+      },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    assert.equal(created.json().data.rootFolderId, "private-submission-root-id");
+    assert.equal(created.json().data.driveId, "private-shared-drive-id");
+    assert.equal(Object.hasOwn(created.json().data, "credentialRef"), false);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/admin/drive/submission-targets",
+      headers: { origin, cookie: admin.cookie },
+    });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.equal(listed.json().data[0].rootFolderId, "private-submission-root-id");
+    assert.equal(listed.json().data[0].driveId, "private-shared-drive-id");
+    assert.equal(Object.hasOwn(listed.json().data[0], "credentialRef"), false);
+  });
+
+  test("rejects a new service-account submission target in My Drive", async () => {
+    const admin = await addFaculty("teacher_admin");
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/drive/submission-targets",
+      headers: {
+        origin,
+        cookie: admin.cookie,
+        "x-csrf-token": admin.body.csrfToken,
+      },
+      payload: {
+        displayName: "Unsafe personal-drive target",
+        driveKind: "my_drive",
+        rootFolderId: "personal-drive-folder-test",
+        rootFolderName: "Lake Forest Learning - Student Submissions",
+        credentialType: "service_account",
+        credentialRef: "adc://runtime-service-account",
+      },
+    });
+
+    assert.equal(response.statusCode, 422, response.body);
+    assert.equal(response.json().error.code, "INVALID_SUBMISSION_TARGET");
+    assert.equal(repository.targets.length, 0);
   });
 
   test("registers a server-side student with a hashed password and no implicit course access", async () => {
@@ -518,6 +685,179 @@ describe("Lake Forest Learning API", () => {
     });
     assert.equal(changed.statusCode, 409);
     assert.equal(changed.json().error.code, "IDEMPOTENCY_KEY_REUSED");
+  });
+
+  test("rechecks Shared Drive write capability before accepting an attachment", async () => {
+    const registered = await register("revoked-drive-access@example.invalid");
+    await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
+    drive.submissionCanAddChildren = false;
+    const form = multipartPayload(
+      {
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Capability check",
+        integrityConfirmed: "true",
+      },
+      {
+        name: "capability-check.pdf",
+        type: "application/pdf",
+        buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+      },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "submission-capability-check-1",
+        ...form.headers,
+      },
+      payload: form.payload,
+    });
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_NOT_WRITABLE",
+    );
+    assert.equal(drive.uploads.length, 0);
+    assert.equal(repository.submissions.length, 0);
+  });
+
+  test("rejects an attachment when the stored target name differs from deployment configuration", async () => {
+    const registered = await register("target-name-mismatch@example.invalid");
+    await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
+    repository.target.root_folder_name = "Unexpected Submission Folder";
+    const form = multipartPayload(
+      {
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Target verification",
+        integrityConfirmed: "true",
+      },
+      {
+        name: "target-verification.pdf",
+        type: "application/pdf",
+        buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+      },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "submission-target-verification-1",
+        ...form.headers,
+      },
+      payload: form.payload,
+    });
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.equal(
+      response.json().error.code,
+      "SUBMISSION_STORAGE_TARGET_MISMATCH",
+    );
+    assert.deepEqual(drive.readyChecks, []);
+    assert.equal(drive.uploads.length, 0);
+    assert.equal(repository.submissions.length, 0);
+  });
+
+  test("trashes an uploaded file and audits cleanup failure when submission persistence fails", async () => {
+    const logEntries = [];
+    await app.close();
+    app = await createApp({
+      config,
+      repository,
+      drive,
+      scanner,
+      logger: {
+        level: "error",
+        stream: {
+          write(line) {
+            logEntries.push(JSON.parse(line));
+          },
+        },
+      },
+    });
+    const registered = await register("rollback-cleanup@example.invalid");
+    await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
+    repository.createSubmission = async () => {
+      throw new ApiError(
+        503,
+        "SUBMISSION_PERSISTENCE_FAILED",
+        "The service could not save the submission.",
+      );
+    };
+    const cleanupAttempts = [];
+    drive.trashFile = async (fileId) => {
+      cleanupAttempts.push(fileId);
+      throw new ApiError(
+        503,
+        "SUBMISSION_DRIVE_PERMISSION_DENIED",
+        "Submission storage is temporarily unavailable.",
+      );
+    };
+    const form = multipartPayload(
+      {
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Rollback cleanup test",
+        integrityConfirmed: "true",
+      },
+      {
+        name: "rollback-cleanup.pdf",
+        type: "application/pdf",
+        buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+      },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "idempotency-key": "submission-rollback-cleanup-1",
+        ...form.headers,
+      },
+      payload: form.payload,
+    });
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.equal(response.json().error.code, "SUBMISSION_PERSISTENCE_FAILED");
+    assert.deepEqual(cleanupAttempts, ["drive-1"]);
+    assert.equal(repository.submissions.length, 0);
+    assert.equal(
+      repository.audit.some(
+        (event) =>
+          event.action === "submission.rollback_cleanup" &&
+          event.outcome === "failure" &&
+          event.details.orphanedFileCount === 1,
+      ),
+      true,
+    );
+    const cleanupLog = logEntries.find(
+      (entry) =>
+        entry.msg === "Submission rollback could not trash every uploaded file",
+    );
+    assert.equal(cleanupLog.orphanedFileCount, 1);
+    assert.equal(JSON.stringify(cleanupLog).includes("drive-1"), false);
   });
 
   test("returns a stable Drive upload code and request ID without upstream details", async () => {

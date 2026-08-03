@@ -19,6 +19,20 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: lfa_learning
+          POSTGRES_USER: lfa_migrator
+          POSTGRES_PASSWORD: ci-migrator-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lfa_migrator -d lfa_learning"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -33,8 +47,32 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Prepare least-privileged runtime role
+        env:
+          PGPASSWORD: ci-migrator-password
+        run: >-
+          psql --host 127.0.0.1 --username lfa_migrator --dbname lfa_learning
+          --set ON_ERROR_STOP=1
+          --command "CREATE ROLE lfa_api LOGIN INHERIT PASSWORD 'ci-runtime-password'"
+      - name: Apply migrations twice
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
+          DATABASE_SSL: "false"
+        run: |
+          pnpm migrate
+          pnpm migrate
+      - name: Verify least-privileged runtime access
+        env:
+          PGPASSWORD: ci-runtime-password
+        run: >-
+          psql --host 127.0.0.1 --username lfa_api --dbname lfa_learning
+          --set ON_ERROR_STOP=1
+          --command "SELECT count(*) FROM course_modules; SELECT count(*) FROM drive_submission_targets;"
       - run: pnpm check
       - run: pnpm test
+        env:
+          RUNTIME_DATABASE_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
       - run: docker build --tag lfa-learning-api:${GITHUB_SHA} .
 
   deploy:
@@ -58,6 +96,7 @@ jobs:
       DB_MIGRATION_SECRET: ${{ vars.GCP_DB_MIGRATION_SECRET }}
       CSRF_SECRET: ${{ vars.GCP_CSRF_SECRET }}
       CURRICULUM_DRIVE_ROOT_ID: ${{ vars.CURRICULUM_DRIVE_ROOT_ID }}
+      SUBMISSION_TARGET_ROOT_ID: ${{ vars.SUBMISSION_TARGET_ROOT_ID }}
       CLAMAV_HOST: ${{ vars.GCP_CLAMAV_HOST }}
       VPC_NETWORK: ${{ vars.GCP_VPC_NETWORK }}
       VPC_SUBNET: ${{ vars.GCP_VPC_SUBNET }}
@@ -75,7 +114,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CURRICULUM_DRIVE_ROOT_ID CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
+          for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CURRICULUM_DRIVE_ROOT_ID SUBMISSION_TARGET_ROOT_ID CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
             test -n "${!name:-}" || { echo "Missing production variable: ${name}" >&2; exit 1; }
           done
           case "$PASSWORD_RESET_MAIL_PROVIDER" in
@@ -171,7 +210,7 @@ jobs:
             CLAMAV_HOST=${{ env.CLAMAV_HOST }}
             CLAMAV_PORT=3310
             CLAMAV_REQUIRED=true
-            SUBMISSION_TARGET_ROOT_ID=1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK
+            SUBMISSION_TARGET_ROOT_ID=${{ env.SUBMISSION_TARGET_ROOT_ID }}
             PASSWORD_RESET_TOKEN_TTL_MINUTES=30
             PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS=60
             PASSWORD_RESET_URL=https://lakeforestacademy.ca/learning/#/reset-password
