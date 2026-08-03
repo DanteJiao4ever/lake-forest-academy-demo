@@ -57,6 +57,20 @@ describe("course catalog migration contract", () => {
     assert.doesNotMatch(schema, /DROP TABLE|DROP COLUMN|ALTER COLUMN.+SET NOT NULL/i);
   });
 
+  test("serializes module progress without requiring catalog update privilege", async () => {
+    const postgres = await readFile(postgresUrl, "utf8");
+    const start = postgres.indexOf("async upsertStudentModuleProgress(");
+    const end = postgres.indexOf("async upsertStudentActivityCompletion(", start);
+    assert.ok(start >= 0 && end > start, "Missing module progress repository method");
+    const method = postgres.slice(start, end);
+
+    assert.match(
+      method,
+      /pg_advisory_xact_lock\(hashtextextended\(\$1::text \|\| ':' \|\| \$2::text, 0::bigint\)\)/,
+    );
+    assert.doesNotMatch(method, /FOR\s+(?:NO\s+KEY\s+)?UPDATE\s+OF\s+cm/i);
+  });
+
   test("keeps the canonical JSON and deterministic seed in lockstep", async () => {
     const rawCatalog = await readFile(catalogUrl);
     const catalog = JSON.parse(rawCatalog.toString("utf8"));

@@ -1045,6 +1045,14 @@ export class PostgresRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Serialize progress changes for one student/module pair without taking a
+      // write lock on the read-only course catalog. SELECT ... FOR UPDATE on
+      // course_modules would require the runtime role to have UPDATE privilege
+      // on curriculum data, even though this transaction never changes it.
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0::bigint))",
+        [studentUserId, moduleId],
+      );
       const available = await client.query(
         `SELECT cm.id, cm.course_code, cm.module_number, cm.unlock_criteria,
                 current.status AS current_status,
@@ -1072,8 +1080,7 @@ export class PostgresRepository {
            LEFT JOIN student_activity_completions activity_completion
              ON activity_completion.student_user_id = $1
             AND activity_completion.activity_id = required_activity.id
-          WHERE cm.id = $2 AND cm.status = 'published'
-          FOR UPDATE OF cm`,
+          WHERE cm.id = $2 AND cm.status = 'published'`,
         [studentUserId, moduleId],
       );
       const module = available.rows[0];
