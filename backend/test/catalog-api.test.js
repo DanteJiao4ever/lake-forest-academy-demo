@@ -314,6 +314,25 @@ describe("database-driven course catalog API", () => {
 
   test("enforces sequential module progress unless a teacher grants a reasoned override", async () => {
     const student = await registerStudent();
+    const courseStarted = await app.inject({
+      method: "PUT",
+      url: "/v1/me/progress/modules/mhf4u-m00",
+      headers: { origin, cookie: student.cookie, "x-csrf-token": student.csrf },
+      payload: { status: "in_progress" },
+    });
+    assert.equal(courseStarted.statusCode, 200);
+
+    const afterStart = await app.inject({
+      method: "GET",
+      url: "/v1/me/progress?courseCode=MHF4U",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(afterStart.statusCode, 200);
+    assert.deepEqual(
+      afterStart.json().data.slice(0, 2).map((module) => [module.moduleNumber, module.status]),
+      [[0, "in_progress"], [1, "locked"]],
+    );
+
     const locked = await app.inject({
       method: "PUT",
       url: "/v1/me/progress/modules/mhf4u-m01",
@@ -347,6 +366,33 @@ describe("database-driven course catalog API", () => {
     });
     assert.equal(started.statusCode, 200);
     assert.equal(started.json().data.status, "in_progress");
+  });
+
+  test("does not treat stored available or locked labels as module unlock authority", async () => {
+    const student = await registerStudent();
+    repository.moduleProgress.set(`${student.user.id}:mhf4u-m01`, {
+      moduleId: "mhf4u-m01",
+      status: "available",
+      startedAt: null,
+      completedAt: null,
+    });
+    repository.moduleProgress.set(`${student.user.id}:mhf4u-m02`, {
+      moduleId: "mhf4u-m02",
+      status: "locked",
+      startedAt: null,
+      completedAt: null,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/me/progress?courseCode=MHF4U",
+      headers: { origin, cookie: student.cookie },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      response.json().data.slice(0, 3).map((module) => [module.moduleNumber, module.status]),
+      [[0, "available"], [1, "locked"], [2, "locked"]],
+    );
   });
 
   test("treats teacher_admin as faculty and requires a non-empty override reason", async () => {

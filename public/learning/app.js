@@ -36,6 +36,15 @@
     registrationEndpoint: String(
       window.LFA_AUTH_CONFIG?.registrationEndpoint || "",
     ).trim(),
+    passwordResetRequestEndpoint: String(
+      window.LFA_AUTH_CONFIG?.passwordResetRequestEndpoint || "",
+    ).trim(),
+    passwordResetEndpoint: String(
+      window.LFA_AUTH_CONFIG?.passwordResetEndpoint || "",
+    ).trim(),
+    passwordChangeEndpoint: String(
+      window.LFA_AUTH_CONFIG?.passwordChangeEndpoint || "",
+    ).trim(),
     enrollmentsEndpoint: String(
       window.LFA_AUTH_CONFIG?.enrollmentsEndpoint || "",
     ).trim(),
@@ -3738,11 +3747,18 @@
         driveRequestInFlight = false;
         const route = routeParts();
         if (
-          (isTeacher() &&
-            ["course", "courses", "materials"].includes(route[1])) ||
-          (!isTeacher() &&
-            ["course", "courses", "guide", "syllabus"].includes(route[0]))
-        ) {
+            (isTeacher() &&
+              ["course", "courses", "materials"].includes(route[1])) ||
+            (!isTeacher() &&
+              [
+                "course",
+                "courses",
+                "guide",
+                "syllabus",
+                "assessments",
+                "assignments",
+              ].includes(route[0]))
+          ) {
           render(false, true);
         }
       }
@@ -3983,6 +3999,7 @@
       check: '<path d="m5 12 4 4L19 6"/>',
       arrow: '<path d="m9 18 6-6-6-6"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
       file: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 13h6M9 17h6"/>',
       calendar:
         '<rect x="3" y="5" width="18" height="16" rx="1"/><path d="M7 3v4M17 3v4M3 10h18"/>',
@@ -4128,10 +4145,17 @@
     );
   }
 
+  function officialProgressRequired(course) {
+    return (
+      officialProgressConfigured(course) ||
+      ["ready", "unavailable", "invalid"].includes(API_STATUS.state)
+    );
+  }
+
   function moduleIsUnlocked(course, module) {
     if (module.number === 0) return true;
     if (!officialProgressConnected(course)) {
-      return !officialProgressConfigured(course);
+      return !officialProgressRequired(course);
     }
     const current = studentModuleProgress(course, module);
     if (current?.override?.active) return true;
@@ -4170,6 +4194,25 @@
       label: officialProgressConnected(course) ? "Available" : "Preview",
       className: "",
     };
+  }
+
+  function mergeStudentModuleProgress(course, module, record = {}) {
+    const records = platformRuntime.studentProgress[course?.code];
+    if (!Array.isArray(records) || !course || !module) return;
+    const existing = studentModuleProgress(course, module) || {};
+    const remoteModule = remotePlatformModule(course, module);
+    const next = {
+      ...existing,
+      ...record,
+      courseCode: course.code,
+      moduleId:
+        record.moduleId || existing.moduleId || remoteModule?.id || "",
+      moduleKey: module.key,
+      moduleNumber: module.number,
+    };
+    const index = records.indexOf(existing);
+    if (index >= 0) records.splice(index, 1, next);
+    else records.push(next);
   }
 
   function catalogCourses() {
@@ -4636,10 +4679,12 @@
       "course-selection": "Course Selection",
       courses: "My Courses",
       calendar: "Calendar",
-      assignments: "Assignments",
+      assessments: "Assessments",
+      assignments: "Assessments",
       progress: "Progress & Grades",
       announcements: "Announcements",
       support: "Student Support",
+      security: "Account Security",
     }[section] || "Page Not Found";
   }
 
@@ -4652,13 +4697,16 @@
     ) {
       return "courses";
     }
-    if (route[0] === "assignment") return "assignments";
+    if (route[0] === "assignment" || route[0] === "assignments") {
+      return "assessments";
+    }
     return route[0] || "dashboard";
   }
 
   function routeParts() {
     const clean = window.location.hash.replace(/^#\/?/, "");
-    return (clean || "dashboard").split("/").filter(Boolean);
+    const path = clean.split("?", 1)[0];
+    return (path || "dashboard").split("/").filter(Boolean);
   }
 
   function navLink(section, label, iconName, count = 0) {
@@ -4695,10 +4743,11 @@
             ${navLink("course-selection", "Course Selection", "clipboard")}
             ${navLink("courses", "My Courses", "book")}
             ${navLink("calendar", "Calendar", "calendar")}
-            ${navLink("assignments", "Assignments", "clipboard", pending)}
+            ${navLink("assessments", "Assessments", "clipboard", pending)}
             ${navLink("progress", "Progress & Grades", "chart")}
             ${navLink("announcements", "Announcements", "bell", unread)}
             ${navLink("support", "Student Support", "award")}
+            ${navLink("security", "Account Security", "lock")}
           </nav>
           <div class="sidebar-student">
             <span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>
@@ -4745,6 +4794,7 @@
       courses: "Course Management",
       submissions: "Submission Centre",
       materials: "Course Materials",
+      security: "Account Security",
     }[route[1]] || "Faculty Dashboard";
   }
 
@@ -4784,6 +4834,7 @@
             ${teacherNavLink("courses", "Course Management", "book")}
             ${teacherNavLink("submissions", "Submission Centre", "clipboard", awaitingReview)}
             ${teacherNavLink("materials", "Course Materials", "file")}
+            ${teacherNavLink("security", "Account Security", "lock")}
             <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
               <summary>
                 <span class="nav-icon">${icon("book", 19)}</span>
@@ -5027,7 +5078,7 @@
           }
           ${
             details.length
-              ? `<small class="drive-material-meta">${details.map(escapeHtml).join(" 路 ")}</small>`
+              ? `<small class="drive-material-meta">${details.map(escapeHtml).join(" · ")}</small>`
               : ""
           }
         </span>
@@ -5047,7 +5098,7 @@
       .map(
         ([unit, unitRecords]) => `
           <details class="drive-unit-group" open>
-            <summary>${escapeHtml(unit)} 路 ${plural(unitRecords.length, "material")}</summary>
+            <summary>${escapeHtml(unit)} · ${plural(unitRecords.length, "material")}</summary>
             ${[...groupDriveRecords(unitRecords, (record) => record.category).entries()]
               .sort(([a], [b]) => a.localeCompare(b))
               .map(
@@ -5156,11 +5207,11 @@
           .map(([courseId, courseRecords]) => {
             const course = findCourse(courseId);
             const label = course
-              ? `${course.code} 路 ${course.title}`
+              ? `${course.code} · ${course.title}`
               : courseRecords[0]?.courseCode || "Unassigned";
             return `
               <details class="drive-course-group" open>
-                <summary>${escapeHtml(label)} 路 ${plural(courseRecords.length, "material")}</summary>
+                <summary>${escapeHtml(label)} · ${plural(courseRecords.length, "material")}</summary>
                 ${driveUnitTree(courseRecords)}
               </details>
             `;
@@ -5721,7 +5772,7 @@
       </header>
       <section class="teacher-metrics teacher-course-metrics" aria-label="${course.code} overview">
         <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${roster.length}</strong><p>Enrolled Students</p></article>
-        <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${assignments.length}</strong><p>Assignments</p></article>
+        <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${assignments.length}</strong><p>Formal Assessments</p></article>
         <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${records.length}</strong><p>Submissions</p></article>
         <article class="teacher-metric"><span>${icon("clock", 22)}</span><strong>${awaiting.length}</strong><p>Awaiting Review</p></article>
       </section>
@@ -5749,7 +5800,8 @@
             ${teacherProgressMatrixMarkup(course)}
           </section>
           <section class="teacher-section">
-            <div class="section-heading"><div><p class="eyebrow">Course Work</p><h2>Assignments</h2></div><span class="badge">${assignments.length}</span></div>
+            <div class="section-heading"><div><p class="eyebrow">Evaluation Plan</p><h2>Formal Assessments</h2></div><span class="badge">${assignments.length} tasks</span></div>
+            <p class="teacher-section-copy">Coursework contributes 65%, the final evaluation contributes 25%, and teacher-recorded participation contributes 10%. Open a task to review student submissions in the existing grading workflow.</p>
             <div class="teacher-assignment-list">
               ${
                 assignments.length
@@ -5764,7 +5816,7 @@
                         `,
                       )
                       .join("")
-                  : '<div class="teacher-empty"><p>No assignments have been added to this course yet.</p></div>'
+                  : '<div class="teacher-empty"><p>No formal assessments have been added to this course yet.</p></div>'
               }
             </div>
           </section>
@@ -6208,11 +6260,24 @@
     `;
   }
 
-  function passwordInput(id, label, autocomplete, describedBy = "") {
+  function passwordInput(
+    id,
+    label,
+    autocomplete,
+    describedBy = "",
+    hint = "",
+  ) {
+    const fieldHint =
+      hint ||
+      (id === "password"
+        ? "Secure access"
+        : id.toLowerCase().includes("confirm")
+          ? "Enter it again"
+          : "12–128 characters");
     return `
       <div class="password-label">
         <label for="${id}">${label}</label>
-        <span>${id === "password" ? "Secure access" : "Use the same password"}</span>
+        <span>${escapeHtml(fieldHint)}</span>
       </div>
       <div class="auth-input-wrap">
         <input id="${id}" name="${id}" type="password" autocomplete="${autocomplete}" ${describedBy ? `aria-describedby="${describedBy}"` : ""} required />
@@ -6276,6 +6341,11 @@
           <label for="email">Email Address</label>
           <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
           ${passwordInput("password", "Password", "current-password")}
+          ${
+            configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint)
+              ? `<div class="auth-form-links"><a href="${escapeHtml(`#/forgot-password?portal=${facultyPortal ? "faculty" : "student"}&email=${encodeURIComponent(savedEmail)}`)}">Forgot your password?</a></div>`
+              : ""
+          }
           ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
           <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
         </form>
@@ -6303,6 +6373,124 @@
         }
       `,
     );
+  }
+
+  function authRouteQuery() {
+    const hash = String(window.location.hash || "");
+    const queryIndex = hash.indexOf("?");
+    return new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
+  }
+
+  function passwordRulesMarkup(email = "") {
+    return `
+      <ul class="password-rules" id="password-rules" aria-label="Password requirements" aria-live="polite">
+        ${passwordChecks("", email)
+          .map(
+            (rule) => `<li data-password-rule="${rule.id}" aria-label="${escapeHtml(rule.label)}: not yet met"><span aria-hidden="true">${icon("check", 12)}</span>${escapeHtml(rule.label)}</li>`,
+          )
+          .join("")}
+      </ul>
+    `;
+  }
+
+  function forgotPasswordView({ error = "", notice = "", email = "" } = {}) {
+    const query = authRouteQuery();
+    const portal = query.get("portal") === "faculty" ? "faculty" : "student";
+    const savedEmail = email || normalizeEmail(query.get("email"));
+    const ready = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint),
+    );
+    authPage(
+      "Reset Password",
+      `
+        <p class="eyebrow">Account Recovery</p>
+        <h1>Reset Your Password</h1>
+        <p class="login-intro">Enter the email address attached to your Lake Forest Learning account. If it matches an active account, we will send a one-time link.</p>
+        ${notice ? `<p class="form-success" role="status">${escapeHtml(notice)}</p>` : ""}
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+        <form id="forgot-password-form" class="registration-form" novalidate>
+          <input type="hidden" name="portal" value="${portal}" />
+          <div class="auth-field">
+            <label for="recoveryEmail">Email Address</label>
+            <input id="recoveryEmail" name="email" type="email" autocomplete="email" value="${escapeHtml(savedEmail)}" required />
+          </div>
+          <button class="button button-primary login-submit" type="submit" ${ready ? "" : 'disabled aria-disabled="true"'}>Email Reset Link ${icon("arrow", 17)}</button>
+        </form>
+        ${
+          ready
+            ? '<p class="auth-privacy-note"><strong>For your security.</strong>The same confirmation appears whether or not an account exists. Reset links expire and work only once.</p>'
+            : '<p class="auth-setup-note" role="status">Email password recovery is not available yet. Contact Student Support if you cannot sign in.</p>'
+        }
+        <p class="auth-return"><a href="#/signin/${portal}">Return to ${portal === "faculty" ? "Faculty" : "Student"} Sign In</a></p>
+      `,
+    );
+  }
+
+  function resetPasswordView({ error = "" } = {}) {
+    const token = String(authRouteQuery().get("token") || "").trim();
+    const ready = Boolean(configuredAuthUrl(AUTH_CONFIG.passwordResetEndpoint));
+    authPage(
+      "Choose New Password",
+      `
+        <p class="eyebrow">Secure Account Recovery</p>
+        <h1>Choose a New Password</h1>
+        <p class="login-intro">Create a password you have not used for this account. Completing this step signs out any existing sessions.</p>
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+        ${
+          token && ready
+            ? `
+              <form id="reset-password-form" class="registration-form" novalidate>
+                <input type="hidden" name="token" value="${escapeHtml(token)}" />
+                <div class="auth-field">
+                  ${passwordInput("newPassword", "New Password", "new-password", "password-rules")}
+                  ${passwordRulesMarkup()}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("confirmPassword", "Confirm New Password", "new-password")}
+                </div>
+                <button class="button button-primary login-submit" type="submit">Change Password ${icon("arrow", 17)}</button>
+              </form>
+            `
+            : `<div class="error-summary" role="alert"><strong>This reset link cannot be used.</strong><p>${escapeHtml(token ? "Email password recovery is not available yet. Contact Student Support for account access." : "The link is incomplete. Request a new password reset email.")}</p></div>`
+        }
+        <p class="auth-return"><a href="#/forgot-password">Request a New Link</a> · <a href="#/signin/student">Return to Sign In</a></p>
+      `,
+    );
+  }
+
+  function securityView() {
+    const user = currentUser();
+    const ready = Boolean(configuredAuthUrl(AUTH_CONFIG.passwordChangeEndpoint));
+    return `
+      ${pageHeading(
+        "Account Security",
+        "Change Password",
+        "Confirm your current password, then choose a new one. Changing it signs out every active session.",
+      )}
+      <section class="panel security-panel">
+        <header class="panel-header"><div><h2>Password & Sessions</h2><p>${escapeHtml(user?.email || "Signed-in account")}</p></div>${icon("lock", 22)}</header>
+        ${
+          ready
+            ? `
+              <form id="change-password-form" class="registration-form security-form" novalidate>
+                <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+                <div class="auth-field">
+                  ${passwordInput("currentPassword", "Current Password", "current-password", "", "Required to confirm your identity")}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("newPassword", "New Password", "new-password", "password-rules")}
+                  ${passwordRulesMarkup(user?.email || "")}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("confirmPassword", "Confirm New Password", "new-password")}
+                </div>
+                <button class="button button-primary" type="submit">Update Password</button>
+              </form>
+            `
+            : `<p class="auth-setup-note is-error" role="status">${escapeHtml(apiAvailabilityMessage("Secure password changes are temporarily unavailable."))}</p>`
+        }
+      </section>
+    `;
   }
 
   function fieldError(errors, name) {
@@ -6746,6 +6934,7 @@
                 </div>
                 <div class="course-card-actions">
                   <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 16)}</a>
+                  <a class="button button-secondary" href="#/assessments" aria-label="Open ${course.code} assessments">Assessments</a>
                   ${materials.button}
                 </div>
               </div>
@@ -6770,6 +6959,28 @@
           moduleStatus(course, module).key !== "completed",
       ) || modules[0];
     if (!modules.length) return notFoundView();
+    const nextStatus = moduleStatus(course, nextModule);
+    const nextRemoteModule = remotePlatformModule(course, nextModule);
+    const nextRoute = platformModuleRoute(course, nextModule);
+    const nextLabel =
+      nextModule.number === 0
+        ? nextStatus.key === "in_progress"
+          ? "Continue Orientation"
+          : "Start Course"
+        : nextStatus.key === "in_progress"
+          ? `Continue Module ${nextModule.number}`
+          : `Start Module ${nextModule.number}`;
+    const progressBlockedLabel =
+      ["unavailable", "invalid"].includes(API_STATUS.state) ||
+      platformRuntime.errors[`student-progress:${course.code}`]
+        ? "Progress Service Unavailable"
+        : "Connecting Progress";
+    const primaryAction =
+      nextStatus.key === "available" && officialProgressConnected(course)
+        ? `<button class="button button-gold" type="button" data-action="start-module" data-course="${course.id}" data-module="${escapeHtml(nextModule.key)}" data-module-id="${escapeHtml(nextRemoteModule?.id || "")}" ${nextRemoteModule?.id ? "" : "disabled"}>${icon("arrow", 17)} ${nextLabel}</button>`
+        : nextStatus.key === "available" && officialProgressRequired(course)
+          ? `<button class="button button-gold" type="button" disabled>${icon("clock", 17)} ${progressBlockedLabel}</button>`
+          : `<a class="button button-gold" href="#/${nextRoute}">${icon("arrow", 17)} ${nextLabel}</a>`;
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <button type="button" data-route="courses">My Courses</button><span>/</span><span>${course.code}</span>
@@ -6784,8 +6995,9 @@
             <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
           </div>
           <div class="course-hero-actions">
-            <a class="button button-gold" href="#/${platformModuleRoute(course, nextModule)}">${icon("arrow", 17)} ${nextModule.number === 0 ? "Start Course" : `Continue Module ${nextModule.number}`}</a>
+            ${primaryAction}
             <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
+            <a class="button button-on-dark" href="#/assessments">${icon("clipboard", 17)} Open Assessments (${ASSIGNMENTS.filter((assignment) => assignment.courseId === course.id).length})</a>
           </div>
         </div>
         <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
@@ -6801,8 +7013,8 @@
             .map((module) => {
               const status = moduleStatus(course, module);
               const assignments = platformAssignmentsForModule(course, module);
-              return `
-                <a class="platform-module-row ${status.key === "locked" ? "is-locked" : ""}" href="#/${platformModuleRoute(course, module)}">
+              const remoteModule = remotePlatformModule(course, module);
+              const rowBody = `
                   <span class="platform-module-number">${String(module.number).padStart(2, "0")}</span>
                   <span class="platform-module-copy">
                     <span class="module-row-meta">${escapeHtml(module.unitTitle || (module.number === 0 ? "Course Orientation" : module.number === 11 ? "Final Evaluation" : `Unit ${module.unitNumber}`))}</span>
@@ -6810,9 +7022,18 @@
                     <small>${plural(module.readingSteps.length, "reading step")} · ${plural(module.selfStudyResources.length, "resource")} · ${assignments.length ? `${assignments.reduce((sum, assignment) => sum + Number(assignment.weightPercent || 0), 0)}% assessed` : "formative"}</small>
                   </span>
                   <span class="badge ${status.className}">${status.label}</span>
-                  ${icon("arrow", 17)}
-                </a>
+                  ${icon(status.key === "locked" ? "clock" : "arrow", 17)}
               `;
+              if (status.key === "locked") {
+                return `<article class="platform-module-row is-locked" aria-disabled="true">${rowBody}</article>`;
+              }
+              if (status.key === "available" && officialProgressConnected(course)) {
+                return `<button class="platform-module-row" type="button" data-action="start-module" data-course="${course.id}" data-module="${escapeHtml(module.key)}" data-module-id="${escapeHtml(remoteModule?.id || "")}" ${remoteModule?.id ? "" : "disabled"}>${rowBody}</button>`;
+              }
+              if (status.key === "available" && officialProgressRequired(course)) {
+                return `<button class="platform-module-row" type="button" disabled aria-disabled="true">${rowBody}</button>`;
+              }
+              return `<a class="platform-module-row" href="#/${platformModuleRoute(course, module)}">${rowBody}</a>`;
             })
             .join("")}
           ${studentCourseMaterials(course)}
@@ -7416,8 +7637,81 @@
     `;
   }
 
-  function assignmentsView() {
-    const visible = studentAssignments().filter((assignment) => {
+  function assessmentPackageMarkup(course) {
+    const records = courseDriveMaterials(course).filter((record) =>
+      /assessment/i.test(String(record.category || "")),
+    );
+    if (!driveMaterialsReadReady()) {
+      return `<div class="assessment-package-state">${icon("file", 18)}<span><strong>Assessment package unavailable</strong><small>${escapeHtml(driveCatalogUnavailableMessage())}</small></span></div>`;
+    }
+    if (driveRequestInFlight && !records.length) {
+      return `<div class="assessment-package-state">${icon("clock", 18)}<span><strong>Loading assessment package</strong><small>Reading the protected course index.</small></span></div>`;
+    }
+    if (driveMaterialsState.error) {
+      return `<div class="assessment-package-state is-error">${icon("file", 18)}<span><strong>Assessment package could not be loaded</strong><small>${escapeHtml(driveMaterialsState.error)}</small></span><button class="button button-secondary" type="button" data-action="refresh-course-materials">Try Again</button></div>`;
+    }
+    if (!driveEndpointChecked) {
+      return `<div class="assessment-package-state">${icon("clock", 18)}<span><strong>Connecting assessment package</strong><small>Waiting for the protected course index.</small></span></div>`;
+    }
+    if (!records.length) {
+      return `<div class="assessment-package-state">${icon("file", 18)}<span><strong>No separate package published</strong><small>Task instructions remain available in each assessment below.</small></span></div>`;
+    }
+    return `<ul class="drive-material-list assessment-package-list">${records
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(driveMaterialItem)
+      .join("")}</ul>`;
+  }
+
+  function participationAssessmentMarkup(course) {
+    const item = (course.gradebookItems || []).find((gradebookItem) =>
+      /participation/i.test(
+        `${gradebookItem.category || ""} ${gradebookItem.title || ""} ${gradebookItem.type || ""}`,
+      ),
+    );
+    if (!item) return "";
+    const published = publishedDirectGrades(course.code).find(
+      (grade) =>
+        String(grade.gradebookItemId || "").toLowerCase() ===
+        String(item.key || item.id || "").toLowerCase(),
+    );
+    const score = published
+      ? normalizedGradePercent(published.score, published.maxScore)
+      : null;
+    return `
+      <article class="assessment-participation-row">
+        <span class="assessment-module-number">CW</span>
+        <span><small>Coursewide · Teacher Recorded</small><strong>${escapeHtml(item.title || "Participation & Learning Process")}</strong><p>Required contact, checkpoints, conferences and documented use of feedback.</p></span>
+        <span><b>${Number(item.weightPercent || 10)}%</b><small>of course grade</small></span>
+        <span class="badge ${score == null ? "info" : "success"}">${score == null ? "Teacher Recorded" : `Published · ${score}%`}</span>
+      </article>
+    `;
+  }
+
+  function assessmentTaskMarkup(assignment, course) {
+    const status = assignmentStatus(assignment);
+    const cardTag = status.key === "locked" ? "article" : "a";
+    const cardHref =
+      status.key === "locked"
+        ? ' aria-disabled="true"'
+        : ` href="#/assignment/${assignment.id}"`;
+    return `
+      <${cardTag} class="assessment-task-card ${status.key === "locked" ? "is-locked" : ""}"${cardHref}>
+        <span class="assessment-module-number">M${String(assignment.moduleNumber ?? "—").padStart(2, "0")}</span>
+        <span>
+          <small>${escapeHtml(assignment.sectionLabel || assignment.unit || "Course Assessment")}</small>
+          <strong>${escapeHtml(assignment.title)}</strong>
+          <p>${assignmentScheduleLabel(assignment)}</p>
+        </span>
+        <span><b>${assignment.weightPercent || 0}%</b><small>of course grade</small></span>
+        <span class="badge ${status.className}">${status.label}</span>
+        ${icon(status.key === "locked" ? "lock" : "arrow", 18)}
+      </${cardTag}>
+    `;
+  }
+
+  function assessmentsView() {
+    const allAssignments = studentAssignments();
+    const visible = allAssignments.filter((assignment) => {
       const key = assignmentStatus(assignment).key;
       if (assignmentFilter === "all") return true;
       if (assignmentFilter === "open") {
@@ -7438,10 +7732,15 @@
     ];
     return `
       ${pageHeading(
-        "Coursework",
-        "Assignments",
-        "Review due dates, submit your work and return to instructor feedback.",
+        "Evaluation & Feedback",
+        "Assessment Centre",
+        "Review each course evaluation plan, open protected assessment packages, submit evidence and return to published feedback.",
       )}
+      <section class="assessment-plan-summary" aria-label="OSSD course evaluation plan">
+        <div><strong>65%</strong><span>Coursework</span><small>Five assessed modules</small></div>
+        <div><strong>25%</strong><span>Final Evaluation</span><small>Culminating task and/or examination</small></div>
+        <div><strong>10%</strong><span>Participation</span><small>Teacher-recorded learning process</small></div>
+      </section>
       <div class="assignment-filters" role="group" aria-label="Filter assignments">
         ${filters
           .map(
@@ -7450,36 +7749,51 @@
           )
           .join("")}
       </div>
-      <section class="assignment-list">
+      <section class="assessment-course-list">
         ${
-          visible.length
-            ? visible
-                .map((assignment) => {
-                  const course = findCourse(assignment.courseId);
-                  const status = assignmentStatus(assignment);
-                  const cardTag = status.key === "locked" ? "article" : "a";
-                  const cardHref =
-                    status.key === "locked"
-                      ? ' aria-disabled="true"'
-                      : ` href="#/assignment/${assignment.id}"`;
+          studentCourses().length
+            ? studentCourses()
+                .map((course) => {
+                  const courseAssignments = visible
+                    .filter((assignment) => assignment.courseId === course.id)
+                    .sort(
+                      (a, b) =>
+                        Number(a.moduleNumber ?? 99) -
+                          Number(b.moduleNumber ?? 99) ||
+                        a.title.localeCompare(b.title),
+                    );
                   return `
-                    <${cardTag} class="assignment-card ${status.key === "locked" ? "is-locked" : ""}"${cardHref}>
-                      <span class="task-dot ${status.key === "overdue" ? "overdue" : ""}"></span>
-                      <span>
-                        <p class="course-code">${course.code} · ${course.title}</p>
-                        <h2>${escapeHtml(assignment.title)}</h2>
-                        <p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p>
-                      </span>
-                      <span class="badge ${status.className}">${status.label}</span>
-                      ${icon(status.key === "locked" ? "clock" : "arrow", 18)}
-                    </${cardTag}>
+                    <article class="assessment-course-panel">
+                      <header>
+                        <div><p class="course-code">${course.code}</p><h2>${escapeHtml(course.title)}</h2></div>
+                        <div><span class="badge">${plural(allAssignments.filter((assignment) => assignment.courseId === course.id).length, "formal task")}</span><a class="text-link" href="#/course/${course.id}">Open Course ${icon("arrow", 15)}</a></div>
+                      </header>
+                      <section class="assessment-package" aria-label="${course.code} assessment package">
+                        <div><p class="eyebrow">Protected Course File</p><h3>Assessment Package</h3></div>
+                        ${assessmentPackageMarkup(course)}
+                      </section>
+                      <div class="assessment-task-list">
+                        ${
+                          courseAssignments.length
+                            ? courseAssignments
+                                .map((assignment) => assessmentTaskMarkup(assignment, course))
+                                .join("")
+                            : '<div class="empty-state compact"><p>No formal assessments match this filter.</p></div>'
+                        }
+                        ${assignmentFilter === "all" || assignmentFilter === "open" || assignmentFilter === "graded" ? participationAssessmentMarkup(course) : ""}
+                      </div>
+                    </article>
                   `;
                 })
                 .join("")
-            : '<div class="empty-state"><p>No assignments match this filter.</p></div>'
+            : '<div class="empty-state"><p>Select a course to see its assessment plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
         }
       </section>
     `;
+  }
+
+  function assignmentsView() {
+    return assessmentsView();
   }
 
   function assignmentView(assignment) {
@@ -7921,6 +8235,8 @@
       );
     } else if (teacherRoute[1] === "materials") {
       view = teacherMaterialsView();
+    } else if (teacherRoute[1] === "security") {
+      view = securityView();
     } else if (teacherRoute[1] === "course") {
       const course = findCourse(teacherRoute[2]);
       const moduleRequested = teacherRoute[3] === "module";
@@ -7976,11 +8292,17 @@
       setDrawerOpen(false, { restoreFocus: false });
     }
     const previousScroll = preserveScroll ? window.scrollY : 0;
+    const authParts = routeParts();
+    if (authParts[0] === "reset-password") {
+      resetPasswordView();
+      if (shouldFocusMain) focusMain();
+      return;
+    }
     if (!isSignedIn()) {
-      const authParts = routeParts();
       const authRoute = authParts[0];
       if (authRoute === "register") registrationView();
       else if (authRoute === "account-created") accountCreatedView();
+      else if (authRoute === "forgot-password") forgotPasswordView();
       else
         loginView({
           portal:
@@ -8012,6 +8334,7 @@
       route[0] === "teacher" ||
       route[0] === "signin" ||
       route[0] === "register" ||
+      route[0] === "forgot-password" ||
       route[0] === "account-created"
     ) {
       replaceRoute("dashboard");
@@ -8055,7 +8378,9 @@
             ? courseAccessView(lesson.course)
             : notFoundView()
         : notFoundView();
-    } else if (route[0] === "assignments") view = assignmentsView();
+    } else if (route[0] === "assessments" || route[0] === "assignments") {
+      view = assignmentsView();
+    }
     else if (route[0] === "assignment") {
       const assignment = findAssignment(route[1]);
       const course = assignment ? findCourse(assignment.courseId) : null;
@@ -8072,6 +8397,7 @@
     } else if (route[0] === "progress") view = progressView();
     else if (route[0] === "announcements") view = announcementsView();
     else if (route[0] === "support") view = supportView();
+    else if (route[0] === "security") view = securityView();
     else view = notFoundView();
     APP_ROOT.innerHTML = shell(view);
     if (route[0] === "course") {
@@ -8083,12 +8409,12 @@
       const assignment = findAssignment(route[1]);
       ensureStudentPlatformData(findCourse(assignment?.courseId));
     } else if (
-      ["dashboard", "assignments", "calendar", "progress"].includes(route[0])
+      ["dashboard", "assessments", "assignments", "calendar", "progress"].includes(route[0])
     ) {
       studentCourses().forEach(ensureStudentPlatformData);
     }
     if (
-      ["course", "courses", "guide", "syllabus"].includes(route[0]) &&
+      ["course", "courses", "guide", "syllabus", "assessments", "assignments"].includes(route[0]) &&
       !driveEndpointChecked &&
       driveMaterialsReadReady()
     ) {
@@ -8171,6 +8497,172 @@
   }
 
   document.addEventListener("submit", async (event) => {
+    if (event.target.id === "forgot-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const email = normalizeEmail(form.get("email"));
+      if (!isValidEmail(email)) {
+        forgotPasswordView({
+          error: "Enter the complete email address attached to your account.",
+          email,
+        });
+        document.querySelector("#recoveryEmail")?.focus();
+        return;
+      }
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Sending Secure Link…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordResetRequestEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({ email }),
+        });
+        forgotPasswordView({
+          email,
+          notice:
+            "If an active account matches that address, a one-time password reset link has been sent. Check your inbox and spam folder.",
+        });
+      } catch (error) {
+        forgotPasswordView({
+          email,
+          error:
+            error?.name === "AbortError"
+              ? "The recovery service did not respond. Please try again."
+              : error?.message ||
+                "Password recovery is temporarily unavailable. Please try again later.",
+        });
+        document.querySelector("#recoveryEmail")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.id === "reset-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const token = String(form.get("token") || "").trim();
+      const newPassword = String(form.get("newPassword") || "");
+      const confirmPassword = String(form.get("confirmPassword") || "");
+      if (!token) {
+        resetPasswordView({ error: "Request a new password reset link." });
+        return;
+      }
+      if (!passwordChecks(newPassword).every((rule) => rule.met)) {
+        resetPasswordView({
+          error: "Choose a new password that meets every requirement.",
+        });
+        document.querySelector("#newPassword")?.focus();
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        resetPasswordView({ error: "Enter the same new password twice." });
+        document.querySelector("#confirmPassword")?.focus();
+        return;
+      }
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Changing Password…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordResetEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({ token, newPassword, confirmPassword }),
+        });
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        remoteSessionValidated = true;
+        signInPrefill = "";
+        signInNotice =
+          "Your password has been changed. Sign in again with the new password.";
+        replaceRoute("signin/student");
+        loginView({ portal: "student" });
+      } catch (error) {
+        resetPasswordView({
+          error:
+            error?.name === "AbortError"
+              ? "The password reset service did not respond. Please try again."
+              : error?.message ||
+                "This reset link could not be used. Request a new link and try again.",
+        });
+        document.querySelector("#newPassword")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.id === "change-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const currentPassword = String(form.get("currentPassword") || "");
+      const newPassword = String(form.get("newPassword") || "");
+      const confirmPassword = String(form.get("confirmPassword") || "");
+      if (!currentPassword) {
+        setFormAlert(event.target, "Enter your current password.");
+        document.querySelector("#currentPassword")?.focus();
+        return;
+      }
+      if (
+        !passwordChecks(newPassword, currentUser()?.email || "").every(
+          (rule) => rule.met,
+        )
+      ) {
+        setFormAlert(
+          event.target,
+          "Choose a new password that meets every requirement.",
+        );
+        document.querySelector("#newPassword")?.focus();
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setFormAlert(event.target, "Enter the same new password twice.");
+        document.querySelector("#confirmPassword")?.focus();
+        return;
+      }
+      const facultySession = isTeacher();
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Updating Password…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordChangeEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({
+            currentPassword,
+            newPassword,
+            confirmPassword,
+          }),
+        });
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        remoteSessionValidated = true;
+        resetPlatformRuntime();
+        resetDriveMaterialsForSession();
+        state = initialStateForUser(null);
+        signInPrefill = "";
+        signInNotice =
+          "Your password has been updated and all sessions were signed out. Sign in again with the new password.";
+        replaceRoute(facultySession ? "signin/faculty" : "signin/student");
+        loginView({ portal: facultySession ? "faculty" : "student" });
+      } catch (error) {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Update Password";
+        }
+        setFormAlert(
+          event.target,
+          error?.name === "AbortError"
+            ? "The password service did not respond. Please try again."
+            : error?.message || "Your password could not be changed.",
+        );
+      }
+      return;
+    }
+
     if (event.target.id === "login-form") {
       event.preventDefault();
       const form = new FormData(event.target);
@@ -8952,7 +9444,10 @@
     }
     if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
     const password = document.querySelector("#newPassword")?.value || "";
-    const email = document.querySelector("#registerEmail")?.value || "";
+    const email =
+      document.querySelector("#registerEmail")?.value ||
+      currentUser()?.email ||
+      "";
     passwordChecks(password, email).forEach((rule) => {
       const item = document.querySelector(
         `[data-password-rule="${rule.id}"]`,
@@ -9452,6 +9947,66 @@
           action: "undo-enrollment",
         },
       );
+    } else if (action === "start-module") {
+      event.preventDefault();
+      const course = findCourse(target.dataset.course);
+      const module = course
+        ? findPlatformModule(course, target.dataset.module)
+        : null;
+      const moduleId = String(target.dataset.moduleId || "").trim();
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.moduleProgressEndpoint,
+        encodeURIComponent(moduleId),
+      );
+      if (
+        !course ||
+        !module ||
+        !moduleId ||
+        !endpoint ||
+        !officialProgressConnected(course)
+      ) {
+        showToast("Official module progress is not connected.", {
+          tone: "error",
+          persistent: true,
+        });
+        return;
+      }
+      if (moduleStatus(course, module).key !== "available") {
+        if (moduleIsUnlocked(course, module)) {
+          navigate(platformModuleRoute(course, module));
+        } else {
+          showToast("Complete the current module before starting this one.", {
+            tone: "error",
+          });
+        }
+        return;
+      }
+      target.disabled = true;
+      try {
+        const payload = await requestPlatformJson(endpoint, {
+          method: "PUT",
+          body: JSON.stringify({ status: "in_progress" }),
+        });
+        mergeStudentModuleProgress(
+          course,
+          module,
+          platformPayloadData(payload, { moduleId, status: "in_progress" }),
+        );
+        platformRequests.delete(`student-progress:${course.code}`);
+        navigate(platformModuleRoute(course, module));
+        showToast(
+          module.number === 0
+            ? "Course started. The next module remains locked until Orientation is complete."
+            : `Module ${module.number} is now in progress.`,
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "The module could not be started.", {
+          tone: "error",
+          persistent: true,
+        });
+      }
     } else if (action === "set-module-complete") {
       const course = findCourse(target.dataset.course);
       const module = course

@@ -28,6 +28,14 @@ test("runtime configuration separates core and upload readiness", async () => {
     bootstrap,
     /driveCatalogHealthPath:\s*"\/health\/drive-catalog-ready"/,
   );
+  assert.match(
+    bootstrap,
+    /passwordResetHealthPath:\s*"\/health\/password-reset-ready"/,
+  );
+  assert.match(
+    bootstrap,
+    /accountSecurityHealthPath:\s*"\/health\/account-security-ready"/,
+  );
   assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
   assert.match(
     viteConfig,
@@ -35,10 +43,33 @@ test("runtime configuration separates core and upload readiness", async () => {
   );
 });
 
+test("production deployment gates email recovery on delegated Gmail readiness", async () => {
+  const workflow = await source(".github/workflows/deploy-backend.yml");
+
+  assert.match(
+    workflow,
+    /PASSWORD_RESET_MAIL_PROVIDER: \$\{\{ vars\.PASSWORD_RESET_MAIL_PROVIDER \|\| 'disabled' \}\}/,
+  );
+  assert.match(
+    workflow,
+    /GMAIL_SERVICE_ACCOUNT_JSON_BASE64=.*GMAIL_CREDENTIALS_SECRET/,
+  );
+  assert.match(
+    workflow,
+    /probe "\/health\/password-reset-ready" "password-reset-ready"/,
+  );
+  assert.match(
+    workflow,
+    /probe "\/health\/account-security-ready" "account-security-ready"/,
+  );
+});
+
 async function bootstrapConfiguration({
   coreReady = true,
   uploadReady = true,
   driveCatalogReady = true,
+  passwordResetReady = true,
+  accountSecurityReady = true,
 } = {}) {
   const requestedUrls = [];
   const loadedScripts = [];
@@ -49,6 +80,8 @@ async function bootstrapConfiguration({
       healthPath: "/health/ready",
       uploadHealthPath: "/health/upload-ready",
       driveCatalogHealthPath: "/health/drive-catalog-ready",
+      passwordResetHealthPath: "/health/password-reset-ready",
+      accountSecurityHealthPath: "/health/account-security-ready",
       healthTimeoutMs: 1000,
       driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
     },
@@ -89,6 +122,12 @@ async function bootstrapConfiguration({
     if (url.pathname === "/health/drive-catalog-ready") {
       return readinessResponse(driveCatalogReady);
     }
+    if (url.pathname === "/health/password-reset-ready") {
+      return readinessResponse(passwordResetReady);
+    }
+    if (url.pathname === "/health/account-security-ready") {
+      return readinessResponse(accountSecurityReady);
+    }
     throw new Error(`Unexpected bootstrap request: ${value}`);
   };
   const context = vm.createContext({
@@ -126,6 +165,18 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     window.LFA_AUTH_CONFIG.loginEndpoint,
     "https://api.example.test/v1/auth/login",
   );
+  assert.equal(
+    window.LFA_AUTH_CONFIG.passwordResetRequestEndpoint,
+    "https://api.example.test/v1/auth/password-reset-requests",
+  );
+  assert.equal(
+    window.LFA_AUTH_CONFIG.passwordResetEndpoint,
+    "https://api.example.test/v1/auth/password-resets",
+  );
+  assert.equal(
+    window.LFA_AUTH_CONFIG.passwordChangeEndpoint,
+    "https://api.example.test/v1/auth/password-change",
+  );
   assert.equal(window.LFA_DRIVE_CONFIG.uploadReady, false);
   assert.equal(window.LFA_DRIVE_CONFIG.catalogReady, true);
   assert.equal(window.LFA_DRIVE_CONFIG.sourceConfigured, true);
@@ -148,11 +199,47 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
       url.endsWith("/health/drive-catalog-ready"),
     ),
   );
+  assert.ok(
+    requestedUrls.some((url) =>
+      url.endsWith("/health/password-reset-ready"),
+    ),
+  );
+  assert.ok(
+    requestedUrls.some((url) =>
+      url.endsWith("/health/account-security-ready"),
+    ),
+  );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=grade12-login-readiness-v3",
-    "./platform-sequences.js?v=grade12-login-readiness-v3",
-    "./app.js?v=grade12-login-readiness-v3",
+    "./course-catalog.js?v=account-security-v1",
+    "./platform-sequences.js?v=account-security-v1",
+    "./app.js?v=account-security-v1",
   ]);
+});
+
+test("password recovery stays hidden until its email sender is ready", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: true,
+    passwordResetReady: false,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_AUTH_CONFIG.passwordResetRequestEndpoint, "");
+  assert.equal(window.LFA_AUTH_CONFIG.passwordResetEndpoint, "");
+  assert.equal(
+    window.LFA_AUTH_CONFIG.passwordChangeEndpoint,
+    "https://api.example.test/v1/auth/password-change",
+  );
+});
+
+test("password change stays hidden until the new account-security API is ready", async () => {
+  const { window } = await bootstrapConfiguration({
+    coreReady: true,
+    accountSecurityReady: false,
+  });
+
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.equal(window.LFA_AUTH_CONFIG.passwordChangeEndpoint, "");
+  assert.notEqual(window.LFA_AUTH_CONFIG.loginEndpoint, "");
 });
 
 test("failed core readiness keeps password sign-in fail-closed", async () => {
@@ -297,6 +384,7 @@ async function renderPortal(hash, session, options = {}) {
     setTimeout,
     clearTimeout,
     URL,
+    URLSearchParams,
     Date,
     Intl,
     Math,
@@ -406,6 +494,75 @@ test("anonymous session checks preserve the selected faculty sign-in portal", as
   assert.doesNotMatch(result.html, /type="submit"[^>]*>Student Sign In/);
 });
 
+test("password recovery, reset and authenticated change-password routes are discoverable", async () => {
+  const authConfig = {
+    passwordResetRequestEndpoint:
+      "https://api.example.test/v1/auth/password-reset-requests",
+    passwordResetEndpoint:
+      "https://api.example.test/v1/auth/password-resets",
+    passwordChangeEndpoint:
+      "https://api.example.test/v1/auth/password-change",
+  };
+  const forgot = await renderPortal(
+    "#/forgot-password?portal=faculty&email=faculty%40example.test",
+    null,
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = authConfig;
+      },
+    },
+  );
+  assert.match(forgot, /Reset Your Password/);
+  assert.match(forgot, /id="forgot-password-form"/);
+  assert.match(forgot, /value="faculty@example\.test"/);
+  assert.match(forgot, /Return to Faculty Sign In/);
+
+  const reset = await renderPortal(
+    "#/reset-password?token=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+    null,
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = authConfig;
+      },
+    },
+  );
+  assert.match(reset, /Choose a New Password/);
+  assert.match(reset, /id="reset-password-form"/);
+  assert.match(reset, /name="token"/);
+  assert.match(reset, /id="confirmPassword"/);
+
+  const studentSecurity = await renderPortal(
+    "#/security",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = authConfig;
+      },
+    },
+  );
+  assert.match(studentSecurity, /Account Security/);
+  assert.match(studentSecurity, /<strong>Account Security<\/strong>/);
+  assert.doesNotMatch(studentSecurity, />Page Not Found</);
+  assert.match(studentSecurity, /id="change-password-form"/);
+  assert.match(studentSecurity, /id="currentPassword"/);
+
+  const teacherSecurity = await renderPortal(
+    "#/teacher/security",
+    {
+      email: "teacher@lakeforestacademy.ca",
+      role: "teacher",
+      displayName: "Test Teacher",
+    },
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = authConfig;
+      },
+    },
+  );
+  assert.match(teacherSecurity, /Faculty Learning/);
+  assert.match(teacherSecurity, /id="change-password-form"/);
+});
+
 const studentPlatformApiConfig = {
   coursesEndpoint: "https://api.example.test/v1/courses",
   studentProgressEndpoint: "https://api.example.test/v1/me/progress",
@@ -500,6 +657,7 @@ test("the browser catalog exposes six courses, 72 modules and 38 assignments", a
 
 test("student and faculty shells consume modules without browser-only authority", async () => {
   const app = await source("public/learning/app.js");
+  assert.doesNotMatch(app, /[路�]/u);
   assert.match(app, /function studentModuleView\(course, module\)/);
   assert.match(app, /function teacherModuleView\(course, module\)/);
   assert.match(app, /\["teacher", "teacher_admin"\]\.includes\(user\?\.role\)/);
@@ -646,7 +804,7 @@ test("locked module lessons and assignments cannot be opened through deep links 
   const assignmentList = await renderPortal("#/assignments", session, options);
   assert.match(
     assignmentList,
-    /<article class="assignment-card is-locked" aria-disabled="true">[\s\S]*?Locked/,
+    /<article class="assessment-task-card is-locked" aria-disabled="true">[\s\S]*?Locked/,
   );
   assert.doesNotMatch(
     assignmentList,
@@ -689,6 +847,161 @@ test("locked module lessons and assignments cannot be opened through deep links 
   assert.doesNotMatch(
     calendar,
     /href="#\/assignment\/sch4u-m02-assignment"/,
+  );
+});
+
+test("starting a course records Orientation in progress and keeps the next module locked", async () => {
+  let started = false;
+  const writes = [];
+  const fetch = async (request, options = {}) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/me/progress") {
+      return jsonResponse({
+        data: [
+          {
+            courseCode: "SCH4U",
+            moduleId: "sch4u-m00",
+            moduleKey: "SCH4U-M00",
+            moduleNumber: 0,
+            status: started ? "in_progress" : "available",
+          },
+          {
+            courseCode: "SCH4U",
+            moduleId: "sch4u-m01",
+            moduleKey: "SCH4U-M01",
+            moduleNumber: 1,
+            status: "locked",
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/courses/SCH4U/modules") {
+      return jsonResponse({
+        data: [
+          { id: "sch4u-m00", moduleKey: "SCH4U-M00", moduleNumber: 0 },
+          { id: "sch4u-m01", moduleKey: "SCH4U-M01", moduleNumber: 1 },
+        ],
+      });
+    }
+    if (
+      url.pathname === "/v1/courses/SCH4U/assignments" ||
+      url.pathname === "/v1/me/grades"
+    ) {
+      return jsonResponse({ data: [] });
+    }
+    if (
+      url.pathname === "/v1/me/progress/modules/sch4u-m00" &&
+      options.method === "PUT"
+    ) {
+      writes.push(options);
+      started = true;
+      return jsonResponse({
+        data: {
+          moduleId: "sch4u-m00",
+          status: "in_progress",
+          startedAt: "2026-08-03T12:00:00.000Z",
+          completedAt: null,
+        },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const options = {
+    platformApiConfig: {
+      ...studentPlatformApiConfig,
+      moduleProgressEndpoint:
+        "https://api.example.test/v1/me/progress/modules",
+    },
+    fetch,
+    settleTurns: 14,
+    sessionStorageSeed: {
+      "lake-forest-learning-csrf-v1": "csrf-start-course-test",
+    },
+  };
+  const session = {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+  };
+  const result = await renderPortal("#/course/sch4u", session, {
+    ...options,
+    interact: async ({ listeners }) => {
+      const click = listeners.get("click")?.[0];
+      assert.equal(typeof click, "function");
+      let prevented = false;
+      const button = {
+        dataset: {
+          action: "start-module",
+          course: "sch4u",
+          module: "SCH4U-M00",
+          moduleId: "sch4u-m00",
+        },
+        disabled: false,
+        closest(selector) {
+          return selector === "[data-action], [data-route]" ? this : null;
+        },
+      };
+      await click({
+        target: button,
+        preventDefault() {
+          prevented = true;
+        },
+      });
+      assert.equal(prevented, true);
+      assert.equal(button.disabled, true);
+    },
+    returnHarness: true,
+  });
+
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].headers["X-CSRF-Token"], "csrf-start-course-test");
+  assert.deepEqual(JSON.parse(writes[0].body), { status: "in_progress" });
+  assert.equal(
+    result.window.location.hash,
+    "#/course/sch4u/module/SCH4U-M00",
+  );
+  assert.match(
+    result.html,
+    /data-action="start-module"[\s\S]*?Start Course/,
+  );
+  assert.match(
+    result.html,
+    /<article class="platform-module-row is-locked" aria-disabled="true">[\s\S]*?SCH4U-M01|<article class="platform-module-row is-locked" aria-disabled="true">[\s\S]*?Locked/,
+  );
+  assert.doesNotMatch(
+    result.html,
+    /href="#\/course\/sch4u\/module\/SCH4U-M01"/,
+  );
+
+  const refreshed = await renderPortal("#/course/sch4u", session, options);
+  assert.match(refreshed, /Continue Orientation/);
+  assert.match(refreshed, /In Progress/);
+  assert.match(
+    refreshed,
+    /<article class="platform-module-row is-locked" aria-disabled="true">[\s\S]*?Locked/,
+  );
+});
+
+test("production progress outages fail closed after Orientation", async () => {
+  const html = await renderPortal(
+    "#/course/sch4u",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+    {
+      beforeApp(window) {
+        window.LFA_API_STATUS = {
+          state: "unavailable",
+          message: "The progress service is temporarily unavailable.",
+        };
+      },
+    },
+  );
+  assert.match(html, /Progress Service Unavailable/);
+  assert.match(
+    html,
+    /<article class="platform-module-row is-locked" aria-disabled="true">[\s\S]*?Locked/,
+  );
+  assert.doesNotMatch(
+    html,
+    /href="#\/course\/sch4u\/module\/SCH4U-M01"/,
   );
 });
 
@@ -1515,8 +1828,7 @@ test("course lists disclose private Drive materials through course-scoped API li
             name: "SCH4U Assessment Guide.pdf",
             mimeType: "application/pdf",
             sizeBytes: 1024,
-            openUrl:
-              "https://drive.google.com/file/d/private-file-id/view",
+            openUrl: "/v1/materials/material-2/open",
             webViewLink:
               "https://drive.google.com/file/d/private-file-id/view",
           },
@@ -1580,6 +1892,32 @@ test("course lists disclose private Drive materials through course-scoped API li
         new URL(url).pathname === "/v1/courses/SCH4U/materials" &&
         new URL(url).searchParams.get("limit") === "100",
     ),
+  );
+
+  const assessmentHub = await renderPortal(
+    "#/assessments",
+    { email: "student@lakeforestacademy.ca", role: "student" },
+    {
+      platformApiConfig: {
+        coursesEndpoint: "https://api.example.test/v1/courses",
+      },
+      beforeApp(window) {
+        window.LFA_DRIVE_CATALOG_STATUS = { state: "ready", message: "" };
+      },
+      fetch,
+      settleTurns: 16,
+    },
+  );
+  assert.match(assessmentHub, /Assessment Centre/);
+  assert.match(assessmentHub, /65%[\s\S]*25%[\s\S]*10%/);
+  assert.match(assessmentHub, /SCH4U Assessment Guide\.pdf/);
+  assert.match(
+    assessmentHub,
+    /https:\/\/api\.example\.test\/v1\/materials\/material-2\/open/,
+  );
+  assert.doesNotMatch(
+    assessmentHub,
+    /drive\.google\.com\/file\/d|private-file-id/,
   );
 });
 

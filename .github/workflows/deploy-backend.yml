@@ -63,6 +63,11 @@ jobs:
       VPC_SUBNET: ${{ vars.GCP_VPC_SUBNET }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      PASSWORD_RESET_MAIL_PROVIDER: ${{ vars.PASSWORD_RESET_MAIL_PROVIDER || 'disabled' }}
+      PASSWORD_RESET_FROM_EMAIL: ${{ vars.PASSWORD_RESET_FROM_EMAIL }}
+      PASSWORD_RESET_FROM_NAME: ${{ vars.PASSWORD_RESET_FROM_NAME || 'Lake Forest Academy' }}
+      GMAIL_IMPERSONATED_USER: ${{ vars.GMAIL_IMPERSONATED_USER }}
+      GMAIL_CREDENTIALS_SECRET: ${{ vars.GCP_GMAIL_CREDENTIALS_SECRET }}
       CANDIDATE_TAG: candidate-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +78,18 @@ jobs:
           for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CURRICULUM_DRIVE_ROOT_ID CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
             test -n "${!name:-}" || { echo "Missing production variable: ${name}" >&2; exit 1; }
           done
+          case "$PASSWORD_RESET_MAIL_PROVIDER" in
+            disabled) ;;
+            gmail_api)
+              for name in PASSWORD_RESET_FROM_EMAIL GMAIL_IMPERSONATED_USER GMAIL_CREDENTIALS_SECRET; do
+                test -n "${!name:-}" || { echo "Missing Gmail password-reset variable: ${name}" >&2; exit 1; }
+              done
+              ;;
+            *)
+              echo "PASSWORD_RESET_MAIL_PROVIDER must be disabled or gmail_api" >&2
+              exit 1
+              ;;
+          esac
       - id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -90,6 +107,9 @@ jobs:
           for secret in "$DB_RUNTIME_SECRET" "$DB_MIGRATION_SECRET" "$CSRF_SECRET"; do
             gcloud secrets describe "$secret" --project "$PROJECT_ID" >/dev/null
           done
+          if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
+            gcloud secrets describe "$GMAIL_CREDENTIALS_SECRET" --project "$PROJECT_ID" >/dev/null
+          fi
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGION }}-docker.pkg.dev
@@ -152,7 +172,17 @@ jobs:
             CLAMAV_PORT=3310
             CLAMAV_REQUIRED=true
             SUBMISSION_TARGET_ROOT_ID=1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK
-          secrets: DATABASE_URL=${{ env.DB_RUNTIME_SECRET }}:latest,CSRF_SECRET=${{ env.CSRF_SECRET }}:latest
+            PASSWORD_RESET_TOKEN_TTL_MINUTES=30
+            PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS=60
+            PASSWORD_RESET_URL=https://lakeforestacademy.ca/learning/#/reset-password
+            PASSWORD_RESET_MAIL_PROVIDER=${{ env.PASSWORD_RESET_MAIL_PROVIDER }}
+            PASSWORD_RESET_FROM_EMAIL=${{ env.PASSWORD_RESET_FROM_EMAIL }}
+            PASSWORD_RESET_FROM_NAME=${{ env.PASSWORD_RESET_FROM_NAME }}
+            GMAIL_IMPERSONATED_USER=${{ env.GMAIL_IMPERSONATED_USER }}
+          secrets: |-
+            DATABASE_URL=${{ env.DB_RUNTIME_SECRET }}:latest
+            CSRF_SECRET=${{ env.CSRF_SECRET }}:latest
+            ${{ env.PASSWORD_RESET_MAIL_PROVIDER == 'gmail_api' && format('GMAIL_SERVICE_ACCOUNT_JSON_BASE64={0}:latest', env.GMAIL_CREDENTIALS_SECRET) || '' }}
           flags: >-
             --service-account=${{ env.RUNTIME_SA }}
             --set-cloudsql-instances=${{ env.SQL_INSTANCE }}
@@ -213,6 +243,10 @@ jobs:
           probe "/health/catalog-ready" "catalog-ready"
           probe "/health/drive-catalog-ready" "drive-catalog-ready"
           probe "/health/upload-ready" "upload-ready"
+          probe "/health/account-security-ready" "account-security-ready"
+          if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
+            probe "/health/password-reset-ready" "password-reset-ready"
+          fi
       - name: Promote the verified candidate revision
         env:
           CANDIDATE_REVISION: ${{ steps.candidate.outputs.revision }}
@@ -242,6 +276,18 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             "$public_url/health/upload-ready" \
             | jq -e '.status == "ready"' >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
+            "$public_url/health/account-security-ready" \
+            | jq -e '.status == "ready"' >/dev/null
+          if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
+            curl --fail-with-body --silent --show-error \
+              --retry 5 --retry-all-errors --retry-delay 3 \
+              --connect-timeout 10 --max-time 30 \
+              "$public_url/health/password-reset-ready" \
+              | jq -e '.status == "ready"' >/dev/null
+          fi
       - name: Remove the temporary candidate URL
         if: ${{ always() && steps.candidate.outputs.revision != '' }}
         run: >-

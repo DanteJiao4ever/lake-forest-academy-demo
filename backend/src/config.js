@@ -26,6 +26,15 @@ const configSchema = z.object({
   sessionTtlHours: z.number().int().min(1).max(24 * 30),
   bcryptCost: z.number().int().min(10).max(15),
   csrfSecret: z.string().min(16),
+  passwordResetTokenTtlMinutes: z.number().int().min(10).max(60),
+  passwordResetRequestCooldownSeconds: z.number().int().min(30).max(15 * 60),
+  passwordResetUrl: z.string().url(),
+  passwordResetMailProvider: z.enum(["disabled", "gmail_api"]),
+  passwordResetFromEmail: z.union([z.literal(""), z.string().email()]),
+  passwordResetFromName: z.string().trim().min(1).max(100),
+  gmailImpersonatedUser: z.union([z.literal(""), z.string().email()]),
+  gmailCredentialsBase64: z.string(),
+  gmailCredentialsPath: z.string(),
   maxUploadFiles: z.number().int().min(1).max(20),
   maxFileBytes: z.number().int().min(1024).max(100 * 1024 * 1024),
   maxRequestBytes: z.number().int().min(1024).max(250 * 1024 * 1024),
@@ -67,6 +76,27 @@ export function loadConfig(env = process.env) {
     csrfSecret:
       env.CSRF_SECRET ||
       (nodeEnv === "test" ? "test-only-csrf-secret-at-least-32-bytes" : ""),
+    passwordResetTokenTtlMinutes: integerValue(
+      env.PASSWORD_RESET_TOKEN_TTL_MINUTES,
+      30,
+    ),
+    passwordResetRequestCooldownSeconds: integerValue(
+      env.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS,
+      60,
+    ),
+    passwordResetUrl:
+      env.PASSWORD_RESET_URL ||
+      "https://lakeforestacademy.ca/learning/#/reset-password",
+    passwordResetMailProvider:
+      env.PASSWORD_RESET_MAIL_PROVIDER || "disabled",
+    passwordResetFromEmail: env.PASSWORD_RESET_FROM_EMAIL || "",
+    passwordResetFromName:
+      env.PASSWORD_RESET_FROM_NAME || "Lake Forest Academy",
+    gmailImpersonatedUser: env.GMAIL_IMPERSONATED_USER || "",
+    gmailCredentialsBase64:
+      env.GMAIL_SERVICE_ACCOUNT_JSON_BASE64 || "",
+    gmailCredentialsPath:
+      env.GMAIL_APPLICATION_CREDENTIALS || "",
     maxUploadFiles: integerValue(env.MAX_UPLOAD_FILES, 1),
     maxFileBytes: integerValue(env.MAX_FILE_BYTES, 25 * 1024 * 1024),
     maxRequestBytes: integerValue(
@@ -102,6 +132,23 @@ export function loadConfig(env = process.env) {
   }
   if (config.nodeEnv === "production" && !config.curriculumDriveRootId.trim()) {
     throw new Error("CURRICULUM_DRIVE_ROOT_ID is required in production.");
+  }
+  if (
+    config.passwordResetMailProvider === "gmail_api" &&
+    (!config.passwordResetFromEmail || !config.gmailImpersonatedUser)
+  ) {
+    throw new Error(
+      "PASSWORD_RESET_FROM_EMAIL and GMAIL_IMPERSONATED_USER are required when PASSWORD_RESET_MAIL_PROVIDER=gmail_api.",
+    );
+  }
+  if (
+    config.passwordResetMailProvider === "gmail_api" &&
+    config.passwordResetFromEmail.toLowerCase() !==
+      config.gmailImpersonatedUser.toLowerCase()
+  ) {
+    throw new Error(
+      "PASSWORD_RESET_FROM_EMAIL must match GMAIL_IMPERSONATED_USER unless verified Send As support is implemented.",
+    );
   }
   return Object.freeze(config);
 }

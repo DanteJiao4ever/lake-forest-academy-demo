@@ -6,12 +6,14 @@
     healthPath: "/health/ready",
     uploadHealthPath: "/health/upload-ready",
     driveCatalogHealthPath: "/health/drive-catalog-ready",
+    passwordResetHealthPath: "/health/password-reset-ready",
+    accountSecurityHealthPath: "/health/account-security-ready",
     healthTimeoutMs: 3500,
     googleWorkspaceAuthStart: "",
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "grade12-login-readiness-v3";
+  const SCRIPT_VERSION = "account-security-v1";
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
@@ -90,12 +92,25 @@
     const uploadReady = ready && options.uploadReady === true;
     const driveCatalogReady =
       ready && options.driveCatalogReady === true;
+    const passwordResetReady =
+      ready && options.passwordResetReady === true;
+    const accountSecurityReady =
+      ready && options.accountSecurityReady === true;
     const syncEndpoint = ready
       ? optionalApiUrl(origin, config.driveSyncPath)
       : "";
     window.LFA_AUTH_CONFIG = Object.freeze({
       loginEndpoint: ready ? apiUrl(origin, "/v1/auth/login") : "",
       registrationEndpoint: ready ? apiUrl(origin, "/v1/auth/register") : "",
+      passwordResetRequestEndpoint: passwordResetReady
+        ? apiUrl(origin, "/v1/auth/password-reset-requests")
+        : "",
+      passwordResetEndpoint: passwordResetReady
+        ? apiUrl(origin, "/v1/auth/password-resets")
+        : "",
+      passwordChangeEndpoint: accountSecurityReady
+        ? apiUrl(origin, "/v1/auth/password-change")
+        : "",
       enrollmentsEndpoint: ready
         ? apiUrl(origin, "/v1/me/enrollments")
         : "",
@@ -276,7 +291,13 @@
         "Secure sign-in and registration are awaiting the school API deployment. No browser-only password is accepted.",
       );
     } else {
-      const [coreReady, uploadReady, driveCatalogHealthReady] = await Promise.all([
+      const [
+        coreReady,
+        uploadReady,
+        driveCatalogHealthReady,
+        passwordResetReady,
+        accountSecurityReady,
+      ] = await Promise.all([
         apiIsReady(
           origin,
           config.healthPath || DEFAULT_CONFIG.healthPath,
@@ -295,12 +316,28 @@
           config,
           2500,
         ),
+        apiIsReady(
+          origin,
+          config.passwordResetHealthPath ||
+            DEFAULT_CONFIG.passwordResetHealthPath,
+          config,
+          2500,
+        ),
+        apiIsReady(
+          origin,
+          config.accountSecurityHealthPath ||
+            DEFAULT_CONFIG.accountSecurityHealthPath,
+          config,
+          2500,
+        ),
       ]);
       if (coreReady) {
         const driveCatalogReady = driveCatalogHealthReady === true;
         applyEndpointConfiguration(origin, config, {
           uploadReady,
           driveCatalogReady,
+          passwordResetReady,
+          accountSecurityReady,
         });
         setApiStatus(
           "ready",

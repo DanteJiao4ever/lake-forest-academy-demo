@@ -14,6 +14,7 @@ import { assignmentIdSchema, courseCodeSchema, emailSchema, nameSchema, parse, u
 import { validateUploadedFile } from "./lib/file-validation.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { MaterialSyncService } from "./services/material-sync.js";
+import { UnavailablePasswordResetMailer } from "./mail/password-reset-mailer.js";
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const categories = ["Lessons", "Resources", "Assignments", "Assessments"];
@@ -361,7 +362,15 @@ function syncRunResponse(row) {
   };
 }
 
-export async function createApp({ config, repository, drive, scanner, logger = false, syncService } = {}) {
+export async function createApp({
+  config,
+  repository,
+  drive,
+  scanner,
+  logger = false,
+  syncService,
+  passwordResetMailer,
+} = {}) {
   if (!config || !repository || !drive || !scanner) {
     throw new Error("config, repository, drive and scanner are required");
   }
@@ -378,8 +387,10 @@ export async function createApp({ config, repository, drive, scanner, logger = f
                 "req.headers.cookie",
                 "req.headers['x-csrf-token']",
                 "body.password",
+                "body.currentPassword",
                 "body.newPassword",
                 "body.confirmPassword",
+                "body.token",
               ],
               censor: "[REDACTED]",
             },
@@ -389,6 +400,8 @@ export async function createApp({ config, repository, drive, scanner, logger = f
     genReqId: (request) => String(request.headers["x-request-id"] || `req_${randomUUID()}`).slice(0, 128),
   });
   const allowedOrigins = new Set(config.allowedOrigins);
+  const resetMailer =
+    passwordResetMailer || new UnavailablePasswordResetMailer();
 
   await app.register(cookie);
   await app.register(cors, {
@@ -542,6 +555,14 @@ export async function createApp({ config, repository, drive, scanner, logger = f
 
   app.get("/health/live", async () => ({ status: "ok" }));
   app.get("/health/ready", async () => {
+    await repository.ready();
+    return { status: "ready" };
+  });
+  app.get("/health/password-reset-ready", async () => {
+    await resetMailer.ready();
+    return { status: "ready" };
+  });
+  app.get("/health/account-security-ready", async () => {
     await repository.ready();
     return { status: "ready" };
   });
@@ -746,6 +767,253 @@ export async function createApp({ config, repository, drive, scanner, logger = f
         outcome: "success",
       });
       reply.send(authResponse(user, csrfToken));
+    },
+  );
+
+  const passwordResetRequestSchema = z.object({
+    email: emailSchema,
+  });
+  const passwordResetSchema = z.object({
+    token: z.string().trim().min(32).max(200).regex(/^[A-Za-z0-9_-]+$/),
+    newPassword: z.string().min(1).max(128),
+    confirmPassword: z.string().min(1).max(128),
+  });
+  const passwordChangeSchema = z.object({
+    currentPassword: z.string().min(1).max(128),
+    newPassword: z.string().min(1).max(128),
+    confirmPassword: z.string().min(1).max(128),
+  });
+  const resetRequestResponse = Object.freeze({
+    accepted: true,
+    message:
+      "If an active account matches that email address, a password reset link will be sent.",
+  });
+
+  function passwordResetUrl(token) {
+    const target = new URL(config.passwordResetUrl);
+    if (target.hash) {
+      const [route, rawQuery = ""] = target.hash.split("?", 2);
+      const params = new URLSearchParams(rawQuery);
+      params.set("token", token);
+      target.hash = `${route}?${params}`;
+    } else {
+      target.searchParams.set("token", token);
+    }
+    return target.toString();
+  }
+
+  app.post(
+    "/v1/auth/password-reset-requests",
+    { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } },
+    async (request, reply) => {
+      const input = parse(
+        passwordResetRequestSchema,
+        request.body,
+        "INVALID_PASSWORD_RESET_REQUEST",
+      );
+      if (!resetMailer.isConfigured()) {
+        throw new ApiError(
+          503,
+          "PASSWORD_RESET_EMAIL_UNAVAILABLE",
+          "Password reset email is temporarily unavailable.",
+        );
+      }
+      const normalizedEmail = normalizeEmail(input.email);
+      try {
+        const user = await repository.findUserByEmail(normalizedEmail);
+        if (user?.status === "active") {
+          const token = opaqueToken();
+          const tokenHash = sha256(token);
+          const expiresAt = new Date(
+            Date.now() + config.passwordResetTokenTtlMinutes * 60 * 1000,
+          );
+          const notBefore = new Date(
+            Date.now() -
+              config.passwordResetRequestCooldownSeconds * 1000,
+          );
+          const grant = await repository.createPasswordResetToken({
+            id: randomUUID(),
+            userId: user.id,
+            tokenHash,
+            expiresAt,
+            notBefore,
+          });
+          if (grant?.created) {
+            let delivered = false;
+            try {
+              await resetMailer.sendPasswordReset({
+                to: user.email,
+                displayName: user.displayName,
+                resetUrl: passwordResetUrl(token),
+                expiresInMinutes: config.passwordResetTokenTtlMinutes,
+              });
+              delivered = true;
+            } catch (error) {
+              await repository.revokePasswordResetToken(tokenHash);
+              request.log.error(
+                { code: error?.code || "PASSWORD_RESET_EMAIL_FAILED", requestId: request.id },
+                "password reset email delivery failed",
+              );
+            }
+            await repository.recordAudit?.({
+              requestId: request.id,
+              actorUserId: user.id,
+              action: "auth.password_reset.email_sent",
+              resourceType: "password_reset",
+              resourceId: grant.id,
+              outcome: delivered ? "success" : "failed",
+            });
+          }
+        }
+      } catch (error) {
+        request.log.error(
+          { code: error?.code || "PASSWORD_RESET_REQUEST_FAILED", requestId: request.id },
+          "password reset request could not be processed",
+        );
+      }
+      await repository.recordAudit?.({
+        requestId: request.id,
+        action: "auth.password_reset.request",
+        resourceType: "password_reset",
+        outcome: "success",
+        details: { emailHash: sha256(normalizedEmail) },
+      });
+      reply.status(202).send(resetRequestResponse);
+    },
+  );
+
+  app.post(
+    "/v1/auth/password-resets",
+    { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } },
+    async (request, reply) => {
+      const input = parse(
+        passwordResetSchema,
+        request.body,
+        "INVALID_PASSWORD_RESET",
+      );
+      if (input.newPassword !== input.confirmPassword) {
+        throw new ApiError(
+          422,
+          "PASSWORD_CONFIRMATION_MISMATCH",
+          "The password confirmation does not match.",
+        );
+      }
+      const tokenHash = sha256(input.token);
+      const user = await repository.findPasswordResetTokenUser(tokenHash);
+      if (!user) {
+        await repository.recordAudit?.({
+          requestId: request.id,
+          action: "auth.password_reset.consume",
+          resourceType: "password_reset",
+          outcome: "denied",
+        });
+        throw new ApiError(
+          400,
+          "PASSWORD_RESET_TOKEN_INVALID",
+          "The password reset link is invalid or has expired.",
+        );
+      }
+      assertStrongPassword(input.newPassword, user.email);
+      if (await verifyPassword(input.newPassword, user.passwordHash)) {
+        throw new ApiError(
+          422,
+          "PASSWORD_REUSE_NOT_ALLOWED",
+          "Choose a password that is different from your current password.",
+        );
+      }
+      const passwordHash = await hashPassword(
+        input.newPassword,
+        config.bcryptCost,
+      );
+      const changed = await repository.consumePasswordResetToken({
+        tokenHash,
+        userId: user.id,
+        passwordHash,
+      });
+      if (!changed) {
+        throw new ApiError(
+          400,
+          "PASSWORD_RESET_TOKEN_INVALID",
+          "The password reset link is invalid or has expired.",
+        );
+      }
+      reply.clearCookie(config.cookieName, cookieOptions);
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: user.id,
+        action: "auth.password_reset.consume",
+        resourceType: "user",
+        resourceId: user.publicId,
+        outcome: "success",
+      });
+      reply.send({ changed: true, reauthenticationRequired: true });
+    },
+  );
+
+  app.post(
+    "/v1/auth/password-change",
+    {
+      preHandler: [authenticate, requireCsrf],
+      config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
+    },
+    async (request, reply) => {
+      const input = parse(
+        passwordChangeSchema,
+        request.body,
+        "INVALID_PASSWORD_CHANGE",
+      );
+      if (input.newPassword !== input.confirmPassword) {
+        throw new ApiError(
+          422,
+          "PASSWORD_CONFIRMATION_MISMATCH",
+          "The password confirmation does not match.",
+        );
+      }
+      const currentPasswordValid = await verifyPassword(
+        input.currentPassword,
+        request.auth.user.passwordHash,
+      );
+      if (!currentPasswordValid) {
+        await repository.recordAudit?.({
+          requestId: request.id,
+          actorUserId: request.auth.user.id,
+          action: "auth.password_change",
+          resourceType: "user",
+          resourceId: request.auth.user.publicId,
+          outcome: "denied",
+        });
+        throw new ApiError(
+          401,
+          "CURRENT_PASSWORD_INCORRECT",
+          "The current password is incorrect.",
+        );
+      }
+      assertStrongPassword(input.newPassword, request.auth.user.email);
+      if (await verifyPassword(input.newPassword, request.auth.user.passwordHash)) {
+        throw new ApiError(
+          422,
+          "PASSWORD_REUSE_NOT_ALLOWED",
+          "Choose a password that is different from your current password.",
+        );
+      }
+      const passwordHash = await hashPassword(
+        input.newPassword,
+        config.bcryptCost,
+      );
+      await repository.updatePasswordAndRevokeSessions({
+        userId: request.auth.user.id,
+        passwordHash,
+      });
+      reply.clearCookie(config.cookieName, cookieOptions);
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: request.auth.user.id,
+        action: "auth.password_change",
+        resourceType: "user",
+        resourceId: request.auth.user.publicId,
+        outcome: "success",
+      });
+      reply.send({ changed: true, reauthenticationRequired: true });
     },
   );
 
