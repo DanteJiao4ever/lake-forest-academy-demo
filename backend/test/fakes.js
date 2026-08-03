@@ -20,6 +20,10 @@ function unlockCriteria(weightPercent, moduleNumber) {
   };
 }
 
+function notificationText(value, maximumLength) {
+  return Array.from(String(value ?? "")).slice(0, maximumLength).join("");
+}
+
 export class FakeRepository {
   constructor() {
     this.users = [];
@@ -29,6 +33,8 @@ export class FakeRepository {
     this.teacherCourses = new Map();
     this.submissions = [];
     this.grades = [];
+    this.submissionMessages = [];
+    this.notifications = [];
     this.audit = [];
     this.courseCatalog = new Map([
       ["MHF4U", { code: "MHF4U", title: "Advanced Functions", status: "active" }],
@@ -769,8 +775,50 @@ export class FakeRepository {
   async getAssignment(id) { return this.assignments.get(id) || null; }
   async getActiveSubmissionTarget() { return this.target; }
 
+  messagesForSubmissionThread(submission) {
+    return this.submissionMessages
+      .filter((message) => {
+        const target = this.submissions.find((item) => item.id === message.submissionId);
+        return target && target.studentUserId === submission.studentUserId &&
+          target.courseCode === submission.courseCode &&
+          target.assignmentId === submission.assignmentId;
+      })
+      .sort((left, right) =>
+        new Date(left.createdAt) - new Date(right.createdAt) || left.id.localeCompare(right.id));
+  }
+
+  addNotification(input) {
+    const replay = this.notifications.find((item) =>
+      item.recipientUserId === input.recipientUserId && item.dedupeKey === input.dedupeKey);
+    if (replay) return replay;
+    const notification = {
+      id: randomUUID(),
+      ...input,
+      type: input.type,
+      eventType: input.type,
+      readAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.notifications.push(notification);
+    return notification;
+  }
+
+  notifyCourseFaculty(courseCode, input) {
+    for (const teacher of this.users.filter((user) =>
+      user.status === "active" &&
+      (user.role === "teacher_admin" ||
+        (user.role === "teacher" &&
+          (this.teacherCourses.get(user.id) || []).includes(courseCode))))) {
+      this.addNotification({ ...input, recipientUserId: teacher.id });
+    }
+  }
+
   async findSubmissionByIdempotency(userId, key) {
-    return this.submissions.find((item) => item.studentUserId === userId && item.idempotencyKey === key) || null;
+    const found = this.submissions.find((item) =>
+      item.studentUserId === userId && item.idempotencyKey === key);
+    return found
+      ? { ...found, messages: this.messagesForSubmissionThread(found) }
+      : null;
   }
 
   async getLatestSubmissionAttempt(studentUserId, courseCode, assignmentId) {
@@ -787,13 +835,24 @@ export class FakeRepository {
           new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0),
       )[0];
     return latest
-      ? { id: latest.id, attemptNumber: latest.attemptNumber }
+      ? {
+          id: latest.id,
+          attemptNumber: latest.attemptNumber,
+          revisionRequested: this.submissionMessages.some((message) =>
+            message.submissionId === latest.id &&
+            message.type === "revision_request"),
+        }
       : null;
   }
 
   async createSubmission(input, files) {
+    const assignment = this.assignments.get(input.assignmentId) || {};
     const record = {
       ...input,
+      moduleId: input.moduleId || assignment.moduleId || null,
+      moduleNumber: input.moduleNumber ?? assignment.moduleNumber ?? null,
+      maxAttempts: input.maxAttempts || assignment.maxAttempts || 99,
+      replacesSubmissionId: input.replacesSubmissionId || null,
       files: files.map((file) => ({
         id: file.id,
         name: file.originalName,
@@ -805,8 +864,29 @@ export class FakeRepository {
       submittedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       grade: null,
+      messages: [],
     };
     this.submissions.unshift(record);
+    const type = record.replacesSubmissionId
+      ? "submission_resubmitted"
+      : "submission_received";
+    this.notifyCourseFaculty(record.courseCode, {
+      actorUserId: record.studentUserId,
+      type,
+      courseCode: record.courseCode,
+      submissionId: record.id,
+      title: notificationText(
+        record.replacesSubmissionId
+          ? `Resubmission received: ${record.assignmentTitle}`
+          : `New submission: ${record.assignmentTitle}`,
+        300,
+      ),
+      body: record.replacesSubmissionId
+        ? `${record.studentName} submitted a revised attempt.`
+        : `${record.studentName} submitted work for review.`,
+      href: `#/teacher/submissions/${record.courseCode.toLowerCase()}`,
+      dedupeKey: `submission:${record.id}:${type}`,
+    });
     return record;
   }
 
@@ -821,16 +901,190 @@ export class FakeRepository {
     if (filters.unitNumber) records = records.filter((item) => item.unitNumber === filters.unitNumber);
     if (filters.assignmentId) records = records.filter((item) => item.assignmentId === filters.assignmentId);
     if (filters.studentId) records = records.filter((item) => item.studentId === filters.studentId);
-    return records.slice(filters.offset || 0, (filters.offset || 0) + (filters.limit || 50) + 1);
+    return records
+      .slice(filters.offset || 0, (filters.offset || 0) + (filters.limit || 50) + 1)
+      .map((record) => {
+        const grade = user.role === "student"
+          ? record.grade?.publishedAt
+            ? record.grade
+            : null
+          : record.currentGrade || record.grade || null;
+        return {
+          ...record,
+          grade,
+          messages: this.messagesForSubmissionThread(record),
+        };
+      });
   }
 
   async getSubmission(id, role = "teacher") {
     const found = this.submissions.find((item) => item.id === id);
     if (!found) return null;
-    if (role === "student" && found.grade && !found.grade.publishedAt) {
-      return { ...found, grade: null };
+    const historyRecords = this.submissions
+      .filter((item) =>
+        item.studentUserId === found.studentUserId &&
+        item.courseCode === found.courseCode &&
+        item.assignmentId === found.assignmentId)
+      .sort((left, right) => left.attemptNumber - right.attemptNumber)
+      .map((item) => ({
+        ...item,
+        grade: role === "student"
+          ? item.grade?.publishedAt
+            ? item.grade
+            : null
+          : item.currentGrade || item.grade || null,
+        messages: this.messagesForSubmissionThread(item),
+      }));
+    if (role === "student") {
+      return {
+        ...found,
+        grade: found.grade?.publishedAt ? found.grade : null,
+        messages: this.messagesForSubmissionThread(found),
+        historyRecords,
+      };
     }
-    return found;
+    return {
+      ...found,
+      grade: found.currentGrade || found.grade || null,
+      messages: this.messagesForSubmissionThread(found),
+      historyRecords,
+    };
+  }
+
+  async createSubmissionMessage(input) {
+    const replay = this.submissionMessages.find((message) =>
+      message.authorUserId === input.author.id &&
+      message.idempotencyKey === input.idempotencyKey);
+    if (replay) {
+      if (replay.requestFingerprint !== input.requestFingerprint) {
+        throw new ApiError(409, "IDEMPOTENCY_KEY_REUSED", "The key was reused.");
+      }
+      return replay;
+    }
+    const submission = this.submissions.find((item) => item.id === input.submissionId);
+    if (!submission) {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "The submission was not found.");
+    }
+    if (input.messageType === "revision_request") {
+      if (input.author.role === "student") {
+        throw new ApiError(403, "REVISION_REQUEST_FORBIDDEN", "Only faculty can return work.");
+      }
+      if (submission.status !== "submitted") {
+        throw new ApiError(
+          409,
+          "SUBMISSION_NOT_ACTIVE",
+          "Only an active submitted attempt can be returned for revision.",
+        );
+      }
+      const latest = this.submissions
+        .filter((item) => item.studentUserId === submission.studentUserId &&
+          item.courseCode === submission.courseCode &&
+          item.assignmentId === submission.assignmentId)
+        .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+      if (latest?.id !== submission.id) {
+        throw new ApiError(409, "LATEST_SUBMISSION_REQUIRED", "Only the latest attempt can be returned.");
+      }
+      if (this.grades.some((entry) =>
+        entry.grade.submissionId === submission.id && entry.grade.publishedAt)) {
+        throw new ApiError(409, "GRADE_ALREADY_PUBLISHED", "Published work cannot be returned.");
+      }
+      const assignment = this.assignments.get(submission.assignmentId);
+      if (submission.attemptNumber >= Number(assignment?.maxAttempts || 99)) {
+        throw new ApiError(
+          409,
+          "ATTEMPT_LIMIT_REACHED",
+          "This assignment has no remaining attempt available for revision.",
+        );
+      }
+      if (this.submissionMessages.some((message) =>
+        message.submissionId === submission.id && message.type === "revision_request")) {
+        throw new ApiError(409, "SUBMISSION_ALREADY_RETURNED", "This attempt was already returned.");
+      }
+    }
+    const message = {
+      id: randomUUID(),
+      submissionId: submission.id,
+      attemptNumber: submission.attemptNumber,
+      type: input.messageType,
+      body: input.body,
+      authorUserId: input.author.id,
+      authorId: input.author.publicId,
+      authorName: input.author.displayName,
+      authorRole: input.author.role,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: input.requestFingerprint,
+      createdAt: new Date().toISOString(),
+    };
+    this.submissionMessages.push(message);
+    const isRevision = message.type === "revision_request";
+    const notification = {
+      actorUserId: input.author.id,
+      type: isRevision ? "submission_returned" : "submission_message",
+      courseCode: submission.courseCode,
+      submissionId: submission.id,
+      title: notificationText(
+        isRevision
+          ? `Revision requested: ${submission.assignmentTitle}`
+          : `New message: ${submission.assignmentTitle}`,
+        300,
+      ),
+      body: isRevision
+        ? input.body.slice(0, 1000)
+        : input.author.role === "student"
+          ? `${submission.studentName} added a message to their submission.`
+          : `${input.author.displayName} added a message to your submission.`,
+      href: input.author.role === "student"
+        ? `#/teacher/submissions/${submission.courseCode.toLowerCase()}`
+        : `#/assignment/${encodeURIComponent(submission.assignmentId)}`,
+      dedupeKey: `submission-message:${message.id}`,
+    };
+    if (input.author.role === "student") {
+      this.notifyCourseFaculty(submission.courseCode, notification);
+    } else {
+      this.addNotification({ ...notification, recipientUserId: submission.studentUserId });
+    }
+    return message;
+  }
+
+  async listNotifications(recipientUserId, { unreadOnly = false, limit = 50, offset = 0 } = {}) {
+    return this.notifications
+      .filter((item) => item.recipientUserId === recipientUserId &&
+        (!unreadOnly || !item.readAt))
+      .sort((left, right) =>
+        new Date(right.createdAt) - new Date(left.createdAt) || right.id.localeCompare(left.id))
+      .slice(offset, offset + limit + 1)
+      .map(({ recipientUserId: _recipientUserId, dedupeKey: _dedupeKey, ...item }) => item);
+  }
+
+  async countUnreadNotifications(recipientUserId) {
+    return this.notifications.filter((item) =>
+      item.recipientUserId === recipientUserId && !item.readAt).length;
+  }
+
+  async markNotificationsRead(recipientUserId, notificationIds) {
+    const ids = new Set(notificationIds);
+    const updated = [];
+    for (const item of this.notifications) {
+      if (item.recipientUserId !== recipientUserId || !ids.has(item.id)) continue;
+      item.readAt ||= new Date().toISOString();
+      const { recipientUserId: _recipientUserId, dedupeKey: _dedupeKey, ...publicItem } = item;
+      updated.push(publicItem);
+    }
+    return updated;
+  }
+
+  async markNotificationRead(recipientUserId, notificationId) {
+    const records = await this.markNotificationsRead(recipientUserId, [notificationId]);
+    return records[0] || null;
+  }
+
+  async markAllNotificationsRead(recipientUserId) {
+    return this.markNotificationsRead(
+      recipientUserId,
+      this.notifications
+        .filter((item) => item.recipientUserId === recipientUserId && !item.readAt)
+        .map((item) => item.id),
+    );
   }
 
   async getSubmissionFile(submissionId, fileId) {
@@ -857,6 +1111,15 @@ export class FakeRepository {
       return replay.grade;
     }
     const submission = this.submissions.find((item) => item.id === input.submissionId);
+    if (this.submissionMessages.some((message) =>
+      message.submissionId === input.submissionId &&
+      message.type === "revision_request")) {
+      throw new ApiError(
+        409,
+        "SUBMISSION_RETURNED",
+        "Grade the student's replacement attempt after returned work is resubmitted.",
+      );
+    }
     const current = submission?.currentGrade || null;
     const version = current?.version || 0;
     if (version !== input.expectedVersion) {
@@ -874,7 +1137,23 @@ export class FakeRepository {
       etag: `"grade-v${version + 1}"`,
     };
     submission.currentGrade = grade;
-    if (input.publish) submission.grade = grade;
+    if (input.publish) {
+      submission.grade = grade;
+      this.addNotification({
+        recipientUserId: submission.studentUserId,
+        actorUserId: input.grader.id,
+        type: "grade_published",
+        courseCode: submission.courseCode,
+        submissionId: submission.id,
+        title: notificationText(
+          `Grade published: ${submission.assignmentTitle}`,
+          300,
+        ),
+        body: "Your score and teacher feedback are ready to review.",
+        href: `#/assignment/${encodeURIComponent(submission.assignmentId)}`,
+        dedupeKey: `submission-grade:${submission.id}:v${version + 1}:published`,
+      });
+    }
     this.grades.push({ graderId: input.grader.id, idempotencyKey: input.idempotencyKey, requestFingerprint: input.requestFingerprint, grade });
     return grade;
   }

@@ -13,7 +13,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "account-security-v1";
+  const SCRIPT_VERSION = "student-teacher-interaction-v1";
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
@@ -143,6 +143,9 @@
       coursesEndpoint: ready ? apiUrl(origin, "/v1/courses") : "",
       studentProgressEndpoint: ready ? apiUrl(origin, "/v1/me/progress") : "",
       studentGradesEndpoint: ready ? apiUrl(origin, "/v1/me/grades") : "",
+      notificationsEndpoint: ready
+        ? apiUrl(origin, "/v1/me/notifications")
+        : "",
       moduleProgressEndpoint: ready
         ? apiUrl(origin, "/v1/me/progress/modules")
         : "",

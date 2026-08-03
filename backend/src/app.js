@@ -28,6 +28,20 @@ const materialFilterSchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+const submissionMessageBodySchema = z
+  .object({
+    body: z.string().trim().min(1).max(10000).optional(),
+    message: z.string().trim().min(1).max(10000).optional(),
+  })
+  .refine(
+    (value) => Boolean(value.body || value.message),
+    { message: "A message body is required." },
+  )
+  .refine(
+    (value) => !value.body || !value.message || value.body === value.message,
+    { message: "Provide body or message, not two different values." },
+  )
+  .transform((value) => value.body || value.message);
 
 function assertActivityCompletionPolicy(activity, status, evidence) {
   const policy = activity?.completionCriteria;
@@ -115,6 +129,19 @@ function serializeFile(file, submissionId) {
   };
 }
 
+function submissionWorkflowStatus(record) {
+  if (record.status !== "submitted") return record.status;
+  if (record.grade?.publishedAt) return "graded";
+  const returned = (record.messages || []).some(
+    (message) =>
+      message.type === "revision_request" &&
+      (!message.submissionId || message.submissionId === record.id),
+  );
+  if (returned) return "revision_requested";
+  if (record.grade) return "under_review";
+  return Number(record.attemptNumber) > 1 ? "resubmitted" : "under_review";
+}
+
 function submissionHistory(records) {
   return [...records]
     .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt))
@@ -134,6 +161,8 @@ function submissionHistory(records) {
       submittedAt: record.submittedAt,
       receiptId: record.id,
       status: record.grade?.publishedAt ? "graded" : record.status,
+      workflowStatus: submissionWorkflowStatus(record),
+      messages: record.messages || [],
     }));
 }
 
@@ -161,7 +190,15 @@ function collapseSubmissions(records, includeStudentInKey = true) {
   }));
 }
 
-function serializeSubmission(record, { includeStudent = false, historyRecords = [record] } = {}) {
+function serializeSubmission(
+  record,
+  {
+    includeStudent = false,
+    historyRecords = record.historyRecords?.length
+      ? record.historyRecords
+      : [record],
+  } = {},
+) {
   const sectionKind = record.sectionKind || "unit";
   const curriculumUnitNumber =
     sectionKind === "final_evaluation"
@@ -191,6 +228,9 @@ function serializeSubmission(record, { includeStudent = false, historyRecords = 
         }
       : {}),
     courseCode: record.courseCode,
+    moduleId: record.moduleId || null,
+    moduleNumber:
+      record.moduleNumber == null ? null : Number(record.moduleNumber),
     unitNumber: record.unitNumber,
     curriculumUnitNumber,
     sectionKind,
@@ -199,12 +239,19 @@ function serializeSubmission(record, { includeStudent = false, historyRecords = 
     assignmentId: record.assignmentId,
     assignmentTitle: record.assignmentTitle,
     attemptNumber: record.attemptNumber,
+    replacesSubmissionId: record.replacesSubmissionId || null,
+    maxAttempts: Number(record.maxAttempts || 99),
     note: record.note || "",
     status: record.grade?.publishedAt ? "graded" : record.status,
+    workflowStatus: submissionWorkflowStatus(record),
+    resubmissionAllowed:
+      submissionWorkflowStatus(record) === "revision_requested" &&
+      Number(record.attemptNumber) < Number(record.maxAttempts || 99),
     submittedAt: record.submittedAt,
     updatedAt: record.updatedAt,
     receiptId: record.id,
     files: record.files.map((file) => serializeFile(file, record.id)),
+    messages: record.messages || [],
     history: submissionHistory(historyRecords),
     versions: submissionHistory(historyRecords),
     grade: record.grade,
@@ -426,6 +473,13 @@ export async function createApp({
       parts: config.maxUploadFiles + 20,
     },
   });
+
+  const authenticatedRateLimitKey = (request) => {
+    const sessionToken = String(request.cookies?.[config.cookieName] || "");
+    return sessionToken
+      ? `session:${sha256(sessionToken)}`
+      : `ip:${request.ip}`;
+  };
 
   app.decorateRequest("auth", null);
 
@@ -1431,11 +1485,125 @@ export async function createApp({
     },
   );
 
+  app.get(
+    "/v1/me/notifications",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => {
+      const query = parse(
+        z.object({
+          unreadOnly: z.enum(["true", "false"]).optional(),
+          cursor: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+        request.query || {},
+        "INVALID_NOTIFICATION_FILTER",
+      );
+      const offset = parseCursor(query.cursor);
+      const [records, unreadCount] = await Promise.all([
+        repository.listNotifications(request.auth.user.id, {
+          unreadOnly: query.unreadOnly === "true",
+          limit: query.limit,
+          offset,
+        }),
+        repository.countUnreadNotifications(request.auth.user.id),
+      ]);
+      const hasMore = records.length > query.limit;
+      return {
+        data: records.slice(0, query.limit),
+        unreadCount,
+        page: {
+          nextCursor: nextCursor(offset, query.limit, hasMore),
+          limit: query.limit,
+        },
+      };
+    },
+  );
+
+  app.patch(
+    "/v1/me/notifications",
+    {
+      preHandler: [
+        requireRoles("student", "teacher", "teacher_admin"),
+        requireCsrf,
+      ],
+      config: {
+        rateLimit: {
+          max: 120,
+          timeWindow: "1 hour",
+          keyGenerator: authenticatedRateLimitKey,
+        },
+      },
+    },
+    async (request) => {
+      const body = parse(
+        z.union([
+          z.object({ readAll: z.literal(true) }),
+          z.object({ notificationIds: z.array(uuidSchema).min(1).max(100) }),
+        ]),
+        request.body,
+        "INVALID_NOTIFICATION_UPDATE",
+      );
+      const records = body.readAll
+        ? await repository.markAllNotificationsRead(request.auth.user.id)
+        : await repository.markNotificationsRead(
+            request.auth.user.id,
+            [...new Set(body.notificationIds)],
+          );
+      return {
+        data: records,
+        unreadCount: await repository.countUnreadNotifications(request.auth.user.id),
+      };
+    },
+  );
+
+  app.patch(
+    "/v1/me/notifications/:notificationId",
+    {
+      preHandler: [
+        requireRoles("student", "teacher", "teacher_admin"),
+        requireCsrf,
+      ],
+    },
+    async (request) => {
+      const notificationId = parse(
+        uuidSchema,
+        request.params.notificationId,
+        "INVALID_NOTIFICATION_ID",
+      );
+      parse(
+        z.object({ read: z.literal(true) }),
+        request.body,
+        "INVALID_NOTIFICATION_UPDATE",
+      );
+      const notification = await repository.markNotificationRead(
+        request.auth.user.id,
+        notificationId,
+      );
+      if (!notification) {
+        throw new ApiError(
+          404,
+          "NOTIFICATION_NOT_FOUND",
+          "The notification was not found.",
+        );
+      }
+      return {
+        data: notification,
+        unreadCount: await repository.countUnreadNotifications(request.auth.user.id),
+      };
+    },
+  );
+
   app.post(
     "/v1/submissions",
     {
       preHandler: [requireRoles("student"), requireCsrf],
-      config: { rateLimit: { max: 20, timeWindow: "1 hour" } },
+      config: {
+        rateLimit: {
+          max: 20,
+          timeWindow: "1 hour",
+          keyGenerator: authenticatedRateLimitKey,
+        },
+      },
     },
     async (request, reply) => {
       const key = idempotencyKey(request);
@@ -1587,6 +1755,13 @@ export async function createApp({
           "Refresh the assignment before submitting this attempt.",
         );
       }
+      if (latestAttempt && !latestAttempt.revisionRequested) {
+        throw new ApiError(
+          409,
+          "RESUBMISSION_NOT_REQUESTED",
+          "A new attempt becomes available only after your teacher requests a revision.",
+        );
+      }
       if (
         latestAttempt &&
         metadata.replacesSubmissionId !== latestAttempt.id
@@ -1603,6 +1778,7 @@ export async function createApp({
       }
       const submissionId = randomUUID();
       const driveFiles = [];
+      let submissionPersisted = false;
       try {
         for (const file of validatedFiles) {
           const storedName = `${randomUUID()}${path.extname(file.originalName).toLowerCase()}`;
@@ -1650,12 +1826,14 @@ export async function createApp({
             assignmentId: metadata.assignmentId,
             assignmentTitle: assignment.title,
             attemptNumber: metadata.attemptNumber,
+            replacesSubmissionId: metadata.replacesSubmissionId || null,
             note: metadata.note,
             idempotencyKey: key,
             requestFingerprint: fingerprint,
           },
           driveFiles,
         );
+        submissionPersisted = true;
         await repository.recordAudit?.({
           requestId: request.id,
           actorUserId: request.auth.user.id,
@@ -1665,9 +1843,15 @@ export async function createApp({
           outcome: "success",
           details: { courseCode: metadata.courseCode, assignmentId: metadata.assignmentId, fileCount: driveFiles.length },
         });
-        reply.status(201).send({ data: serializeSubmission(created) });
+        const complete =
+          (await repository.getSubmission(submissionId, "student")) || created;
+        reply.status(201).send({ data: serializeSubmission(complete) });
       } catch (error) {
-        await Promise.allSettled(driveFiles.map((file) => drive.deleteFile(file.driveFileId)));
+        if (!submissionPersisted) {
+          await Promise.allSettled(
+            driveFiles.map((file) => drive.deleteFile(file.driveFileId)),
+          );
+        }
         throw error;
       }
     },
@@ -1710,6 +1894,136 @@ export async function createApp({
             ),
         page: { nextCursor: nextCursor(offset, query.limit, hasMore), limit: query.limit },
       };
+    },
+  );
+
+  app.post(
+    "/v1/submissions/:submissionId/messages",
+    {
+      preHandler: [
+        requireRoles("student", "teacher", "teacher_admin"),
+        requireCsrf,
+      ],
+      config: {
+        rateLimit: {
+          max: 120,
+          timeWindow: "1 hour",
+          keyGenerator: authenticatedRateLimitKey,
+        },
+      },
+    },
+    async (request, reply) => {
+      const submissionId = parse(
+        uuidSchema,
+        request.params.submissionId,
+        "INVALID_SUBMISSION_ID",
+      );
+      const messageBody = parse(
+        submissionMessageBodySchema,
+        request.body,
+        "INVALID_SUBMISSION_MESSAGE",
+      );
+      const submission = await repository.getSubmission(
+        submissionId,
+        request.auth.user.role,
+      );
+      if (!submission) {
+        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "The submission was not found.");
+      }
+      if (request.auth.user.role === "student") {
+        if (submission.studentUserId !== request.auth.user.id) {
+          throw new ApiError(
+            403,
+            "SUBMISSION_ACCESS_DENIED",
+            "You cannot add a message to another student's submission.",
+          );
+        }
+      } else {
+        await requireCourseAccess(request.auth.user, submission.courseCode);
+      }
+      const key = idempotencyKey(request);
+      const message = await repository.createSubmissionMessage({
+        submissionId,
+        author: request.auth.user,
+        messageType: "comment",
+        body: messageBody,
+        idempotencyKey: key,
+        requestFingerprint: stableFingerprint({
+          submissionId,
+          messageType: "comment",
+          body: messageBody,
+        }),
+      });
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: request.auth.user.id,
+        action: "submission.message.create",
+        resourceType: "submission",
+        resourceId: submissionId,
+        outcome: "success",
+        details: { messageType: "comment" },
+      });
+      reply.status(201).send({ data: message });
+    },
+  );
+
+  app.post(
+    "/v1/submissions/:submissionId/return",
+    {
+      preHandler: [
+        requireRoles("teacher", "teacher_admin"),
+        requireCsrf,
+      ],
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 hour",
+          keyGenerator: authenticatedRateLimitKey,
+        },
+      },
+    },
+    async (request, reply) => {
+      const submissionId = parse(
+        uuidSchema,
+        request.params.submissionId,
+        "INVALID_SUBMISSION_ID",
+      );
+      const messageBody = parse(
+        submissionMessageBodySchema,
+        request.body,
+        "INVALID_REVISION_REQUEST",
+      );
+      const submission = await repository.getSubmission(
+        submissionId,
+        request.auth.user.role,
+      );
+      if (!submission) {
+        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "The submission was not found.");
+      }
+      await requireCourseAccess(request.auth.user, submission.courseCode);
+      const key = idempotencyKey(request);
+      const message = await repository.createSubmissionMessage({
+        submissionId,
+        author: request.auth.user,
+        messageType: "revision_request",
+        body: messageBody,
+        idempotencyKey: key,
+        requestFingerprint: stableFingerprint({
+          submissionId,
+          messageType: "revision_request",
+          body: messageBody,
+        }),
+      });
+      await repository.recordAudit?.({
+        requestId: request.id,
+        actorUserId: request.auth.user.id,
+        action: "submission.return",
+        resourceType: "submission",
+        resourceId: submissionId,
+        outcome: "success",
+        details: { messageId: message.id },
+      });
+      reply.status(201).send({ data: message });
     },
   );
 
