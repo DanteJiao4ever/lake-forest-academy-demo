@@ -5,6 +5,7 @@ import FormData from "form-data";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { publicId } from "../src/lib/crypto.js";
+import { ApiError } from "../src/lib/errors.js";
 import { hashPassword } from "../src/lib/passwords.js";
 import { FakeDrive, FakeRepository, FakeScanner } from "./fakes.js";
 
@@ -517,6 +518,87 @@ describe("Lake Forest Learning API", () => {
     });
     assert.equal(changed.statusCode, 409);
     assert.equal(changed.json().error.code, "IDEMPOTENCY_KEY_REUSED");
+  });
+
+  test("returns a stable Drive upload code and request ID without upstream details", async () => {
+    const logEntries = [];
+    await app.close();
+    app = await createApp({
+      config,
+      repository,
+      drive,
+      scanner,
+      logger: {
+        level: "error",
+        stream: {
+          write(line) {
+            logEntries.push(JSON.parse(line));
+          },
+        },
+      },
+    });
+    const registered = await register("upload-diagnostics@example.invalid");
+    await repository.replaceEnrollments(repository.users[0].id, ["MHF4U"]);
+    drive.uploadSubmission = async () => {
+      const error = new ApiError(
+        503,
+        "SUBMISSION_DRIVE_PERMISSION_DENIED",
+        "Submission storage is temporarily unavailable.",
+      );
+      error.logContext = {
+        operation: "submission_file_create",
+        upstreamStatus: 403,
+        upstreamReason: "insufficient_file_permissions",
+      };
+      throw error;
+    };
+    const form = multipartPayload(
+      {
+        courseCode: "MHF4U",
+        unitNumber: 2,
+        assignmentId: "a1",
+        assignmentTitle: "Quadratic Models Investigation",
+        attemptNumber: 1,
+        note: "Upload diagnostics test",
+        integrityConfirmed: "true",
+      },
+      {
+        name: "diagnostics.pdf",
+        type: "application/pdf",
+        buffer: Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"),
+      },
+    );
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/submissions",
+      headers: {
+        origin,
+        cookie: registered.cookie,
+        "x-csrf-token": registered.body.csrfToken,
+        "x-request-id": "req_upload_permission_test",
+        "idempotency-key": "submission-drive-diagnostics-1",
+        ...form.headers,
+      },
+      payload: form.payload,
+    });
+    assert.equal(response.statusCode, 503, response.body);
+    assert.deepEqual(response.json(), {
+      error: {
+        code: "SUBMISSION_DRIVE_PERMISSION_DENIED",
+        message: "The service could not complete the request.",
+        requestId: "req_upload_permission_test",
+      },
+    });
+    assert.equal(response.headers["x-request-id"], "req_upload_permission_test");
+    assert.equal(response.body.includes("insufficient_file_permissions"), false);
+    assert.equal(response.body.includes("403"), false);
+    const failureLog = logEntries.find(
+      (entry) => entry.requestId === "req_upload_permission_test",
+    );
+    assert.equal(failureLog.operation, "submission_file_create");
+    assert.equal(failureLog.upstreamStatus, 403);
+    assert.equal(failureLog.upstreamReason, "insufficient_file_permissions");
+    assert.equal(JSON.stringify(failureLog).includes("response.data"), false);
   });
 
   test("blocks a locked catalog assignment, then uses its authoritative OSSD unit after override", async () => {

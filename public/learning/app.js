@@ -2947,6 +2947,30 @@
     );
   }
 
+  function safeSupportToken(value, maxLength = 128) {
+    if (!["string", "number"].includes(typeof value)) return "";
+    const token = String(value).trim();
+    if (!token || token.length > maxLength) return "";
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(token) ? token : "";
+  }
+
+  function safeUploadFailureMessage(error) {
+    if (error?.name === "AbortError") {
+      return "The upload timed out. Your work was not submitted.";
+    }
+    const requestId = safeSupportToken(error?.requestId);
+    const code = safeSupportToken(error?.code, 64);
+    const diagnostic = [
+      requestId ? `Reference: ${requestId}` : "",
+      code ? `Code: ${code}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return `The service could not complete the upload. Your work was not submitted.${
+      diagnostic ? ` ${diagnostic}.` : ""
+    }`;
+  }
+
   async function requestSubmissionEndpoint(endpoint, options = {}) {
     const url = configuredDriveUrl(endpoint);
     if (!url) throw new Error("Submission service is not configured.");
@@ -2977,6 +3001,9 @@
         headers,
         signal: controller.signal,
       });
+      const headerRequestId = safeSupportToken(
+        response.headers?.get?.("X-Request-ID"),
+      );
       const text = response.status === 204 ? "" : await response.text();
       let payload = {};
       if (text) {
@@ -2984,7 +3011,11 @@
           payload = JSON.parse(text);
         } catch {
           if (response.ok) {
-            throw new Error("The submission service returned invalid JSON.");
+            const error = new Error(
+              "The submission service returned invalid JSON.",
+            );
+            error.requestId = headerRequestId;
+            throw error;
           }
         }
       }
@@ -3003,7 +3034,11 @@
             `Submission service request failed (${response.status}).`,
         );
         error.status = response.status;
-        error.code = payload?.error?.code || "";
+        error.code = safeSupportToken(payload?.error?.code, 64);
+        error.requestId =
+          safeSupportToken(payload?.error?.requestId) ||
+          safeSupportToken(payload?.requestId) ||
+          headerRequestId;
         throw error;
       }
       return payload;
@@ -10515,11 +10550,7 @@
                 : "Upload to Lotus Drive"
               : "Submit to School Record";
           }
-          const message =
-            error?.name === "AbortError"
-              ? "The upload timed out. Your work was not submitted."
-              : error?.message ||
-                "The file could not be uploaded. Your work was not submitted.";
+          const message = safeUploadFailureMessage(error);
           setFormAlert(event.target, message);
           showToast(message, {
             tone: "error",
