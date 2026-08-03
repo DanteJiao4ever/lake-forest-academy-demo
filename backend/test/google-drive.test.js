@@ -311,3 +311,111 @@ describe("Google Drive submission error mapping", () => {
     );
   });
 });
+
+describe("Google Drive submission target discovery", () => {
+  test("derives Shared Drive topology without returning the protected root ID", async () => {
+    const drive = new GoogleDriveStore({
+      files: {
+        async get() {
+          return {
+            data: {
+              id: "protected-root",
+              name: "Lake Forest Learning - Student Submissions",
+              mimeType: folder,
+              driveId: "shared-drive-test",
+              capabilities: {
+                canAddChildren: true,
+                canListChildren: true,
+                canTrashChildren: true,
+              },
+            },
+          };
+        },
+      },
+    });
+
+    const descriptor = await drive.inspectSubmissionTarget(
+      "protected-root",
+      "Lake Forest Learning - Student Submissions",
+    );
+
+    assert.deepEqual(descriptor, {
+      driveKind: "shared_drive",
+      driveId: "shared-drive-test",
+      canAddChildren: true,
+      canListChildren: true,
+      canTrashChildren: true,
+    });
+    assert.equal(Object.hasOwn(descriptor, "rootFolderId"), false);
+  });
+
+  for (const scenario of [
+    {
+      name: "permission failures",
+      error: upstreamError(403, "insufficientFilePermissions"),
+      code: "SUBMISSION_DRIVE_PERMISSION_DENIED",
+      reason: "insufficient_file_permissions",
+    },
+    {
+      name: "rate limits",
+      error: upstreamError(429, "rateLimitExceeded"),
+      code: "SUBMISSION_DRIVE_RATE_LIMITED",
+      reason: "rate_limit_exceeded",
+    },
+    {
+      name: "storage quota failures",
+      error: upstreamError(403, "storageQuotaExceeded"),
+      code: "SUBMISSION_DRIVE_QUOTA_EXCEEDED",
+      reason: "storage_quota_exceeded",
+    },
+    {
+      name: "upstream outages",
+      error: upstreamError(503, "backendError"),
+      code: "SUBMISSION_DRIVE_UNAVAILABLE",
+      reason: "backend_error",
+    },
+  ]) {
+    test(`preserves stable diagnostics for ${scenario.name} during discovery`, async () => {
+      const drive = new GoogleDriveStore({
+        files: { async get() { throw scenario.error; } },
+      });
+
+      await assert.rejects(
+        drive.inspectSubmissionTarget(
+          "protected-root",
+          "Lake Forest Learning - Student Submissions",
+        ),
+        (error) => {
+          assert.equal(error.code, scenario.code);
+          assert.deepEqual(error.logContext, {
+            operation: "submission_root_metadata",
+            upstreamStatus: scenario.error.response.status,
+            upstreamReason: scenario.reason,
+          });
+          return true;
+        },
+      );
+    });
+  }
+
+  test("moves rollback files to trash with Shared Drive support", async () => {
+    const calls = [];
+    const drive = new GoogleDriveStore({
+      files: {
+        async update(input) {
+          calls.push(input);
+          return { data: { id: input.fileId, trashed: true } };
+        },
+      },
+    });
+
+    await drive.trashFile("uploaded-file-test");
+
+    assert.deepEqual(calls, [{
+      fileId: "uploaded-file-test",
+      requestBody: { trashed: true },
+      fields: "id,trashed",
+      supportsAllDrives: true,
+    }]);
+  });
+});

@@ -203,7 +203,7 @@ export class GoogleDriveStore {
     this.folderCache = new Map();
   }
 
-  async ready(rootFolderId) {
+  async inspectSubmissionTarget(rootFolderId, expectedRootName = "") {
     if (!String(rootFolderId || "").trim()) {
       throw new ApiError(
         503,
@@ -211,20 +211,35 @@ export class GoogleDriveStore {
         "Submission storage has not been configured.",
       );
     }
+    let root;
     try {
-      const root = await this.getMetadata(rootFolderId);
-      if (!root || root.trashed || root.mimeType !== folderMime) {
-        throw new Error("The configured submission root is not an active folder.");
-      }
-      return true;
+      root = await this.getMetadata(rootFolderId);
     } catch (error) {
-      if (error instanceof ApiError) throw error;
+      throw mapSubmissionDriveError(error, "submission_root_metadata");
+    }
+    if (
+      !root ||
+      root.trashed ||
+      root.mimeType !== folderMime ||
+      (expectedRootName && root.name !== expectedRootName)
+    ) {
       throw new ApiError(
         503,
-        "SUBMISSION_STORAGE_UNAVAILABLE",
-        "Submission storage is temporarily unavailable.",
+        "SUBMISSION_STORAGE_TARGET_MISMATCH",
+        "Submission storage configuration could not be verified.",
       );
     }
+    return {
+      driveKind: root.driveId ? "shared_drive" : "my_drive",
+      driveId: root.driveId || null,
+      canAddChildren: root.capabilities?.canAddChildren === true,
+      canListChildren: root.capabilities?.canListChildren === true,
+      canTrashChildren: root.capabilities?.canTrashChildren === true,
+    };
+  }
+
+  async ready(rootFolderId, expectedRootName = "") {
+    return this.inspectSubmissionTarget(rootFolderId, expectedRootName);
   }
 
   async curriculumReady(rootFolderId, expectedRootName = "") {
@@ -267,7 +282,7 @@ export class GoogleDriveStore {
   async getMetadata(fileId) {
     const response = await this.client.files.get({
       fileId,
-      fields: "id,name,mimeType,parents,webViewLink,modifiedTime,size,trashed",
+      fields: "id,name,mimeType,parents,webViewLink,modifiedTime,size,trashed,driveId,capabilities(canAddChildren,canListChildren,canTrashChildren)",
       supportsAllDrives: true,
     });
     return response.data;
@@ -480,8 +495,17 @@ export class GoogleDriveStore {
     };
   }
 
-  async deleteFile(fileId) {
-    await this.client.files.delete({ fileId, supportsAllDrives: true });
+  async trashFile(fileId) {
+    try {
+      await this.client.files.update({
+        fileId,
+        requestBody: { trashed: true },
+        fields: "id,trashed",
+        supportsAllDrives: true,
+      });
+    } catch (error) {
+      throw mapSubmissionDriveError(error, "submission_file_trash");
+    }
   }
 
   async openFile(fileId) {

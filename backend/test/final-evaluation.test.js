@@ -46,7 +46,7 @@ describe("Final Evaluation submission classification", () => {
         COOKIE_SECURE: "false",
         BCRYPT_COST: "10",
         CLAMAV_REQUIRED: "false",
-        SUBMISSION_TARGET_ROOT_ID: "1vDhdvq7y15q6AEklYR0wq0PZAH2wkcVK",
+        SUBMISSION_TARGET_ROOT_ID: "submission-root-test",
       }),
       repository,
       drive,

@@ -6,6 +6,7 @@ import { ClamAvScanner } from "./lib/clamav.js";
 import { createApp } from "./app.js";
 import { createPasswordResetMailer } from "./mail/password-reset-mailer.js";
 import { bootstrapCanonicalDriveCatalog } from "./services/material-sync.js";
+import { bootstrapSystemSubmissionTarget } from "./services/submission-target-bootstrap.js";
 
 try {
   process.loadEnvFile?.();
@@ -57,6 +58,21 @@ try {
       app.log.error(
         { code: error?.code || "DRIVE_BOOTSTRAP_FAILED" },
         "Drive startup bootstrap failed; release readiness remains closed",
+      );
+    }
+    try {
+      await bootstrapSystemSubmissionTarget({
+        repository,
+        drive,
+        rootFolderId: config.submissionTargetRootId,
+        rootFolderName: config.submissionTargetRootName,
+      });
+    } catch (error) {
+      // Keep the service reachable for diagnostics, but leave the dedicated
+      // upload readiness gate closed until the exact configured target exists.
+      app.log.error(
+        { code: error?.code || "SUBMISSION_STORAGE_UNAVAILABLE" },
+        "Submission target startup bootstrap failed; upload readiness remains closed",
       );
     }
   }

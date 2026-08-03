@@ -1845,12 +1845,60 @@ export class PostgresRepository {
     };
   }
 
-  async getActiveSubmissionTarget() {
+  async getActiveSubmissionTarget(rootFolderId = null) {
     const result = await this.pool.query(
       `SELECT * FROM drive_submission_targets
-       WHERE status = 'active' ORDER BY created_at LIMIT 1`,
+       WHERE status = 'active'
+         AND (
+           $1::text IS NULL
+           OR (
+             root_folder_id = $1
+             AND drive_kind = 'shared_drive'
+             AND credential_type = 'service_account'
+             AND credential_ref = 'adc://runtime-service-account'
+           )
+         )
+       ORDER BY
+         CASE WHEN configuration_origin = 'system_config' THEN 0 ELSE 1 END,
+         created_at
+       LIMIT 1`,
+      [rootFolderId],
     );
     return result.rows[0] || null;
+  }
+
+  async ensureSystemSubmissionTarget({
+    rootFolderId,
+    rootFolderName,
+    driveKind,
+    driveId,
+  }) {
+    const inserted = await this.pool.query(
+      `INSERT INTO drive_submission_targets
+        (display_name, drive_kind, drive_id, root_folder_id, root_folder_name,
+         credential_type, credential_ref, status, created_by,
+         configuration_origin)
+       VALUES ($1, $2, $3, $4, $5, 'service_account',
+               'adc://runtime-service-account', 'active', NULL,
+               'system_config')
+       ON CONFLICT (drive_kind, root_folder_id) DO NOTHING
+       RETURNING *`,
+      [
+        "Configured Student Submission Storage",
+        driveKind,
+        driveId,
+        rootFolderId,
+        rootFolderName,
+      ],
+    );
+    if (inserted.rows[0]) return inserted.rows[0];
+    const existing = await this.pool.query(
+      `SELECT * FROM drive_submission_targets
+        WHERE drive_kind = $1 AND root_folder_id = $2
+        LIMIT 1`,
+      [driveKind, rootFolderId],
+    );
+    return existing.rows[0] || null;
   }
 
   async createSubmissionTarget(input, actorId) {
@@ -1872,7 +1920,7 @@ export class PostgresRepository {
   async listSubmissionTargets() {
     const result = await this.pool.query(
       `SELECT id, display_name, drive_kind, drive_id, root_folder_id, root_folder_name,
-              credential_type, status, created_at, updated_at
+              credential_type, configuration_origin, status, created_at, updated_at
          FROM drive_submission_targets ORDER BY created_at`,
     );
     return result.rows;

@@ -38,9 +38,12 @@ the API validates that allowlist before changing authorization.
 
 The approved staff-only submission folder is supplied through
 `SUBMISSION_TARGET_ROOT_ID` in deployment configuration. The service account
-must be shared onto that exact folder and the API must create an active
-submission-target record before uploads begin; the identifier is not placed in
-browser configuration or source-controlled examples.
+must have permission to list and add content and to move rollback files to the
+trash in that exact folder inside a Shared Drive. Production startup verifies
+the folder topology and these capabilities, then
+idempotently creates the matching actorless system target before uploads begin.
+The identifier is not placed in student-facing configuration; the existing
+administrator-only target API retains its management response contract.
 
 ## Browser configuration
 
@@ -184,7 +187,13 @@ receive a Drive ID or private Drive URL.
 
 Configure `SUBMISSION_TARGET_ROOT_ID` separately for student uploads. Both
 folder IDs belong in deployment configuration, not browser configuration or
-source-controlled examples.
+source-controlled examples. `SUBMISSION_TARGET_ROOT_NAME` defaults to
+`Lake Forest Learning - Student Submissions`; startup fails closed if an
+existing exact-root target has conflicting status, topology, name or runtime
+credential metadata, if the folder is in My Drive, or if the runtime service
+cannot add children. It never silently rewrites an existing row. An exact,
+active administrator-created target using runtime ADC is adopted without
+changing its audit actor.
 
 The Google Workspace OAuth start/callback endpoints are **not implemented in
 this service yet**. Faculty login currently uses the same server-side bcrypt

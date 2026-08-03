@@ -46,6 +46,7 @@ const configSchema = z.object({
   curriculumDriveRootId: z.string(),
   curriculumDriveRootName: z.string().min(1),
   submissionTargetRootId: z.string(),
+  submissionTargetRootName: z.string().min(1),
 });
 
 export function loadConfig(env = process.env) {
@@ -116,6 +117,9 @@ export function loadConfig(env = process.env) {
       env.CURRICULUM_DRIVE_ROOT_NAME ||
       "Lotus Academy Formal Course Pilots - Text Based",
     submissionTargetRootId: env.SUBMISSION_TARGET_ROOT_ID || "",
+    submissionTargetRootName:
+      env.SUBMISSION_TARGET_ROOT_NAME ||
+      "Lake Forest Learning - Student Submissions",
   });
 
   if (config.nodeEnv === "production" && !config.cookieSecure) {
