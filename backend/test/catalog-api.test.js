@@ -766,6 +766,10 @@ describe("database-driven course catalog API", () => {
     });
     assert.equal(publishedExam.statusCode, 200, publishedExam.body);
     assert.equal(publishedExam.headers.etag, '"direct-grade-v2"');
+    assert.equal(
+      publishedExam.json().data.gradedByDisplayName,
+      "Teacher User",
+    );
 
     const revisionDraft = await app.inject({
       method: "PUT",
@@ -848,6 +852,12 @@ describe("database-driven course catalog API", () => {
         ["mhf4u-m11-written-exam", 93, "direct"],
         ["mhf4u-participation", 100, "direct"],
       ],
+    );
+    assert.equal(
+      visible.json().data.every(
+        (grade) => grade.gradedByDisplayName === "Teacher User",
+      ),
+      true,
     );
 
     const gradebook = await app.inject({

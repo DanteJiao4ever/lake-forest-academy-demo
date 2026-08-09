@@ -512,6 +512,38 @@ test("anonymous session checks preserve the selected faculty sign-in portal", as
   assert.match(result.html, /<p class="eyebrow">Faculty Portal<\/p>/);
   assert.match(result.html, /type="submit"[^>]*>Faculty Sign In/);
   assert.doesNotMatch(result.html, /type="submit"[^>]*>Student Sign In/);
+  assert.match(result.html, /id="email"[^>]*value=""/);
+  assert.match(result.html, /id="password"[^>]*autocomplete="current-password"/);
+  assert.doesNotMatch(result.html, /id="password"[^>]*\svalue=/);
+  assert.doesNotMatch(
+    result.html,
+    /James Whitmore|james\.whitmore@lakeforestacademy\.ca/,
+  );
+});
+
+test("remote session identity is never replaced by fixture account names", async () => {
+  const teacher = await renderPortal("#/teacher/dashboard", {
+    email: "james.whitmore@lakeforestacademy.ca",
+    role: "teacher_admin",
+    firstName: "Daniel",
+    lastName: "Brooks",
+    displayName: "Daniel Brooks",
+    publicId: "teacher-daniel",
+  });
+  assert.match(teacher, /Welcome Back, Daniel/);
+  assert.match(teacher, />Daniel Brooks</);
+  assert.doesNotMatch(teacher, /Welcome Back, James/);
+
+  const student = await renderPortal("#/dashboard", {
+    email: "student@lakeforestacademy.ca",
+    role: "student",
+    lastName: "Chen",
+    displayName: "Maya Chen",
+    publicId: "student-maya",
+  });
+  assert.match(student, />Maya Chen</);
+  assert.match(student, /Maya Chen\.<\/h1>/);
+  assert.doesNotMatch(student, /Alex Morgan/);
 });
 
 test("password recovery, reset and authenticated change-password routes are discoverable", async () => {
@@ -2533,6 +2565,118 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
   assert.match(result.html, /value="81"/);
   assert.match(result.html, />Updated central draft feedback\.<\/textarea>/);
   assert.doesNotMatch(result.html, /Returned at 81%/);
+});
+
+test("published grades and revision requests use distinct workflow language", async () => {
+  const submissionId = "22222222-2222-4222-8222-222222222222";
+  const publishedAt = "2026-08-03T15:00:00.000Z";
+  const publishedRecord = {
+    id: submissionId,
+    submissionId,
+    student: {
+      id: "student-published",
+      displayName: "Maya Chen",
+      email: "student@lakeforestacademy.ca",
+    },
+    courseCode: "SCH4U",
+    assignmentId: "sch4u-m02-assignment",
+    assignmentTitle: "Safer Organic Product Reformulation Dossier",
+    unitNumber: 1,
+    status: "graded",
+    submittedAt: "2026-08-02T15:00:00.000Z",
+    receiptId: submissionId,
+    grade: {
+      score: 100,
+      feedback: "Excellent evidence and clear reasoning.",
+      gradedBy: "teacher-daniel",
+      gradedByDisplayName: "Daniel Brooks",
+      gradedAt: publishedAt,
+      publishedAt,
+      version: 1,
+      etag: '"grade-v1"',
+    },
+  };
+  const submissionConfig = {
+    submissionsEndpoint: "https://api.example.test/v1/submissions",
+    gradingEndpoint: "https://api.example.test/v1/grades",
+  };
+  const publishedFetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/submissions") {
+      return jsonResponse({
+        data: [publishedRecord],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    return jsonResponse({ data: [] });
+  };
+
+  const teacher = await renderPortal(
+    "#/teacher/submission/student%40lakeforestacademy.ca/sch4u-m02-assignment",
+    {
+      email: "faculty@lakeforestacademy.ca",
+      displayName: "Daniel Brooks",
+      firstName: "Daniel",
+      role: "teacher",
+    },
+    { submissionConfig, fetch: publishedFetch, settleTurns: 14 },
+  );
+  assert.match(teacher, /Grade Published/);
+  assert.match(teacher, /Published at 100%/);
+  assert.doesNotMatch(teacher, /Returned to Student|Returned at 100%/);
+
+  const student = await renderPortal(
+    "#/assignment/sch4u-m02-assignment",
+    {
+      email: "student@lakeforestacademy.ca",
+      displayName: "Maya Chen",
+      firstName: "Maya",
+      role: "student",
+    },
+    { submissionConfig, fetch: publishedFetch, settleTurns: 14 },
+  );
+  assert.match(student, /Daniel Brooks/);
+  assert.match(student, /100% · Published/);
+  assert.doesNotMatch(student, /100% · Returned/);
+
+  const revisionFetch = async (request) => {
+    const url = new URL(String(request));
+    if (url.pathname === "/v1/submissions") {
+      return jsonResponse({
+        data: [
+          {
+            ...publishedRecord,
+            status: "revision_requested",
+            grade: null,
+            messages: [
+              {
+                id: "revision-message-1",
+                type: "revision_request",
+                body: "Please revise the evidence table and resubmit.",
+                authorName: "Daniel Brooks",
+                authorRole: "teacher",
+                createdAt: publishedAt,
+              },
+            ],
+          },
+        ],
+        page: { nextCursor: null, limit: 100 },
+      });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const revision = await renderPortal(
+    "#/teacher/submission/student%40lakeforestacademy.ca/sch4u-m02-assignment",
+    {
+      email: "faculty@lakeforestacademy.ca",
+      displayName: "Daniel Brooks",
+      firstName: "Daniel",
+      role: "teacher",
+    },
+    { submissionConfig, fetch: revisionFetch, settleTurns: 14 },
+  );
+  assert.match(revision, /Revision Requested/);
+  assert.doesNotMatch(revision, /Grade Published|Published at 100%/);
 });
 
 test("project submissions require a new file and final-evaluation uploads omit empty unit numbers", async () => {

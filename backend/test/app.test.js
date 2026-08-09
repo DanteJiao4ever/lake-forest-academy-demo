@@ -1252,6 +1252,7 @@ describe("Lake Forest Learning API", () => {
     });
     assert.equal(published.statusCode, 200, published.body);
     assert.equal(published.json().data.score, 100);
+    assert.equal(published.json().data.gradedByDisplayName, "James Whitmore");
     assert.equal(published.headers.etag, '"grade-v1"');
 
     const zero = await app.inject({
@@ -1291,6 +1292,10 @@ describe("Lake Forest Learning API", () => {
       headers: { origin, cookie: registered.cookie },
     });
     assert.equal(studentList.json().data[0].grade.score, 0);
+    assert.equal(
+      studentList.json().data[0].grade.gradedByDisplayName,
+      "James Whitmore",
+    );
     assert.equal(studentList.json().data.length, 1);
     assert.equal(studentList.json().data[0].attemptNumber, 2);
     assert.equal(studentList.json().data[0].history.length, 2);
