@@ -1985,7 +1985,8 @@ export class PostgresRepository {
              original_file_name, stored_file_name, relative_path, mime_type,
              size_bytes, sha256_checksum, drive_web_view_link, drive_created_at, drive_modified_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [file.id, input.id, file.targetId, file.driveFileId, file.driveParentFolderId,
+          [file.id, input.id, file.targetId, file.driveFileId,
+            file.driveParentFolderId ?? file.parentFolderId,
             file.originalName, file.storedName, file.relativePath, file.mimeType,
             file.sizeBytes, file.sha256, file.webViewLink || null,
             file.createdAt, file.modifiedAt],

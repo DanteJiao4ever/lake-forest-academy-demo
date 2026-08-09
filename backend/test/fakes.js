@@ -877,6 +877,7 @@ export class FakeRepository {
         mimeType: file.mimeType,
         sizeBytes: file.sizeBytes,
         driveFileId: file.driveFileId,
+        driveParentFolderId: file.driveParentFolderId,
       })),
       status: "submitted",
       submittedAt: new Date().toISOString(),
