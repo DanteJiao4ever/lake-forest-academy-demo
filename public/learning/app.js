@@ -43,7 +43,6 @@
   const SUBMISSION_FILE_TYPE_LABEL =
     "PDF, DOCX, XLSX, PPTX, TXT, PNG or JPEG";
   const ACCESS_EMAIL = "student@lakeforestacademy.ca";
-  const TEACHER_EMAIL = "james.whitmore@lakeforestacademy.ca";
   const AUTH_CONFIG = {
     loginEndpoint: String(
       window.LFA_AUTH_CONFIG?.loginEndpoint || "",
@@ -138,16 +137,6 @@
     role: "student",
     program: "OSSD · Grade 12",
   };
-  const TEACHER_ACCOUNT = {
-    firstName: "James",
-    lastName: "Whitmore",
-    displayName: "James Whitmore",
-    email: TEACHER_EMAIL,
-    accountType: "faculty",
-    role: "teacher",
-    program: "Faculty · All Courses",
-  };
-
   const COURSES = [
     {
       id: "mhf4u",
@@ -1539,6 +1528,13 @@
           typeof responseSource?.feedback === "string"
             ? responseSource.feedback
             : feedback,
+        gradedBy: scalarLabel(
+          responseSource?.gradedBy || record.submission.gradedBy,
+        ),
+        gradedByDisplayName: scalarLabel(
+          responseSource?.gradedByDisplayName ||
+            record.submission.gradedByDisplayName,
+        ),
         gradeEtag:
           scalarLabel(responseSource?.etag) ||
           record.submission.gradeEtag ||
@@ -1656,12 +1652,9 @@
     if (!remoteSessionValidated) return null;
     const session = readSession();
     if (!session) return null;
-    if (session.email === ACCESS_EMAIL) return SCHOOL_ACCOUNT;
-    if (session.email === TEACHER_EMAIL) return TEACHER_ACCOUNT;
     const account = AUTH_CONFIG.allowDeviceAccounts
       ? registeredAccount(session.email)
       : null;
-    if (!account && !session.displayName && !session.firstName) return null;
     const identity = account || session;
     return {
       ...identity,
@@ -2180,7 +2173,7 @@
       record.submission.publishedAt,
     );
     if (workflowStatus === "graded") {
-      return { label: "Returned to Student", className: "success" };
+      return { label: "Grade Published", className: "success" };
     }
     if (workflowStatus === "revision_requested") {
       return { label: "Revision Requested", className: "warning" };
@@ -2206,7 +2199,7 @@
       record.submission.workflowStatus || record.submission.status,
       record.submission.publishedAt,
     );
-    if (workflowStatus === "graded") return "returned";
+    if (workflowStatus === "graded") return "graded";
     if (workflowStatus === "revision_requested") return "revision";
     if (
       gradingDraftFor(record) ||
@@ -2900,6 +2893,10 @@
         score,
         feedback: scalarLabel(
           source.feedback || source.teacherFeedback || source.grade?.feedback,
+        ),
+        gradedBy: scalarLabel(source.gradedBy || source.grade?.gradedBy),
+        gradedByDisplayName: scalarLabel(
+          source.gradedByDisplayName || source.grade?.gradedByDisplayName,
         ),
         gradeEtag: scalarLabel(source.etag || source.grade?.etag),
         gradeVersion: Number.isInteger(
@@ -5050,6 +5047,20 @@
     return hasSeededAcademicRecord(user) ? assignment.feedback : "";
   }
 
+  function assignmentFeedbackAuthor(assignment, user = currentUser()) {
+    const directGrade = directGradeForAssignment(assignment);
+    if (directGrade?.gradedByDisplayName) {
+      return String(directGrade.gradedByDisplayName);
+    }
+    if (assignment?.submissionMode !== "supervised") {
+      const submission = submissionForAssignment(assignment.id, user);
+      if (submission?.gradedByDisplayName) {
+        return String(submission.gradedByDisplayName);
+      }
+    }
+    return "Lake Forest Academy Faculty";
+  }
+
   function formatTime(value) {
     return new Intl.DateTimeFormat("en-CA", {
       hour: "numeric",
@@ -5407,7 +5418,7 @@
 
   function shell(content) {
     const route = routeParts();
-    const user = currentUser() || SCHOOL_ACCOUNT;
+    const user = currentUser();
     const initials = userInitials(user);
     const unread = unreadNotificationCount();
     const pending = studentAssignments().filter((item) =>
@@ -5501,7 +5512,7 @@
 
   function teacherShell(content) {
     const route = routeParts();
-    const user = currentUser() || TEACHER_ACCOUNT;
+    const user = currentUser();
     const records = teacherSubmissionRecords();
     const awaitingReview = records.filter(
       isAwaitingTeacherReview,
@@ -6051,6 +6062,9 @@
   }
 
   function teacherDashboardView() {
+    const user = currentUser();
+    const greetingName =
+      user?.firstName || user?.displayName || user?.email || "Faculty";
     const records = teacherSubmissionRecords();
     const awaitingReview = records.filter(
       isAwaitingTeacherReview,
@@ -6065,7 +6079,7 @@
       <header class="teacher-hero">
         <div>
           <p class="eyebrow">Faculty Portal</p>
-          <h1>Welcome Back, James</h1>
+          <h1>Welcome Back, ${escapeHtml(greetingName)}</h1>
           <p>Review student progress and find submitted work across every OSSD course from one organized workspace.</p>
         </div>
         <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a>
@@ -6616,8 +6630,8 @@
       draft: scopedRecords.filter(
         (record) => teacherSubmissionBucket(record) === "draft",
       ).length,
-      returned: scopedRecords.filter(
-        (record) => teacherSubmissionBucket(record) === "returned",
+      graded: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "graded",
       ).length,
       unmapped: scopedRecords.filter(
         (record) => teacherSubmissionBucket(record) === "unmapped",
@@ -6719,7 +6733,7 @@
             ["awaiting", "Needs Review"],
             ["draft", "Grading Drafts"],
             ["revision", "Revision Requested"],
-            ["returned", "Returned"],
+            ["graded", "Grade Published"],
             ["unmapped", "Needs Mapping"],
             ["all", "All"],
           ]
@@ -6949,7 +6963,7 @@
                   : centralDraft
                     ? `Draft saved to the school record${record.submission.updatedAt || record.submission.gradedAt ? ` at ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""} · Not published to the student; any earlier published result remains visible.`
                   : record.submission.score != null
-                    ? `Returned at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
+                    ? `Published at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
                     : "Awaiting grading"
               }</p>
               <div class="grading-actions">
@@ -7051,9 +7065,7 @@
     portal = "student",
   } = {}) {
     const facultyPortal = portal === "faculty";
-    const savedEmail = facultyPortal
-      ? email || TEACHER_EMAIL
-      : email || signInPrefill;
+    const savedEmail = email || signInPrefill;
     const message = notice || signInNotice;
     const workspaceReady = Boolean(googleWorkspaceAuthUrl());
     const passwordSignInReady =
@@ -7072,7 +7084,7 @@
           <h1>Welcome Back</h1>
           <p class="login-intro">${
             facultyPortal
-              ? "James Whitmore can continue with his Lake Forest Academy Google Workspace account or use his assigned faculty credentials."
+              ? "Sign in with your Lake Forest Academy Google Workspace account or your assigned faculty credentials."
               : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
           }</p>
         ${message ? `<p class="form-success" role="status">${escapeHtml(message)}</p>` : ""}
@@ -7119,7 +7131,7 @@
                 <p><strong>Need your school mailbox?</strong>Open the Google Workspace Gmail page in a new tab.</p>
                 <a class="button button-secondary full-width" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">Open Workspace Gmail</a>
               </div>
-              <p class="login-help"><strong>Faculty Access</strong>This entry is assigned to James Whitmore. Additional faculty accounts are provisioned by school administrators.</p>
+              <p class="login-help"><strong>Faculty Access</strong>Faculty accounts are provisioned and managed by school administrators.</p>
             `
             : `
               <div class="auth-switch">
@@ -7192,7 +7204,7 @@
       `
         <p class="eyebrow">Secure Account Recovery</p>
         <h1>Choose a New Password</h1>
-        <p class="login-intro">Create a password you have not used for this account. Completing this step signs out any existing sessions.</p>
+        <p class="login-intro">Choose a password that is different from your current password. Completing this step signs out any existing sessions.</p>
         ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
         ${
           token && ready
@@ -7381,7 +7393,9 @@
   }
 
   function dashboardView() {
-    const user = currentUser() || SCHOOL_ACCOUNT;
+    const user = currentUser();
+    const greetingName =
+      user?.firstName || user?.displayName || user?.email || "Student";
     const enrolled = studentCourses();
     const progress = overallProgress();
     const actions = smartActions();
@@ -7418,7 +7432,7 @@
       <section class="welcome">
         <div class="welcome-copy">
           <p class="eyebrow light">${todayLabel()}</p>
-          <h1>${torontoGreeting()}, ${escapeHtml(user.firstName)}.</h1>
+          <h1>${torontoGreeting()}, ${escapeHtml(greetingName)}.</h1>
           <p>${primaryCopy}</p>
           ${primaryAction}
         </div>
@@ -7496,7 +7510,7 @@
           }
         </div>
         <div class="panel">
-          <header class="panel-header"><div><h2>Feedback & Support</h2><p>Returned work and people who can help</p></div></header>
+          <header class="panel-header"><div><h2>Feedback & Support</h2><p>Published feedback and people who can help</p></div></header>
           ${
             feedback.length || standaloneFeedback.length
               ? feedback
@@ -7964,7 +7978,7 @@
             </div>
           </section>
           <section class="panel">
-            <header class="panel-header"><div><h2>Evaluation Plan</h2><p>Your current standing updates when evaluated work is returned</p></div></header>
+            <header class="panel-header"><div><h2>Evaluation Plan</h2><p>Your current standing updates when evaluated work is published</p></div></header>
             <div class="evaluation-list">
               ${course.evaluation
                 .map(
@@ -8705,6 +8719,7 @@
         new Date(submission.submittedAt) <= new Date(assignment.due));
     const score = assignmentScore(assignment);
     const feedback = assignmentFeedback(assignment);
+    const feedbackAuthor = assignmentFeedbackAuthor(assignment);
     const lifecycleIndex =
       workflowStatus === "revision_requested"
         ? 2
@@ -8782,7 +8797,7 @@
                 ? `
                   <section class="lesson-section feedback-panel ${feedbackUnread ? "is-new" : ""}">
                     <div class="feedback-heading">
-                      <div><p class="course-code">${feedbackUnread ? "New Feedback" : "Instructor Feedback"}</p><h2>${escapeHtml(course.instructor)}</h2></div>
+                      <div><p class="course-code">${feedbackUnread ? "New Feedback" : "Instructor Feedback"}</p><h2>${escapeHtml(feedbackAuthor)}</h2></div>
                       <strong>${score}%</strong>
                     </div>
                     <p>${escapeHtml(feedback || "No written comment was added to this grade.")}</p>
@@ -8845,7 +8860,7 @@
                         <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
                         <div><dt>Version</dt><dd>${submissionVersionNumber(submission)}</dd></div>
                         <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
-                        <div><dt>Grading</dt><dd>${score == null ? "Awaiting grading" : `${score}% · Returned`}</dd></div>
+                        <div><dt>Grading</dt><dd>${score == null ? "Awaiting grading" : `${score}% · Published`}</dd></div>
                         ${
                           score != null && (submission.updatedAt || submission.gradedAt)
                             ? `<div><dt>Grade Updated</dt><dd>${formatDate(submission.updatedAt || submission.gradedAt, true)}</dd></div>`
@@ -8977,7 +8992,7 @@
         <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${evaluatedCount}</strong><span>${evaluatedCount === 1 ? "Published gradebook result" : "Published gradebook results"}</span></div>
       </section>
       <section class="panel">
-        <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is returned</p></div></header>
+        <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is published</p></div></header>
         ${enrolled.map((course) => {
           const grade = courseGrade(course.id);
           const progress = courseProgress(course);
@@ -8994,7 +9009,7 @@
         }).join("")}
       </section>
       <section class="panel" style="margin-top:23px">
-        <header class="panel-header"><div><h2>Returned Work</h2><p>Published feedback and scores</p></div></header>
+        <header class="panel-header"><div><h2>Published Work</h2><p>Published feedback and scores</p></div></header>
         ${
           evaluatedCount
             ? `${graded
@@ -9823,15 +9838,13 @@
           return;
         }
       } else if (AUTH_CONFIG.allowDeviceAccounts && portal === "student") {
-        if (email !== TEACHER_EMAIL) {
-          account = registeredAccount(email);
-          try {
-            accepted = Boolean(
-              account && (await verifyRegisteredPassword(account, password)),
-            );
-          } catch {
-            accepted = false;
-          }
+        account = registeredAccount(email);
+        try {
+          accepted = Boolean(
+            account && (await verifyRegisteredPassword(account, password)),
+          );
+        } catch {
+          accepted = false;
         }
       }
       if (!accepted || !account) {
@@ -10827,7 +10840,7 @@
         "awaiting",
         "draft",
         "revision",
-        "returned",
+        "graded",
         "unmapped",
         "all",
       ].includes(

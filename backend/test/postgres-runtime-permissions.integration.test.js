@@ -240,11 +240,16 @@ test(
         requestFingerprint: "d".repeat(64),
       });
       assert.equal(publishedGrade.publishedAt instanceof Date, true);
+      assert.equal(publishedGrade.gradedByDisplayName, "CI Teacher");
       const studentPublishedView = await repository.getSubmission(
         submissionId,
         "student",
       );
       assert.equal(studentPublishedView.grade.score, 84);
+      assert.equal(
+        studentPublishedView.grade.gradedByDisplayName,
+        "CI Teacher",
+      );
 
       const notificationId = randomUUID();
       await pool.query(

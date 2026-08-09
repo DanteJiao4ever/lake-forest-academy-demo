@@ -216,12 +216,14 @@ function gradeLateral(role) {
         'score', g.score,
         'feedback', g.feedback,
         'gradedBy', g.graded_by,
+        'gradedByDisplayName', grader.display_name,
         'gradedAt', g.graded_at,
         'publishedAt', g.published_at,
         'version', g.version,
         'etag', '"grade-v' || g.version::text || '"'
       ) AS item
       FROM submission_grades g
+      LEFT JOIN app_users grader ON grader.id = g.graded_by_user_id
       WHERE g.submission_id = s.id AND ${predicate}
       ORDER BY g.version DESC LIMIT 1
     ) grade ON true
@@ -1647,6 +1649,7 @@ export class PostgresRepository {
         return this.#mapDirectGrade(replay.rows[0], {
           studentId: item.student_id,
           courseCode: item.course_code,
+          graderDisplayName: input.grader.displayName,
         });
       }
       const current = await client.query(
@@ -1710,6 +1713,7 @@ export class PostgresRepository {
       return this.#mapDirectGrade(inserted.rows[0], {
         studentId: item.student_id,
         courseCode: item.course_code,
+        graderDisplayName: input.grader.displayName,
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1731,9 +1735,11 @@ export class PostgresRepository {
           ORDER BY score.student_user_id, score.gradebook_item_id, score.version DESC
        )
        SELECT score.*, gi.course_code, gi.component_key, gi.title,
-              gi.weight_percent, gi.max_score, gi.category
+              gi.weight_percent, gi.max_score, gi.category,
+              grader.display_name AS graded_by_display_name
          FROM latest_published score
          JOIN gradebook_items gi ON gi.id = score.gradebook_item_id
+         LEFT JOIN app_users grader ON grader.id = score.graded_by_user_id
         WHERE gi.course_code = ANY($2::text[])
           AND gi.status = 'published'
         ORDER BY gi.course_code, gi.position`,
@@ -1750,6 +1756,7 @@ export class PostgresRepository {
       score: row.score,
       feedback: row.feedback,
       gradedBy: row.graded_by,
+      gradedByDisplayName: row.graded_by_display_name || null,
       gradedAt: row.graded_at,
       publishedAt: row.published_at,
       version: row.version,
@@ -1758,7 +1765,7 @@ export class PostgresRepository {
     }));
   }
 
-  #mapDirectGrade(row, { studentId, courseCode }) {
+  #mapDirectGrade(row, { studentId, courseCode, graderDisplayName = null }) {
     return {
       studentId,
       courseCode,
@@ -1766,6 +1773,8 @@ export class PostgresRepository {
       score: row.score,
       feedback: row.feedback,
       gradedBy: row.graded_by,
+      gradedByDisplayName:
+        graderDisplayName || row.graded_by_display_name || null,
       gradedAt: row.graded_at,
       publishedAt: row.published_at,
       version: row.version,
@@ -2414,7 +2423,7 @@ export class PostgresRepository {
           throw new ApiError(409, "IDEMPOTENCY_KEY_REUSED", "The idempotency key was already used for different grade content.");
         }
         await client.query("COMMIT");
-        return this.#mapGrade(replay.rows[0]);
+        return this.#mapGrade(replay.rows[0], input.grader);
       }
       const target = await client.query(
         `SELECT submission.student_user_id, submission.course_code,
@@ -2484,7 +2493,7 @@ export class PostgresRepository {
         );
       }
       await client.query("COMMIT");
-      return this.#mapGrade(result.rows[0]);
+      return this.#mapGrade(result.rows[0], input.grader);
     } catch (error) {
       await client.query("ROLLBACK");
       throw databaseError(error);
@@ -2493,12 +2502,13 @@ export class PostgresRepository {
     }
   }
 
-  #mapGrade(row) {
+  #mapGrade(row, grader = null) {
     return {
       submissionId: row.submission_id,
       score: row.score,
       feedback: row.feedback,
       gradedBy: row.graded_by,
+      gradedByDisplayName: grader?.displayName || null,
       gradedAt: row.graded_at,
       publishedAt: row.published_at,
       version: row.version,
