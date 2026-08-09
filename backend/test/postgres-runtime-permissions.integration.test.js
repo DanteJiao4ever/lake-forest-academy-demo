@@ -175,6 +175,17 @@ test(
       assert.equal(submission.id, submissionId);
       assert.equal(submission.files.length, 1);
       assert.equal(submission.files[0].id, submissionFileId);
+      const persistedFile = await pool.query(
+        `SELECT drive_file_id, drive_parent_folder_id
+           FROM submission_files
+          WHERE id = $1`,
+        [submissionFileId],
+      );
+      assert.equal(persistedFile.rowCount, 1);
+      assert.deepEqual(persistedFile.rows[0], {
+        drive_file_id: `ci-drive-file-${suffix}`,
+        drive_parent_folder_id: `ci-drive-parent-${suffix}`,
+      });
 
       const message = await repository.createSubmissionMessage({
         submissionId,
