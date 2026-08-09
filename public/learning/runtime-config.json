@@ -2,6 +2,7 @@
   "apiOrigin": "",
   "healthPath": "/health/ready",
   "uploadHealthPath": "/health/upload-ready",
+  "workspaceAuthHealthPath": "/health/workspace-auth-ready",
   "healthTimeoutMs": 3500,
   "googleWorkspaceAuthStart": "",
   "driveSyncPath": ""

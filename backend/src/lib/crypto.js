@@ -23,6 +23,14 @@ export function csrfTokenFor(sessionId, secret) {
   return createHmac("sha256", secret).update(sessionId).digest("base64url");
 }
 
+export function deriveOpaqueToken(secret, purpose, value) {
+  return createHmac("sha256", secret)
+    .update(String(purpose || ""))
+    .update("\0")
+    .update(String(value || ""))
+    .digest("base64url");
+}
+
 export function safeTextEqual(left, right) {
   const a = Buffer.from(String(left || ""));
   const b = Buffer.from(String(right || ""));

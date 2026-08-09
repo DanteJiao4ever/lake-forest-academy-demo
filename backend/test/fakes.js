@@ -29,6 +29,8 @@ export class FakeRepository {
     this.users = [];
     this.sessions = new Map();
     this.passwordResetTokens = [];
+    this.workspaceOAuthTransactions = [];
+    this.workspaceIdentities = [];
     this.enrollments = new Map();
     this.teacherCourses = new Map();
     this.submissions = [];
@@ -201,6 +203,87 @@ export class FakeRepository {
     for (const [key, session] of this.sessions) {
       if (session.id === sessionId) this.sessions.delete(key);
     }
+  }
+
+  async workspaceOAuthReady() {
+    return true;
+  }
+
+  async createWorkspaceOAuthTransaction(input) {
+    const record = {
+      ...input,
+      expiresAt: new Date(input.expiresAt).toISOString(),
+      consumedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.workspaceOAuthTransactions.push(record);
+    return { id: record.id, expiresAt: record.expiresAt };
+  }
+
+  async consumeWorkspaceOAuthTransaction({ stateHash, browserSecretHash }) {
+    const record = this.workspaceOAuthTransactions.find(
+      (item) =>
+        item.stateHash === stateHash &&
+        item.browserSecretHash === browserSecretHash &&
+        !item.consumedAt &&
+        new Date(item.expiresAt) > new Date(),
+    );
+    if (!record) return null;
+    record.consumedAt = new Date().toISOString();
+    return {
+      id: record.id,
+      returnRoute: record.returnRoute,
+      expiresAt: record.expiresAt,
+    };
+  }
+
+  async resolveGoogleWorkspaceFaculty({
+    issuer,
+    subject,
+    email,
+    hostedDomain,
+  }) {
+    const bound = this.workspaceIdentities.find(
+      (item) => item.issuer === issuer && item.subject === subject,
+    );
+    if (bound) {
+      const user = this.users.find((item) => item.id === bound.userId);
+      if (
+        !user ||
+        user.status !== "active" ||
+        !["teacher", "teacher_admin"].includes(user.role)
+      ) {
+        return null;
+      }
+      bound.lastVerifiedEmail = email;
+      bound.lastAuthenticatedAt = new Date().toISOString();
+      return user;
+    }
+    const user = this.users.find(
+      (item) =>
+        item.email === email &&
+        item.status === "active" &&
+        ["teacher", "teacher_admin"].includes(item.role),
+    );
+    if (
+      !user ||
+      this.workspaceIdentities.some((item) => item.userId === user.id)
+    ) {
+      return null;
+    }
+    this.workspaceIdentities.push({
+      id: randomUUID(),
+      provider: "google_workspace",
+      userId: user.id,
+      issuer,
+      subject,
+      emailAtBinding: email,
+      lastVerifiedEmail: email,
+      hostedDomainAtBinding: hostedDomain,
+      boundAt: new Date().toISOString(),
+      lastAuthenticatedAt: new Date().toISOString(),
+    });
+    return user;
   }
 
   async createPasswordResetToken({

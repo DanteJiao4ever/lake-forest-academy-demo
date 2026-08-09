@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { createPool, PostgresRepository } from "../src/db/postgres.js";
 
@@ -47,6 +47,37 @@ test(
         read_at_update: true,
         title_update: false,
       });
+
+      const workspacePrivileges = await pool.query(
+        `SELECT
+           has_table_privilege(current_user, 'workspace_oauth_transactions', 'SELECT') AS transactions_select,
+           has_table_privilege(current_user, 'workspace_oauth_transactions', 'INSERT') AS transactions_insert,
+           has_table_privilege(current_user, 'workspace_oauth_transactions', 'UPDATE') AS transactions_update,
+           has_table_privilege(current_user, 'workspace_oauth_transactions', 'DELETE') AS transactions_delete,
+           has_column_privilege(current_user, 'workspace_oauth_transactions', 'consumed_at', 'UPDATE') AS transactions_consumed_update,
+           has_column_privilege(current_user, 'workspace_oauth_transactions', 'return_route', 'UPDATE') AS transactions_route_update,
+           has_table_privilege(current_user, 'workspace_identities', 'SELECT') AS identities_select,
+           has_table_privilege(current_user, 'workspace_identities', 'INSERT') AS identities_insert,
+           has_table_privilege(current_user, 'workspace_identities', 'UPDATE') AS identities_table_update,
+           has_table_privilege(current_user, 'workspace_identities', 'DELETE') AS identities_delete,
+           has_column_privilege(current_user, 'workspace_identities', 'last_authenticated_at', 'UPDATE') AS identities_last_auth_update,
+           has_column_privilege(current_user, 'workspace_identities', 'subject', 'UPDATE') AS identities_subject_update`,
+      );
+      assert.deepEqual(workspacePrivileges.rows[0], {
+        transactions_select: true,
+        transactions_insert: true,
+        transactions_update: false,
+        transactions_delete: true,
+        transactions_consumed_update: true,
+        transactions_route_update: false,
+        identities_select: true,
+        identities_insert: true,
+        identities_table_update: false,
+        identities_delete: false,
+        identities_last_auth_update: true,
+        identities_subject_update: false,
+      });
+      assert.equal(await repository.workspaceOAuthReady(), true);
 
       const targetPrivileges = await pool.query(
         `SELECT
@@ -205,6 +236,74 @@ test(
         lastName: "Teacher",
         displayName: "CI Teacher",
         role: "teacher",
+      });
+      const oauthTransactionId = randomUUID();
+      const oauthStateHash = createHash("sha256")
+        .update(`state:${suffix}`)
+        .digest("hex");
+      const oauthBrowserHash = createHash("sha256")
+        .update(`browser:${suffix}`)
+        .digest("hex");
+      await repository.createWorkspaceOAuthTransaction({
+        id: oauthTransactionId,
+        stateHash: oauthStateHash,
+        browserSecretHash: oauthBrowserHash,
+        returnRoute: "teacher/dashboard",
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      });
+      const consumedTransaction =
+        await repository.consumeWorkspaceOAuthTransaction({
+          stateHash: oauthStateHash,
+          browserSecretHash: oauthBrowserHash,
+        });
+      assert.equal(consumedTransaction.id, oauthTransactionId);
+      assert.equal(consumedTransaction.returnRoute, "teacher/dashboard");
+      assert.equal(
+        await repository.consumeWorkspaceOAuthTransaction({
+          stateHash: oauthStateHash,
+          browserSecretHash: oauthBrowserHash,
+        }),
+        null,
+      );
+      const workspaceIdentity = {
+        issuer: "https://accounts.google.com",
+        subject: `ci-google-sub-${suffix}`,
+        email: grader.email,
+        hostedDomain: "lakeforestacademy.ca",
+      };
+      const [boundFacultyA, boundFacultyB] = await Promise.all([
+        repository.resolveGoogleWorkspaceFaculty(workspaceIdentity),
+        repository.resolveGoogleWorkspaceFaculty(workspaceIdentity),
+      ]);
+      assert.equal(boundFacultyA.id, grader.id);
+      assert.equal(boundFacultyB.id, grader.id);
+      const returningFaculty = await repository.resolveGoogleWorkspaceFaculty(
+        workspaceIdentity,
+      );
+      assert.equal(returningFaculty.id, grader.id);
+      assert.equal(
+        await repository.resolveGoogleWorkspaceFaculty({
+          ...workspaceIdentity,
+          subject: `ci-google-other-sub-${suffix}`,
+        }),
+        null,
+      );
+      const persistedIdentity = await pool.query(
+        `SELECT provider, issuer, subject, user_id, email_at_binding,
+                last_verified_email, hosted_domain_at_binding
+           FROM workspace_identities
+          WHERE user_id = $1`,
+        [grader.id],
+      );
+      assert.equal(persistedIdentity.rowCount, 1);
+      assert.deepEqual(persistedIdentity.rows[0], {
+        provider: "google_workspace",
+        issuer: workspaceIdentity.issuer,
+        subject: workspaceIdentity.subject,
+        user_id: grader.id,
+        email_at_binding: grader.email,
+        last_verified_email: grader.email,
+        hosted_domain_at_binding: "lakeforestacademy.ca",
       });
       const draftGrade = await repository.createGrade({
         submissionId,

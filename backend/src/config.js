@@ -35,6 +35,21 @@ const configSchema = z.object({
   gmailImpersonatedUser: z.union([z.literal(""), z.string().email()]),
   gmailCredentialsBase64: z.string(),
   gmailCredentialsPath: z.string(),
+  workspaceOAuthProvider: z.enum(["disabled", "google"]),
+  workspaceOAuthClientId: z.string(),
+  workspaceOAuthClientSecret: z.string(),
+  workspaceOAuthTransactionSecret: z.string(),
+  workspaceOAuthRedirectUri: z.union([z.literal(""), z.string().url()]),
+  workspaceOAuthHostedDomain: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(
+      /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
+    ),
+  workspaceOAuthFrontendUrl: z.string().url(),
+  workspaceOAuthTransactionTtlMinutes: z.number().int().min(5).max(15),
+  workspaceOAuthCookieName: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   maxUploadFiles: z.number().int().min(1).max(20),
   maxFileBytes: z.number().int().min(1024).max(100 * 1024 * 1024),
   maxRequestBytes: z.number().int().min(1024).max(250 * 1024 * 1024),
@@ -51,6 +66,8 @@ const configSchema = z.object({
 
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || "development";
+  const workspaceOAuthProvider =
+    env.GOOGLE_WORKSPACE_OAUTH_PROVIDER || "disabled";
   const config = configSchema.parse({
     nodeEnv,
     host: env.HOST || "127.0.0.1",
@@ -98,6 +115,37 @@ export function loadConfig(env = process.env) {
       env.GMAIL_SERVICE_ACCOUNT_JSON_BASE64 || "",
     gmailCredentialsPath:
       env.GMAIL_APPLICATION_CREDENTIALS || "",
+    workspaceOAuthProvider,
+    workspaceOAuthClientId:
+      workspaceOAuthProvider === "google"
+        ? env.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID || ""
+        : "",
+    workspaceOAuthClientSecret:
+      workspaceOAuthProvider === "google"
+        ? env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET || ""
+        : "",
+    workspaceOAuthTransactionSecret:
+      workspaceOAuthProvider === "google"
+        ? env.GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET || ""
+        : "",
+    workspaceOAuthRedirectUri:
+      workspaceOAuthProvider === "google"
+        ? env.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI || ""
+        : "",
+    workspaceOAuthHostedDomain:
+      env.GOOGLE_WORKSPACE_HOSTED_DOMAIN || "lakeforestacademy.ca",
+    workspaceOAuthFrontendUrl:
+      env.GOOGLE_WORKSPACE_FRONTEND_URL ||
+      "https://lakeforestacademy.ca/learning/",
+    workspaceOAuthTransactionTtlMinutes: integerValue(
+      env.GOOGLE_WORKSPACE_OAUTH_TRANSACTION_TTL_MINUTES,
+      10,
+    ),
+    workspaceOAuthCookieName:
+      env.GOOGLE_WORKSPACE_OAUTH_COOKIE_NAME ||
+      (nodeEnv === "production"
+        ? "__Host-lfa_workspace_oauth"
+        : "lfa_workspace_oauth"),
     maxUploadFiles: integerValue(env.MAX_UPLOAD_FILES, 1),
     maxFileBytes: integerValue(env.MAX_FILE_BYTES, 25 * 1024 * 1024),
     maxRequestBytes: integerValue(
@@ -153,6 +201,71 @@ export function loadConfig(env = process.env) {
     throw new Error(
       "PASSWORD_RESET_FROM_EMAIL must match GMAIL_IMPERSONATED_USER unless verified Send As support is implemented.",
     );
+  }
+  const workspaceOAuthValues = [
+    config.workspaceOAuthClientId,
+    config.workspaceOAuthClientSecret,
+    config.workspaceOAuthTransactionSecret,
+    config.workspaceOAuthRedirectUri,
+  ];
+  if (
+    config.workspaceOAuthProvider === "google" &&
+    workspaceOAuthValues.some((value) => !value)
+  ) {
+    throw new Error(
+      "GOOGLE_WORKSPACE_OAUTH_CLIENT_ID, GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET, GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET and GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI are required when GOOGLE_WORKSPACE_OAUTH_PROVIDER=google.",
+    );
+  }
+  if (config.workspaceOAuthProvider === "google") {
+    const redirectUri = new URL(config.workspaceOAuthRedirectUri);
+    const frontendUrl = new URL(config.workspaceOAuthFrontendUrl);
+    const secureRedirect = redirectUri.protocol === "https:" ||
+      (config.nodeEnv !== "production" && redirectUri.protocol === "http:");
+    if (
+      !secureRedirect ||
+      (config.nodeEnv === "production" &&
+        redirectUri.origin !== "https://api.lakeforestacademy.ca") ||
+      redirectUri.username ||
+      redirectUri.password ||
+      redirectUri.search ||
+      redirectUri.hash ||
+      redirectUri.pathname !== "/v1/auth/google-workspace/callback"
+    ) {
+      throw new Error(
+        "GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI must be the exact secure Workspace callback URL.",
+      );
+    }
+    if (
+      frontendUrl.username ||
+      frontendUrl.password ||
+      frontendUrl.search ||
+      frontendUrl.hash ||
+      frontendUrl.pathname !== "/learning/" ||
+      (config.nodeEnv === "production" && frontendUrl.protocol !== "https:") ||
+      !config.allowedOrigins.includes(frontendUrl.origin)
+    ) {
+      throw new Error(
+        "GOOGLE_WORKSPACE_FRONTEND_URL must use an allowed application origin without credentials, query or fragment.",
+      );
+    }
+    if (
+      config.nodeEnv === "production" &&
+      !config.workspaceOAuthCookieName.startsWith("__Host-")
+    ) {
+      throw new Error(
+        "GOOGLE_WORKSPACE_OAUTH_COOKIE_NAME must use the __Host- prefix in production.",
+      );
+    }
+    if (config.workspaceOAuthCookieName === config.cookieName) {
+      throw new Error(
+        "GOOGLE_WORKSPACE_OAUTH_COOKIE_NAME must differ from COOKIE_NAME.",
+      );
+    }
+    if (config.workspaceOAuthTransactionSecret.length < 32) {
+      throw new Error(
+        "GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET must contain at least 32 characters.",
+      );
+    }
   }
   return Object.freeze(config);
 }

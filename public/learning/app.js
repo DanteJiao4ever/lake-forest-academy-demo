@@ -22,6 +22,38 @@
   const CSRF_TOKEN_KEY = "lake-forest-learning-csrf-v1";
   const WORKSPACE_LOGOUT_SUPPRESS_KEY =
     "lake-forest-learning-workspace-signed-out-v1";
+  const WORKSPACE_AUTH_RETURN_TO = "teacher/dashboard";
+  const WORKSPACE_CALLBACK_MESSAGES = Object.freeze({
+    connected: Object.freeze({
+      tone: "success",
+      message: "Google Workspace sign-in is connected.",
+    }),
+    cancelled: Object.freeze({
+      tone: "notice",
+      message:
+        "Google Workspace sign-in was cancelled. You can try again or use your assigned faculty credentials.",
+    }),
+    "not-authorized": Object.freeze({
+      tone: "error",
+      message:
+        "This Google Workspace account is not authorized for the faculty portal.",
+    }),
+    unavailable: Object.freeze({
+      tone: "error",
+      message:
+        "Google Workspace sign-in is temporarily unavailable. Use your assigned faculty credentials or try again later.",
+    }),
+    expired: Object.freeze({
+      tone: "error",
+      message:
+        "Google Workspace sign-in expired before it could be completed. Please try again.",
+    }),
+    failed: Object.freeze({
+      tone: "error",
+      message:
+        "Google Workspace sign-in could not be completed. Please try again.",
+    }),
+  });
   const DRIVE_MATERIALS_CACHE_KEY =
     "lake-forest-learning-drive-materials-v1";
   const FILE_DATABASE_NAME = "lake-forest-learning-files-v1";
@@ -1331,6 +1363,7 @@
   let lastEnrollmentChange = null;
   let signInNotice = "";
   let signInPrefill = "";
+  let workspaceCallbackFeedback = null;
   let driveMaterialsState = loadDriveMaterialsCache();
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
@@ -4424,12 +4457,53 @@
   function googleWorkspaceAuthUrl() {
     const url = configuredAuthUrl(AUTH_CONFIG.googleWorkspaceAuthStart);
     if (!url) return "";
-    const returnTo = new URL(window.location.href);
-    returnTo.search = "";
-    returnTo.hash = "#/teacher/dashboard";
-    url.searchParams.set("returnTo", returnTo.toString());
+    url.search = "";
+    url.hash = "";
     url.searchParams.set("portal", "faculty");
+    url.searchParams.set("returnTo", WORKSPACE_AUTH_RETURN_TO);
     return url.toString();
+  }
+
+  function workspaceCallbackMessage(status) {
+    const safeStatus = Object.hasOwn(WORKSPACE_CALLBACK_MESSAGES, status)
+      ? status
+      : "failed";
+    return {
+      status: safeStatus,
+      ...WORKSPACE_CALLBACK_MESSAGES[safeStatus],
+    };
+  }
+
+  function consumeWorkspaceCallbackFeedback() {
+    const query = authRouteQuery();
+    if (!query.has("workspace")) return null;
+    const route = routeParts();
+    const facultyRoute =
+      route[0] === "teacher" ||
+      (route[0] === "signin" && route[1] === "faculty");
+    const status = String(query.get("workspace") || "").trim().toLowerCase();
+    query.delete("workspace");
+    const cleanQuery = query.toString();
+    const cleanPath = route.join("/") || "signin/faculty";
+    window.history.replaceState(
+      null,
+      "",
+      `#/${cleanPath}${cleanQuery ? `?${cleanQuery}` : ""}`,
+    );
+    return facultyRoute ? workspaceCallbackMessage(status) : null;
+  }
+
+  function workspaceLoginFeedback() {
+    if (!workspaceCallbackFeedback) return null;
+    if (workspaceCallbackFeedback.status === "connected") {
+      return {
+        status: "failed",
+        tone: "error",
+        message:
+          "Google Workspace sign-in could not be confirmed. Please try again.",
+      };
+    }
+    return workspaceCallbackFeedback;
   }
 
   async function restoreWorkspaceSession() {
@@ -4454,6 +4528,17 @@
         remoteSessionValidated = true;
         sessionStorage.removeItem(SESSION_KEY);
         sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        return false;
+      }
+      if (
+        workspaceCallbackFeedback?.status === "connected" &&
+        !isTeacher(account)
+      ) {
+        await closeWorkspaceSession();
+        remoteSessionValidated = true;
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        workspaceCallbackFeedback = workspaceCallbackMessage("not-authorized");
         return false;
       }
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
@@ -7032,6 +7117,17 @@
     `;
   }
 
+  function sessionCheckView() {
+    authPage(
+      "Checking Secure Session",
+      `
+        <p class="eyebrow">Secure Access</p>
+        <h1>Checking Your Session</h1>
+        <p class="login-intro" role="status">Confirming whether you are already signed in to Lake Forest Learning&hellip;</p>
+      `,
+    );
+  }
+
   function passwordInput(
     id,
     label,
@@ -7066,7 +7162,20 @@
   } = {}) {
     const facultyPortal = portal === "faculty";
     const savedEmail = email || signInPrefill;
-    const message = notice || signInNotice;
+    const callbackFeedback = facultyPortal ? workspaceLoginFeedback() : null;
+    const message =
+      notice ||
+      signInNotice ||
+      (callbackFeedback?.tone !== "error" ? callbackFeedback?.message || "" : "");
+    const renderedError =
+      error ||
+      (callbackFeedback?.tone === "error" ? callbackFeedback.message : "");
+    const messageClass =
+      !notice &&
+      !signInNotice &&
+      callbackFeedback?.tone === "notice"
+        ? "form-notice"
+        : "form-success";
     const workspaceReady = Boolean(googleWorkspaceAuthUrl());
     const passwordSignInReady =
       serverAuthReady() || AUTH_CONFIG.allowDeviceAccounts;
@@ -7087,7 +7196,7 @@
               ? "Sign in with your Lake Forest Academy Google Workspace account or your assigned faculty credentials."
               : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
           }</p>
-        ${message ? `<p class="form-success" role="status">${escapeHtml(message)}</p>` : ""}
+        ${message ? `<p class="${messageClass}" role="status">${escapeHtml(message)}</p>` : ""}
         ${
           facultyPortal
             ? `
@@ -7098,10 +7207,11 @@
               <p class="auth-setup-note ${workspaceReady ? "is-ready" : ""}" role="status">
                 ${
                   workspaceReady
-                    ? "Secure Workspace authorization is connected."
+                    ? "Google Workspace sign-in is available."
                     : "Workspace authorization will activate after the school OAuth client and secure callback are connected."
                 }
               </p>
+              <p class="login-help"><strong>Private Session</strong>Signing out of Lake Forest Learning does not sign you out of Google in this browser.</p>
               <div class="auth-divider"><span>or use faculty credentials</span></div>
             `
             : ""
@@ -7116,7 +7226,7 @@
               ? `<div class="auth-form-links"><a href="${escapeHtml(`#/forgot-password?portal=${facultyPortal ? "faculty" : "student"}&email=${encodeURIComponent(savedEmail)}`)}">Forgot your password?</a></div>`
               : ""
           }
-          ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+          ${renderedError ? `<p class="form-error" role="alert">${escapeHtml(renderedError)}</p>` : ""}
           <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
         </form>
         ${
@@ -9262,6 +9372,11 @@
       if (shouldFocusMain) focusMain();
       return;
     }
+    if (!remoteSessionValidated) {
+      sessionCheckView();
+      if (shouldFocusMain) focusMain();
+      return;
+    }
     if (!isSignedIn()) {
       const authRoute = authParts[0];
       if (authRoute === "register") registrationView();
@@ -9270,7 +9385,9 @@
       else
         loginView({
           portal:
-            authRoute === "signin" && authParts[1] === "faculty"
+            workspaceCallbackFeedback ||
+            authRoute === "teacher" ||
+            (authRoute === "signin" && authParts[1] === "faculty")
               ? "faculty"
               : "student",
         });
@@ -9865,6 +9982,7 @@
         return;
       }
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      workspaceCallbackFeedback = null;
       startSession(account, { remote: remoteLogin });
       state = loadState(currentUser());
       let enrollmentRefreshError = "";
@@ -11031,8 +11149,25 @@
         document.querySelector(".auth-setup-note")?.setAttribute("role", "alert");
         return;
       }
+      const originalMarkup = target.innerHTML;
+      target.disabled = true;
+      target.setAttribute("aria-disabled", "true");
+      target.setAttribute("aria-busy", "true");
+      target.innerHTML =
+        '<span class="google-mark" aria-hidden="true">G</span> Opening Google&hellip;';
+      workspaceCallbackFeedback = null;
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
-      window.location.assign(authorizationUrl);
+      try {
+        window.location.assign(authorizationUrl);
+      } catch {
+        target.disabled = false;
+        target.setAttribute("aria-disabled", "false");
+        target.setAttribute("aria-busy", "false");
+        target.innerHTML = originalMarkup;
+        showToast("Google Workspace sign-in could not be opened. Please try again.", {
+          tone: "error",
+        });
+      }
     } else if (action === "toggle-course-materials") {
       const course = findCourse(target.dataset.course);
       const context = target.dataset.context === "teacher" ? "teacher" : "student";
@@ -11137,7 +11272,9 @@
       submissionsEndpointCheckedFor = "";
       resetPlatformRuntime();
       resetDriveMaterialsForSession();
-      signInNotice = "";
+      signInNotice = facultySession
+        ? "You are signed out of Lake Forest Learning. Your Google account remains signed in to this browser."
+        : "You are signed out of Lake Forest Learning.";
       signInPrefill = "";
       window.location.hash = facultySession
         ? "#/signin/faculty"
@@ -11546,8 +11683,20 @@
     if (!event.matches) setDrawerOpen(false, { restoreFocus: false });
   });
   window.addEventListener("hashchange", () => render(true));
+  workspaceCallbackFeedback = consumeWorkspaceCallbackFeedback();
+  const sessionCheckWasPending = !remoteSessionValidated;
   render();
   restoreWorkspaceSession().then((restored) => {
-    if (restored) render(true);
+    if (!restored && !sessionCheckWasPending) return;
+    const callbackFeedback = workspaceCallbackFeedback;
+    if (restored) workspaceCallbackFeedback = null;
+    render(Boolean(restored || sessionCheckWasPending));
+    if (
+      restored &&
+      callbackFeedback?.status === "connected" &&
+      isTeacher()
+    ) {
+      showToast(callbackFeedback.message, { tone: "success" });
+    }
   });
 })();

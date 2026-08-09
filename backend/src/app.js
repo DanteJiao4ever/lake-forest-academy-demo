@@ -1,5 +1,5 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
@@ -8,13 +8,14 @@ import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
 import { ApiError, errorEnvelope } from "./lib/errors.js";
-import { csrfTokenFor, opaqueToken, publicId, safeTextEqual, sha256, stableFingerprint } from "./lib/crypto.js";
+import { csrfTokenFor, deriveOpaqueToken, opaqueToken, publicId, safeTextEqual, sha256, stableFingerprint } from "./lib/crypto.js";
 import { assertStrongPassword, hashPassword, normalizeEmail, verifyPassword } from "./lib/passwords.js";
 import { assignmentIdSchema, courseCodeSchema, emailSchema, nameSchema, parse, uuidSchema } from "./lib/validation.js";
 import { validateUploadedFile } from "./lib/file-validation.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { MaterialSyncService } from "./services/material-sync.js";
 import { UnavailablePasswordResetMailer } from "./mail/password-reset-mailer.js";
+import { UnavailableGoogleWorkspaceOidc } from "./auth/google-workspace-oidc.js";
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const categories = ["Lessons", "Resources", "Assignments", "Assessments"];
@@ -417,6 +418,7 @@ export async function createApp({
   logger = false,
   syncService,
   passwordResetMailer,
+  googleWorkspaceOidc,
 } = {}) {
   if (!config || !repository || !drive || !scanner) {
     throw new Error("config, repository, drive and scanner are required");
@@ -428,7 +430,7 @@ export async function createApp({
         ? false
         : {
             level: "info",
-            redact: {
+             redact: {
               paths: [
                 "req.headers.authorization",
                 "req.headers.cookie",
@@ -439,9 +441,19 @@ export async function createApp({
                 "body.confirmPassword",
                 "body.token",
               ],
-              censor: "[REDACTED]",
+               censor: "[REDACTED]",
+             },
+            serializers: {
+              req(request) {
+                return {
+                  method: request.method,
+                  url: String(request.url || "").split("?", 1)[0],
+                  host: request.headers?.host,
+                  remoteAddress: request.socket?.remoteAddress,
+                };
+              },
             },
-          }),
+           }),
     bodyLimit: config.maxRequestBytes,
     trustProxy: config.nodeEnv === "production",
     genReqId: (request) => String(request.headers["x-request-id"] || `req_${randomUUID()}`).slice(0, 128),
@@ -449,6 +461,8 @@ export async function createApp({
   const allowedOrigins = new Set(config.allowedOrigins);
   const resetMailer =
     passwordResetMailer || new UnavailablePasswordResetMailer();
+  const workspaceOidc =
+    googleWorkspaceOidc || new UnavailableGoogleWorkspaceOidc();
 
   await app.register(cookie);
   await app.register(cors, {
@@ -485,11 +499,24 @@ export async function createApp({
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("X-Request-ID", request.id);
+    const requestPath = String(request.raw.url || "").split("?", 1)[0];
+    const isWorkspaceCallback =
+      request.method === "GET" &&
+      requestPath === "/v1/auth/google-workspace/callback";
+    const fetchMode = String(request.headers["sec-fetch-mode"] || "");
+    const fetchDestination = String(request.headers["sec-fetch-dest"] || "");
+    const isCallbackNavigation =
+      isWorkspaceCallback &&
+      (!fetchMode || fetchMode === "navigate") &&
+      (!fetchDestination || fetchDestination === "document");
     const origin = request.headers.origin;
-    if (origin && !allowedOrigins.has(origin)) {
+    if (origin && !allowedOrigins.has(origin) && !isCallbackNavigation) {
       throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "This browser origin is not allowed.");
     }
-    if (request.headers["sec-fetch-site"] === "cross-site") {
+    if (
+      request.headers["sec-fetch-site"] === "cross-site" &&
+      !isCallbackNavigation
+    ) {
       throw new ApiError(403, "CROSS_SITE_REQUEST_BLOCKED", "Cross-site requests are not allowed.");
     }
   });
@@ -533,6 +560,13 @@ export async function createApp({
     secure: config.cookieSecure,
     sameSite: "lax",
     maxAge: config.sessionTtlHours * 60 * 60,
+  };
+  const workspaceOAuthCookieOptions = {
+    path: "/",
+    httpOnly: true,
+    secure: config.cookieSecure,
+    sameSite: "lax",
+    maxAge: config.workspaceOAuthTransactionTtlMinutes * 60,
   };
 
   async function authenticate(request) {
@@ -628,6 +662,247 @@ export async function createApp({
     reply.setCookie(config.cookieName, token, cookieOptions);
     return csrfToken;
   }
+
+  const workspaceStartSchema = z.object({
+    portal: z.literal("faculty").default("faculty"),
+    returnTo: z.literal("teacher/dashboard").default("teacher/dashboard"),
+  });
+  const workspaceCallbackSchema = z.object({
+    state: z.string().trim().min(32).max(200).regex(/^[A-Za-z0-9_-]+$/),
+    code: z.string().trim().min(1).max(4096).optional(),
+    error: z.string().trim().min(1).max(100).optional(),
+  });
+
+  function workspaceFrontendUrl(route, result = "") {
+    const target = new URL(config.workspaceOAuthFrontendUrl);
+    const query = result
+      ? `?workspace=${encodeURIComponent(result)}`
+      : "";
+    target.hash = `#/${route}${query}`;
+    return target.toString();
+  }
+
+  function clearWorkspaceOAuthCookie(reply) {
+    reply.clearCookie(config.workspaceOAuthCookieName, {
+      path: workspaceOAuthCookieOptions.path,
+      httpOnly: workspaceOAuthCookieOptions.httpOnly,
+      secure: workspaceOAuthCookieOptions.secure,
+      sameSite: workspaceOAuthCookieOptions.sameSite,
+    });
+  }
+
+  function disableWorkspaceOAuthCaching(reply) {
+    reply.header("Cache-Control", "no-store");
+    reply.header("Pragma", "no-cache");
+  }
+
+  async function recordWorkspaceAudit(request, event) {
+    try {
+      await repository.recordAudit?.({
+        requestId: request.id,
+        ...event,
+      });
+    } catch {
+      request.log.warn(
+        { requestId: request.id },
+        "Workspace authentication audit could not be recorded",
+      );
+    }
+  }
+
+  app.get("/health/workspace-auth-ready", async () => {
+    await workspaceOidc.ready();
+    await repository.workspaceOAuthReady();
+    return { status: "ready" };
+  });
+
+  app.get(
+    "/v1/auth/google-workspace/start",
+    { config: { rateLimit: { max: 20, timeWindow: "15 minutes" } } },
+    async (request, reply) => {
+      disableWorkspaceOAuthCaching(reply);
+      const input = parse(
+        workspaceStartSchema,
+        request.query || {},
+        "INVALID_WORKSPACE_AUTH_REQUEST",
+      );
+      try {
+        await workspaceOidc.ready();
+        await repository.workspaceOAuthReady();
+        const state = opaqueToken();
+        const browserSecret = opaqueToken();
+        const nonce = deriveOpaqueToken(
+          config.workspaceOAuthTransactionSecret,
+          "workspace-oauth-nonce",
+          state,
+        );
+        const codeVerifier = deriveOpaqueToken(
+          config.workspaceOAuthTransactionSecret,
+          "workspace-oauth-pkce",
+          state,
+        );
+        const codeChallenge = createHash("sha256")
+          .update(codeVerifier)
+          .digest("base64url");
+        const expiresAt = new Date(
+          Date.now() +
+            config.workspaceOAuthTransactionTtlMinutes * 60 * 1000,
+        );
+        await repository.createWorkspaceOAuthTransaction({
+          id: randomUUID(),
+          stateHash: sha256(state),
+          browserSecretHash: sha256(browserSecret),
+          returnRoute: input.returnTo,
+          expiresAt,
+        });
+        const authorizationUrl = workspaceOidc.authorizationUrl({
+          state,
+          nonce,
+          codeChallenge,
+        });
+        reply.setCookie(
+          config.workspaceOAuthCookieName,
+          browserSecret,
+          workspaceOAuthCookieOptions,
+        );
+        return reply.redirect(authorizationUrl, 303);
+      } catch (error) {
+        clearWorkspaceOAuthCookie(reply);
+        request.log.warn(
+          {
+            code: error?.code || "WORKSPACE_AUTH_UNAVAILABLE",
+            requestId: request.id,
+          },
+          "Workspace authentication could not start",
+        );
+        return reply.redirect(
+          workspaceFrontendUrl("signin/faculty", "unavailable"),
+          303,
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/v1/auth/google-workspace/callback",
+    { config: { rateLimit: { max: 30, timeWindow: "15 minutes" } } },
+    async (request, reply) => {
+      disableWorkspaceOAuthCaching(reply);
+      const parsed = workspaceCallbackSchema.safeParse(request.query || {});
+      const browserSecret = String(
+        request.cookies?.[config.workspaceOAuthCookieName] || "",
+      );
+      clearWorkspaceOAuthCookie(reply);
+      if (!parsed.success || !browserSecret) {
+        await recordWorkspaceAudit(request, {
+          action: "auth.workspace.callback",
+          resourceType: "session",
+          outcome: "denied",
+        });
+        return reply.redirect(
+          workspaceFrontendUrl("signin/faculty", "failed"),
+          303,
+        );
+      }
+      const input = parsed.data;
+      let transaction = null;
+      try {
+        transaction = await repository.consumeWorkspaceOAuthTransaction({
+          stateHash: sha256(input.state),
+          browserSecretHash: sha256(browserSecret),
+        });
+        if (!transaction) {
+          await recordWorkspaceAudit(request, {
+            action: "auth.workspace.callback",
+            resourceType: "session",
+            outcome: "denied",
+          });
+          return reply.redirect(
+            workspaceFrontendUrl("signin/faculty", "expired"),
+            303,
+          );
+        }
+        if (input.error || !input.code) {
+          await recordWorkspaceAudit(request, {
+            action: "auth.workspace.callback",
+            resourceType: "session",
+            resourceId: transaction.id,
+            outcome: "denied",
+          });
+          return reply.redirect(
+            workspaceFrontendUrl(
+              "signin/faculty",
+              input.error === "access_denied" ? "cancelled" : "failed",
+            ),
+            303,
+          );
+        }
+        const nonce = deriveOpaqueToken(
+          config.workspaceOAuthTransactionSecret,
+          "workspace-oauth-nonce",
+          input.state,
+        );
+        const codeVerifier = deriveOpaqueToken(
+          config.workspaceOAuthTransactionSecret,
+          "workspace-oauth-pkce",
+          input.state,
+        );
+        const identity = await workspaceOidc.exchangeAndVerify({
+          code: input.code,
+          codeVerifier,
+          expectedNonceHash: sha256(nonce),
+        });
+        const user = await repository.resolveGoogleWorkspaceFaculty(identity);
+        if (!user) {
+          await recordWorkspaceAudit(request, {
+            action: "auth.workspace.callback",
+            resourceType: "session",
+            resourceId: transaction.id,
+            outcome: "denied",
+          });
+          return reply.redirect(
+            workspaceFrontendUrl("signin/faculty", "not-authorized"),
+            303,
+          );
+        }
+        await issueSession(reply, user);
+        await recordWorkspaceAudit(request, {
+          actorUserId: user.id,
+          action: "auth.workspace.login",
+          resourceType: "session",
+          resourceId: transaction.id,
+          outcome: "success",
+        });
+        return reply.redirect(
+          workspaceFrontendUrl(transaction.returnRoute, "connected"),
+          303,
+        );
+      } catch (error) {
+        request.log.warn(
+          {
+            code: error?.code || "WORKSPACE_AUTHENTICATION_FAILED",
+            requestId: request.id,
+          },
+          "Workspace authentication was denied",
+        );
+        await recordWorkspaceAudit(request, {
+          action: "auth.workspace.callback",
+          resourceType: "session",
+          resourceId: transaction?.id,
+          outcome: "denied",
+        });
+        return reply.redirect(
+          workspaceFrontendUrl(
+            "signin/faculty",
+            error?.code === "WORKSPACE_AUTHENTICATION_FAILED"
+              ? "failed"
+              : "unavailable",
+          ),
+          303,
+        );
+      }
+    },
+  );
 
   app.get("/health/live", async () => ({ status: "ok" }));
   app.get("/health/ready", async () => {

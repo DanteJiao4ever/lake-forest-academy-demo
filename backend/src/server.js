@@ -5,6 +5,7 @@ import { createGoogleDrive } from "./drive/google-drive.js";
 import { ClamAvScanner } from "./lib/clamav.js";
 import { createApp } from "./app.js";
 import { createPasswordResetMailer } from "./mail/password-reset-mailer.js";
+import { createGoogleWorkspaceOidc } from "./auth/google-workspace-oidc.js";
 import { bootstrapCanonicalDriveCatalog } from "./services/material-sync.js";
 import { bootstrapSystemSubmissionTarget } from "./services/submission-target-bootstrap.js";
 
@@ -24,12 +25,14 @@ const scanner = new ClamAvScanner({
   required: config.clamavRequired,
 });
 const passwordResetMailer = await createPasswordResetMailer(config);
+const googleWorkspaceOidc = createGoogleWorkspaceOidc(config);
 const app = await createApp({
   config,
   repository,
   drive,
   scanner,
   passwordResetMailer,
+  googleWorkspaceOidc,
 });
 
 async function shutdown(signal) {

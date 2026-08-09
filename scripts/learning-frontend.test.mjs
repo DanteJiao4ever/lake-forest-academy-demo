@@ -19,6 +19,10 @@ test("runtime configuration separates core and upload readiness", async () => {
 
   assert.equal(runtimeConfig.healthPath, "/health/ready");
   assert.equal(runtimeConfig.uploadHealthPath, "/health/upload-ready");
+  assert.equal(
+    runtimeConfig.workspaceAuthHealthPath,
+    "/health/workspace-auth-ready",
+  );
   assert.match(bootstrap, /healthPath:\s*"\/health\/ready"/);
   assert.match(
     bootstrap,
@@ -36,10 +40,18 @@ test("runtime configuration separates core and upload readiness", async () => {
     bootstrap,
     /accountSecurityHealthPath:\s*"\/health\/account-security-ready"/,
   );
+  assert.match(
+    bootstrap,
+    /workspaceAuthHealthPath:\s*"\/health\/workspace-auth-ready"/,
+  );
   assert.match(viteConfig, /LFA_API_HEALTH_PATH \|\| "\/health\/ready"/);
   assert.match(
     viteConfig,
     /LFA_API_UPLOAD_HEALTH_PATH \|\| "\/health\/upload-ready"/,
+  );
+  assert.match(
+    viteConfig,
+    /LFA_WORKSPACE_AUTH_HEALTH_PATH \|\|\s*"\/health\/workspace-auth-ready"/,
   );
 });
 
@@ -82,6 +94,8 @@ async function bootstrapConfiguration({
   driveCatalogReady = true,
   passwordResetReady = true,
   accountSecurityReady = true,
+  workspaceAuthReady = true,
+  workspaceAuthStart = "",
 } = {}) {
   const requestedUrls = [];
   const loadedScripts = [];
@@ -94,7 +108,9 @@ async function bootstrapConfiguration({
       driveCatalogHealthPath: "/health/drive-catalog-ready",
       passwordResetHealthPath: "/health/password-reset-ready",
       accountSecurityHealthPath: "/health/account-security-ready",
+      workspaceAuthHealthPath: "/health/workspace-auth-ready",
       healthTimeoutMs: 1000,
+      googleWorkspaceAuthStart: workspaceAuthStart,
       driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
     },
     setTimeout: (...args) => {
@@ -139,6 +155,9 @@ async function bootstrapConfiguration({
     }
     if (url.pathname === "/health/account-security-ready") {
       return readinessResponse(accountSecurityReady);
+    }
+    if (url.pathname === "/health/workspace-auth-ready") {
+      return readinessResponse(workspaceAuthReady);
     }
     throw new Error(`Unexpected bootstrap request: ${value}`);
   };
@@ -225,10 +244,15 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
       url.endsWith("/health/account-security-ready"),
     ),
   );
+  assert.ok(
+    requestedUrls.some((url) =>
+      url.endsWith("/health/workspace-auth-ready"),
+    ),
+  );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=student-teacher-interaction-v1",
-    "./platform-sequences.js?v=student-teacher-interaction-v1",
-    "./app.js?v=student-teacher-interaction-v1",
+    "./course-catalog.js?v=workspace-auth-v1",
+    "./platform-sequences.js?v=workspace-auth-v1",
+    "./app.js?v=workspace-auth-v1",
   ]);
 });
 
@@ -256,6 +280,33 @@ test("password change stays hidden until the new account-security API is ready",
   assert.equal(window.LFA_API_STATUS.state, "ready");
   assert.equal(window.LFA_AUTH_CONFIG.passwordChangeEndpoint, "");
   assert.notEqual(window.LFA_AUTH_CONFIG.loginEndpoint, "");
+});
+
+test("Workspace sign-in is independently gated and constrained to the API origin", async () => {
+  const unavailable = await bootstrapConfiguration({
+    coreReady: true,
+    workspaceAuthReady: false,
+    workspaceAuthStart: "/v1/auth/google-workspace/start",
+  });
+  assert.equal(unavailable.window.LFA_AUTH_CONFIG.googleWorkspaceAuthStart, "");
+  assert.notEqual(unavailable.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+
+  const available = await bootstrapConfiguration({
+    coreReady: true,
+    workspaceAuthReady: true,
+    workspaceAuthStart: "/v1/auth/google-workspace/start",
+  });
+  assert.equal(
+    available.window.LFA_AUTH_CONFIG.googleWorkspaceAuthStart,
+    "https://api.example.test/v1/auth/google-workspace/start",
+  );
+
+  const crossOrigin = await bootstrapConfiguration({
+    coreReady: true,
+    workspaceAuthReady: true,
+    workspaceAuthStart: "https://accounts.example.invalid/oauth/start",
+  });
+  assert.equal(crossOrigin.window.LFA_AUTH_CONFIG.googleWorkspaceAuthStart, "");
 });
 
 test("failed core readiness keeps password sign-in fail-closed", async () => {
@@ -370,11 +421,14 @@ async function renderPortal(hash, session, options = {}) {
     ...(options.sessionStorageSeed || {}),
   });
   const localStorage = memoryStorage(options.localStorageSeed || {});
+  const assignedLocations = [];
   const location = {
     hash,
     hostname: "lakeforestacademy.ca",
     href: `https://lakeforestacademy.ca/learning/${hash}`,
-    assign() {},
+    assign(value) {
+      assignedLocations.push(String(value));
+    },
   };
   const window = {
     location,
@@ -464,6 +518,7 @@ async function renderPortal(hash, session, options = {}) {
         document,
         listeners,
         localStorage,
+        assignedLocations,
         sessionStorage,
         window,
       }
@@ -519,6 +574,293 @@ test("anonymous session checks preserve the selected faculty sign-in portal", as
     result.html,
     /James Whitmore|james\.whitmore@lakeforestacademy\.ca/,
   );
+});
+
+test("session restoration renders a neutral pending view instead of the wrong portal", async () => {
+  const result = await renderPortal("#/teacher/dashboard", null, {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = {
+        workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+      };
+    },
+    fetch: async () => new Promise(() => {}),
+    settleTurns: 0,
+    returnHarness: true,
+  });
+
+  assert.match(result.html, /Checking Your Session/);
+  assert.match(result.html, /Confirming whether you are already signed in/);
+  assert.doesNotMatch(result.html, /Student Portal|Faculty Portal/);
+});
+
+test("faculty Workspace sign-in sends only the portal and relative return route", async () => {
+  let workspaceButton = null;
+  const result = await renderPortal("#/signin/faculty", null, {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = {
+        googleWorkspaceAuthStart:
+          "https://api.example.test/v1/auth/google-workspace/start?unexpected=1#fragment",
+      };
+    },
+    interact: async ({ listeners }) => {
+      workspaceButton = actionTarget("google-workspace-signin");
+      workspaceButton.innerHTML = "Continue with Google Workspace";
+      await listeners.get("click")[0]({ target: workspaceButton });
+    },
+    returnHarness: true,
+  });
+
+  assert.match(result.html, /data-action="google-workspace-signin"/);
+  assert.match(result.html, /Google Workspace sign-in is available/);
+  assert.match(
+    result.html,
+    /Signing out of Lake Forest Learning does not sign you out of Google/,
+  );
+  assert.equal(result.assignedLocations.length, 1);
+  const assigned = new URL(result.assignedLocations[0]);
+  assert.equal(assigned.origin, "https://api.example.test");
+  assert.equal(assigned.pathname, "/v1/auth/google-workspace/start");
+  assert.deepEqual([...assigned.searchParams.keys()].sort(), [
+    "portal",
+    "returnTo",
+  ]);
+  assert.equal(assigned.searchParams.get("portal"), "faculty");
+  assert.equal(assigned.searchParams.get("returnTo"), "teacher/dashboard");
+  assert.equal(assigned.hash, "");
+  assert.equal(workspaceButton.disabled, true);
+  assert.equal(workspaceButton.attributes["aria-busy"], "true");
+  assert.match(workspaceButton.innerHTML, /Opening Google/);
+
+  const student = await renderPortal("#/signin/student", null, {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = {
+        googleWorkspaceAuthStart:
+          "https://api.example.test/v1/auth/google-workspace/start",
+      };
+    },
+  });
+  assert.doesNotMatch(student, /data-action="google-workspace-signin"/);
+});
+
+test("Workspace callback statuses use safe messages and are removed from the route", async () => {
+  const rejected = await renderPortal(
+    "#/signin/faculty?workspace=not-authorized&email=faculty%40example.test",
+    null,
+    { returnHarness: true },
+  );
+  assert.match(
+    rejected.html,
+    /This Google Workspace account is not authorized for the faculty portal/,
+  );
+  assert.equal(
+    rejected.window.location.hash,
+    "#/signin/faculty?email=faculty%40example.test",
+  );
+
+  const unknown = await renderPortal(
+    "#/signin/faculty?workspace=%3Cscript%3Esensitive-provider-error%3C%2Fscript%3E",
+    null,
+    { returnHarness: true },
+  );
+  assert.match(
+    unknown.html,
+    /Google Workspace sign-in could not be completed\. Please try again\./,
+  );
+  assert.doesNotMatch(unknown.html, /sensitive-provider-error|<script>/);
+  assert.equal(unknown.window.location.hash, "#/signin/faculty");
+
+  const cancelled = await renderPortal(
+    "#/signin/faculty?workspace=cancelled",
+    null,
+  );
+  assert.match(cancelled, /Google Workspace sign-in was cancelled/);
+  assert.match(cancelled, /class="form-notice"/);
+
+  const expired = await renderPortal(
+    "#/signin/faculty?workspace=expired",
+    null,
+  );
+  assert.match(expired, /Google Workspace sign-in expired/);
+});
+
+test("a connected Workspace callback restores the faculty session and CSRF token", async () => {
+  const result = await renderPortal(
+    "#/teacher/dashboard?workspace=connected",
+    null,
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = {
+          workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+          workspaceLogoutEndpoint: "https://api.example.test/v1/auth/logout",
+        };
+      },
+      fetch: async (request) => {
+        const url = new URL(String(request));
+        if (url.pathname !== "/v1/auth/session") {
+          throw new Error(`Unexpected Workspace request: ${url.pathname}`);
+        }
+        return jsonResponse({
+          authenticated: true,
+          csrfToken: "workspace-csrf-token",
+          user: {
+            id: "teacher-workspace",
+            email: "faculty@example.test",
+            role: "teacher",
+            firstName: "Avery",
+            lastName: "Stone",
+            displayName: "Avery Stone",
+          },
+        });
+      },
+      settleTurns: 14,
+      returnHarness: true,
+    },
+  );
+
+  assert.equal(result.window.location.hash, "#/teacher/dashboard");
+  assert.match(result.html, /Welcome Back, Avery/);
+  assert.match(result.html, />Avery Stone</);
+  assert.equal(
+    result.sessionStorage.getItem("lake-forest-learning-csrf-v1"),
+    "workspace-csrf-token",
+  );
+});
+
+test("a faculty Workspace callback rejects a restored student role", async () => {
+  const requests = [];
+  const result = await renderPortal(
+    "#/teacher/dashboard?workspace=connected",
+    null,
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = {
+          workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+          workspaceLogoutEndpoint: "https://api.example.test/v1/auth/logout",
+        };
+      },
+      fetch: async (request, init = {}) => {
+        const url = new URL(String(request));
+        requests.push({ url, init });
+        if (url.pathname === "/v1/auth/session") {
+          return jsonResponse({
+            authenticated: true,
+            csrfToken: "student-csrf-token",
+            user: {
+              id: "student-workspace",
+              email: "student@example.test",
+              role: "student",
+              displayName: "Student Account",
+            },
+          });
+        }
+        if (url.pathname === "/v1/auth/logout") return jsonResponse({}, 204);
+        throw new Error(`Unexpected Workspace request: ${url.pathname}`);
+      },
+      settleTurns: 14,
+      returnHarness: true,
+    },
+  );
+
+  assert.match(result.html, /Faculty Portal/);
+  assert.match(result.html, /not authorized for the faculty portal/);
+  assert.equal(
+    result.sessionStorage.getItem("lake-forest-learning-session-v1"),
+    null,
+  );
+  assert.equal(
+    result.sessionStorage.getItem("lake-forest-learning-csrf-v1"),
+    null,
+  );
+  assert.equal(requests.at(-1).url.pathname, "/v1/auth/logout");
+  assert.equal(requests.at(-1).init.method, "POST");
+  assert.equal(
+    requests.at(-1).init.headers["X-CSRF-Token"],
+    "student-csrf-token",
+  );
+});
+
+test("faculty logout ends only the learning session and preserves failure safety", async () => {
+  const logoutRequests = [];
+  const result = await renderPortal(
+    "#/teacher/dashboard",
+    {
+      email: "faculty@example.test",
+      role: "teacher",
+      firstName: "Avery",
+      displayName: "Avery Stone",
+    },
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = {
+          workspaceLogoutEndpoint: "https://api.example.test/v1/auth/logout",
+        };
+      },
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "logout-csrf-token",
+      },
+      fetch: async (request, init = {}) => {
+        logoutRequests.push({ request: String(request), init });
+        return jsonResponse({}, 204);
+      },
+      interact: async ({ listeners }) => {
+        await listeners.get("click")[0]({ target: actionTarget("logout") });
+      },
+      returnHarness: true,
+    },
+  );
+
+  assert.equal(result.window.location.hash, "#/signin/faculty");
+  assert.match(
+    result.html,
+    /signed out of Lake Forest Learning\. Your Google account remains signed in/,
+  );
+  assert.equal(logoutRequests.length, 1);
+  assert.equal(logoutRequests[0].init.method, "POST");
+  assert.equal(
+    logoutRequests[0].init.headers["X-CSRF-Token"],
+    "logout-csrf-token",
+  );
+  assert.equal(
+    result.sessionStorage.getItem("lake-forest-learning-session-v1"),
+    null,
+  );
+  assert.equal(
+    result.sessionStorage.getItem("lake-forest-learning-workspace-signed-out-v1"),
+    "1",
+  );
+
+  let failedButton = null;
+  const failed = await renderPortal(
+    "#/teacher/dashboard",
+    {
+      email: "faculty@example.test",
+      role: "teacher",
+      firstName: "Avery",
+      displayName: "Avery Stone",
+    },
+    {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = {
+          workspaceLogoutEndpoint: "https://api.example.test/v1/auth/logout",
+        };
+      },
+      sessionStorageSeed: {
+        "lake-forest-learning-csrf-v1": "logout-csrf-token",
+      },
+      fetch: async () => jsonResponse({}, 503),
+      interact: async ({ listeners }) => {
+        failedButton = actionTarget("logout");
+        await listeners.get("click")[0]({ target: failedButton });
+      },
+      returnHarness: true,
+    },
+  );
+  assert.equal(failed.window.location.hash, "#/teacher/dashboard");
+  assert.notEqual(
+    failed.sessionStorage.getItem("lake-forest-learning-session-v1"),
+    null,
+  );
+  assert.equal(failedButton.disabled, false);
 });
 
 test("remote session identity is never replaced by fixture account names", async () => {
@@ -800,6 +1142,11 @@ function actionTarget(action, dataset = {}) {
   return {
     dataset: { action, ...dataset },
     disabled: false,
+    innerHTML: "",
+    attributes: {},
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
     closest(selector) {
       return selector === "[data-action], [data-route]" ? this : null;
     },
@@ -814,7 +1161,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "student-teacher-interaction-v1";/,
+    /const SCRIPT_VERSION = "workspace-auth-v1";/,
   );
 });
 
