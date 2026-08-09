@@ -159,7 +159,7 @@ test(
             id: submissionFileId,
             targetId: activeSubmissionTarget.id,
             driveFileId: `ci-drive-file-${suffix}`,
-            driveParentFolderId: `ci-drive-parent-${suffix}`,
+            parentFolderId: `ci-drive-parent-${suffix}`,
             originalName: "ci-submission.pdf",
             storedName: `${submissionFileId}.pdf`,
             relativePath: `CI Student Submissions/ICS4U/${user.publicId}/Unit 1/ics4u-m02-assignment/Attempt 1/${submissionFileId}.pdf`,

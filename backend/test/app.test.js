@@ -652,6 +652,10 @@ describe("Lake Forest Learning API", () => {
     assert.equal(JSON.stringify(first.json()).includes("driveFileId"), false);
     assert.equal(drive.uploads.length, 1);
     assert.deepEqual(drive.uploads[0].pathSegments, ["MHF4U", repository.users[0].publicId, "Unit 2", "a1", "Attempt 1"]);
+    assert.equal(
+      repository.submissions[0].files[0].driveParentFolderId,
+      "parent-folder",
+    );
 
     const replayForm = multipartPayload(fields, file);
     const replay = await app.inject({
@@ -847,7 +851,7 @@ describe("Lake Forest Learning API", () => {
       repository.audit.some(
         (event) =>
           event.action === "submission.rollback_cleanup" &&
-          event.outcome === "failure" &&
+          event.outcome === "failed" &&
           event.details.orphanedFileCount === 1,
       ),
       true,

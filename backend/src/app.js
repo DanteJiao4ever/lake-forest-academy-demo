@@ -1932,6 +1932,8 @@ export async function createApp({
             id: randomUUID(),
             targetId: target.id,
             ...driveFile,
+            driveParentFolderId:
+              driveFile.driveParentFolderId ?? driveFile.parentFolderId,
             originalName: file.originalName,
             storedName,
             relativePath: `${target.root_folder_name || target.rootFolderName || "Lake Forest Learning - Student Submissions"}/${pathSegments.join("/")}/${storedName}`,
@@ -2000,7 +2002,7 @@ export async function createApp({
                 action: "submission.rollback_cleanup",
                 resourceType: "submission",
                 resourceId: submissionId,
-                outcome: "failure",
+                outcome: "failed",
                 details: {
                   uploadedFileCount: driveFiles.length,
                   orphanedFileCount: cleanupFailureCount,
