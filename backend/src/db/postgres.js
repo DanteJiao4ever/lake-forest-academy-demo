@@ -471,6 +471,183 @@ export class PostgresRepository {
     await this.pool.query("DELETE FROM auth_sessions WHERE id = $1", [sessionId]);
   }
 
+  async workspaceOAuthReady() {
+    const result = await this.pool.query(
+      `SELECT
+         has_table_privilege(current_user, 'workspace_oauth_transactions', 'SELECT') AS transactions_select,
+         has_table_privilege(current_user, 'workspace_oauth_transactions', 'INSERT') AS transactions_insert,
+         has_table_privilege(current_user, 'workspace_oauth_transactions', 'DELETE') AS transactions_delete,
+         has_column_privilege(current_user, 'workspace_oauth_transactions', 'consumed_at', 'UPDATE') AS transactions_consume,
+         has_table_privilege(current_user, 'workspace_identities', 'SELECT') AS identities_select,
+         has_table_privilege(current_user, 'workspace_identities', 'INSERT') AS identities_insert,
+         has_column_privilege(current_user, 'workspace_identities', 'last_verified_email', 'UPDATE') AS identities_email_update,
+         has_column_privilege(current_user, 'workspace_identities', 'last_authenticated_at', 'UPDATE') AS identities_login_update`,
+    );
+    if (!Object.values(result.rows[0] || {}).every((value) => value === true)) {
+      throw new ApiError(
+        503,
+        "WORKSPACE_AUTH_STORAGE_UNAVAILABLE",
+        "Google Workspace sign-in storage is temporarily unavailable.",
+      );
+    }
+    return true;
+  }
+
+  async createWorkspaceOAuthTransaction({
+    id,
+    stateHash,
+    browserSecretHash,
+    returnRoute,
+    expiresAt,
+  }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM workspace_oauth_transactions
+          WHERE expires_at <= now()
+             OR consumed_at < now() - interval '1 hour'`,
+      );
+      const result = await client.query(
+        `INSERT INTO workspace_oauth_transactions
+          (id, state_hash, browser_secret_hash, return_route, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, expires_at`,
+        [
+          id,
+          stateHash,
+          browserSecretHash,
+          returnRoute,
+          expiresAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return {
+        id: result.rows[0].id,
+        expiresAt: result.rows[0].expires_at,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  async consumeWorkspaceOAuthTransaction({ stateHash, browserSecretHash }) {
+    const result = await this.pool.query(
+      `UPDATE workspace_oauth_transactions
+          SET consumed_at = now()
+        WHERE state_hash = $1
+          AND browser_secret_hash = $2
+          AND consumed_at IS NULL
+          AND expires_at > now()
+        RETURNING id, return_route, expires_at`,
+      [stateHash, browserSecretHash],
+    );
+    if (!result.rows[0]) return null;
+    return {
+      id: result.rows[0].id,
+      returnRoute: result.rows[0].return_route,
+      expiresAt: result.rows[0].expires_at,
+    };
+  }
+
+  async resolveGoogleWorkspaceFaculty({
+    issuer,
+    subject,
+    email,
+    hostedDomain,
+  }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const bound = await client.query(
+        `SELECT wi.id AS workspace_identity_id, u.*
+           FROM workspace_identities wi
+           JOIN app_users u ON u.id = wi.user_id
+          WHERE wi.provider = 'google_workspace'
+            AND wi.issuer = $1
+            AND wi.subject = $2
+          FOR UPDATE OF wi, u`,
+        [issuer, subject],
+      );
+      if (bound.rows[0]) {
+        const user = mapUser(bound.rows[0]);
+        if (
+          user.status !== "active" ||
+          !["teacher", "teacher_admin"].includes(user.role)
+        ) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        await client.query(
+          `UPDATE workspace_identities
+              SET last_verified_email = $2,
+                  last_authenticated_at = now()
+            WHERE id = $1`,
+          [bound.rows[0].workspace_identity_id, email],
+        );
+        await client.query("COMMIT");
+        return user;
+      }
+
+      const candidate = await client.query(
+        `SELECT *
+           FROM app_users
+          WHERE email = $1
+            AND status = 'active'
+            AND role IN ('teacher', 'teacher_admin')
+          LIMIT 1
+          FOR UPDATE`,
+        [email],
+      );
+      if (!candidate.rows[0]) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const existingForUser = await client.query(
+        `SELECT id, issuer, subject
+           FROM workspace_identities
+          WHERE provider = 'google_workspace' AND user_id = $1
+          LIMIT 1
+          FOR UPDATE`,
+        [candidate.rows[0].id],
+      );
+      if (existingForUser.rows[0]) {
+        const existing = existingForUser.rows[0];
+        if (existing.issuer !== issuer || existing.subject !== subject) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        await client.query(
+          `UPDATE workspace_identities
+              SET last_verified_email = $2,
+                  last_authenticated_at = now()
+            WHERE id = $1`,
+          [existing.id, email],
+        );
+        await client.query("COMMIT");
+        return mapUser(candidate.rows[0]);
+      }
+      await client.query(
+        `INSERT INTO workspace_identities
+          (provider, user_id, issuer, subject, email_at_binding,
+           last_verified_email, hosted_domain_at_binding)
+         VALUES ('google_workspace', $1, $2, $3, $4, $4, $5)`,
+        [candidate.rows[0].id, issuer, subject, email, hostedDomain],
+      );
+      await client.query("COMMIT");
+      return mapUser(candidate.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error?.code === "23505") return null;
+      throw databaseError(error);
+    } finally {
+      client.release();
+    }
+  }
+
   async createPasswordResetToken({
     id,
     userId,

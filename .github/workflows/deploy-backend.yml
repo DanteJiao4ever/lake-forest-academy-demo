@@ -107,6 +107,13 @@ jobs:
       PASSWORD_RESET_FROM_NAME: ${{ vars.PASSWORD_RESET_FROM_NAME || 'Lake Forest Academy' }}
       GMAIL_IMPERSONATED_USER: ${{ vars.GMAIL_IMPERSONATED_USER }}
       GMAIL_CREDENTIALS_SECRET: ${{ vars.GCP_GMAIL_CREDENTIALS_SECRET }}
+      WORKSPACE_OAUTH_PROVIDER: ${{ vars.GOOGLE_WORKSPACE_OAUTH_PROVIDER || 'disabled' }}
+      WORKSPACE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID }}
+      WORKSPACE_OAUTH_CLIENT_SECRET: ${{ vars.GCP_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET }}
+      WORKSPACE_OAUTH_TRANSACTION_SECRET: ${{ vars.GCP_GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET }}
+      WORKSPACE_OAUTH_REDIRECT_URI: ${{ vars.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI }}
+      WORKSPACE_OAUTH_HOSTED_DOMAIN: ${{ vars.GOOGLE_WORKSPACE_HOSTED_DOMAIN || 'lakeforestacademy.ca' }}
+      WORKSPACE_OAUTH_FRONTEND_URL: ${{ vars.GOOGLE_WORKSPACE_FRONTEND_URL || 'https://lakeforestacademy.ca/learning/' }}
       CANDIDATE_TAG: candidate-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +136,18 @@ jobs:
               exit 1
               ;;
           esac
+          case "$WORKSPACE_OAUTH_PROVIDER" in
+            disabled) ;;
+            google)
+              for name in WORKSPACE_OAUTH_CLIENT_ID WORKSPACE_OAUTH_CLIENT_SECRET WORKSPACE_OAUTH_TRANSACTION_SECRET WORKSPACE_OAUTH_REDIRECT_URI WORKSPACE_OAUTH_HOSTED_DOMAIN WORKSPACE_OAUTH_FRONTEND_URL; do
+                test -n "${!name:-}" || { echo "Missing Google Workspace OAuth variable: ${name}" >&2; exit 1; }
+              done
+              ;;
+            *)
+              echo "GOOGLE_WORKSPACE_OAUTH_PROVIDER must be disabled or google" >&2
+              exit 1
+              ;;
+          esac
       - id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -148,6 +167,10 @@ jobs:
           done
           if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
             gcloud secrets describe "$GMAIL_CREDENTIALS_SECRET" --project "$PROJECT_ID" >/dev/null
+          fi
+          if [[ "$WORKSPACE_OAUTH_PROVIDER" == "google" ]]; then
+            gcloud secrets describe "$WORKSPACE_OAUTH_CLIENT_SECRET" --project "$PROJECT_ID" >/dev/null
+            gcloud secrets describe "$WORKSPACE_OAUTH_TRANSACTION_SECRET" --project "$PROJECT_ID" >/dev/null
           fi
       - uses: docker/login-action@v3
         with:
@@ -218,10 +241,18 @@ jobs:
             PASSWORD_RESET_FROM_EMAIL=${{ env.PASSWORD_RESET_FROM_EMAIL }}
             PASSWORD_RESET_FROM_NAME=${{ env.PASSWORD_RESET_FROM_NAME }}
             GMAIL_IMPERSONATED_USER=${{ env.GMAIL_IMPERSONATED_USER }}
+            GOOGLE_WORKSPACE_OAUTH_PROVIDER=${{ env.WORKSPACE_OAUTH_PROVIDER }}
+            GOOGLE_WORKSPACE_OAUTH_CLIENT_ID=${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && env.WORKSPACE_OAUTH_CLIENT_ID || '' }}
+            GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI=${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && env.WORKSPACE_OAUTH_REDIRECT_URI || '' }}
+            GOOGLE_WORKSPACE_HOSTED_DOMAIN=${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && env.WORKSPACE_OAUTH_HOSTED_DOMAIN || '' }}
+            GOOGLE_WORKSPACE_FRONTEND_URL=${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && env.WORKSPACE_OAUTH_FRONTEND_URL || '' }}
+            GOOGLE_WORKSPACE_OAUTH_TRANSACTION_TTL_MINUTES=10
           secrets: |-
             DATABASE_URL=${{ env.DB_RUNTIME_SECRET }}:latest
             CSRF_SECRET=${{ env.CSRF_SECRET }}:latest
             ${{ env.PASSWORD_RESET_MAIL_PROVIDER == 'gmail_api' && format('GMAIL_SERVICE_ACCOUNT_JSON_BASE64={0}:latest', env.GMAIL_CREDENTIALS_SECRET) || '' }}
+            ${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && format('GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET={0}:latest', env.WORKSPACE_OAUTH_CLIENT_SECRET) || '' }}
+            ${{ env.WORKSPACE_OAUTH_PROVIDER == 'google' && format('GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET={0}:latest', env.WORKSPACE_OAUTH_TRANSACTION_SECRET) || '' }}
           flags: >-
             --service-account=${{ env.RUNTIME_SA }}
             --set-cloudsql-instances=${{ env.SQL_INSTANCE }}
@@ -286,6 +317,9 @@ jobs:
           if [[ "$PASSWORD_RESET_MAIL_PROVIDER" == "gmail_api" ]]; then
             probe "/health/password-reset-ready" "password-reset-ready"
           fi
+          if [[ "$WORKSPACE_OAUTH_PROVIDER" == "google" ]]; then
+            probe "/health/workspace-auth-ready" "workspace-auth-ready"
+          fi
       - name: Promote the verified candidate revision
         env:
           CANDIDATE_REVISION: ${{ steps.candidate.outputs.revision }}
@@ -327,6 +361,13 @@ jobs:
               "$public_url/health/password-reset-ready" \
               | jq -e '.status == "ready"' >/dev/null
           fi
+          if [[ "$WORKSPACE_OAUTH_PROVIDER" == "google" ]]; then
+            curl --fail-with-body --silent --show-error \
+              --retry 5 --retry-all-errors --retry-delay 3 \
+              --connect-timeout 10 --max-time 30 \
+              "$public_url/health/workspace-auth-ready" \
+              | jq -e '.status == "ready"' >/dev/null
+          fi
       - name: Remove the temporary candidate URL
         if: ${{ always() && steps.candidate.outputs.revision != '' }}
         run: >-
@@ -335,4 +376,4 @@ jobs:
           --region "$REGION"
           --remove-tags "$CANDIDATE_TAG"
       - name: Deployment summary
-        run: echo "Learning API candidate passed core, course-catalog, Drive-catalog, upload, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Learning API candidate passed core, course-catalog, Drive-catalog, upload, account-security, conditional recovery/Workspace auth, and CORS probes before promotion." >> "$GITHUB_STEP_SUMMARY"

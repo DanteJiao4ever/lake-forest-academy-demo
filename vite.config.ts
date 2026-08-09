@@ -23,6 +23,9 @@ function learningRuntimeConfigPlugin(
         healthPath: values.LFA_API_HEALTH_PATH || "/health/ready",
         uploadHealthPath:
           values.LFA_API_UPLOAD_HEALTH_PATH || "/health/upload-ready",
+        workspaceAuthHealthPath:
+          values.LFA_WORKSPACE_AUTH_HEALTH_PATH ||
+          "/health/workspace-auth-ready",
         healthTimeoutMs: Number.isFinite(requestedTimeout)
           ? Math.min(10000, Math.max(1000, Math.round(requestedTimeout)))
           : 3500,

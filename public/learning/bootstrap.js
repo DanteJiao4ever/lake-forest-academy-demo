@@ -8,12 +8,13 @@
     driveCatalogHealthPath: "/health/drive-catalog-ready",
     passwordResetHealthPath: "/health/password-reset-ready",
     accountSecurityHealthPath: "/health/account-security-ready",
+    workspaceAuthHealthPath: "/health/workspace-auth-ready",
     healthTimeoutMs: 3500,
     googleWorkspaceAuthStart: "",
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "student-teacher-interaction-v1";
+  const SCRIPT_VERSION = "workspace-auth-v1";
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
@@ -96,6 +97,8 @@
       ready && options.passwordResetReady === true;
     const accountSecurityReady =
       ready && options.accountSecurityReady === true;
+    const workspaceAuthReady =
+      ready && options.workspaceAuthReady === true;
     const syncEndpoint = ready
       ? optionalApiUrl(origin, config.driveSyncPath)
       : "";
@@ -114,7 +117,7 @@
       enrollmentsEndpoint: ready
         ? apiUrl(origin, "/v1/me/enrollments")
         : "",
-      googleWorkspaceAuthStart: ready
+      googleWorkspaceAuthStart: workspaceAuthReady
         ? optionalApiUrl(origin, config.googleWorkspaceAuthStart)
         : "",
       workspaceSessionEndpoint: ready
@@ -300,6 +303,7 @@
         driveCatalogHealthReady,
         passwordResetReady,
         accountSecurityReady,
+        workspaceAuthReady,
       ] = await Promise.all([
         apiIsReady(
           origin,
@@ -333,6 +337,13 @@
           config,
           2500,
         ),
+        apiIsReady(
+          origin,
+          config.workspaceAuthHealthPath ||
+            DEFAULT_CONFIG.workspaceAuthHealthPath,
+          config,
+          2500,
+        ),
       ]);
       if (coreReady) {
         const driveCatalogReady = driveCatalogHealthReady === true;
@@ -341,6 +352,7 @@
           driveCatalogReady,
           passwordResetReady,
           accountSecurityReady,
+          workspaceAuthReady,
         });
         setApiStatus(
           "ready",

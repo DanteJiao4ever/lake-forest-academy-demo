@@ -20,8 +20,12 @@ scanner or Drive outage does not unnecessarily disable sign-in.
 After the API is healthy, set `LFA_API_ORIGIN` to the HTTPS API origin (for
 example `https://api.lakeforestacademy.ca`) and run the Pages workflow. Optional
 repository variables are `LFA_API_HEALTH_PATH`,
-`LFA_API_UPLOAD_HEALTH_PATH`, `LFA_API_HEALTH_TIMEOUT_MS`,
-`LFA_GOOGLE_AUTH_START` and `LFA_DRIVE_SYNC_PATH`.
+`LFA_API_UPLOAD_HEALTH_PATH`, `LFA_WORKSPACE_AUTH_HEALTH_PATH`,
+`LFA_API_HEALTH_TIMEOUT_MS`, `LFA_GOOGLE_AUTH_START` and
+`LFA_DRIVE_SYNC_PATH`. Keep `LFA_GOOGLE_AUTH_START` empty until the backend's
+dedicated `/health/workspace-auth-ready` check passes and one real,
+pre-provisioned faculty Workspace login has verified the Google OAuth client
+and registered callback URL.
 
 ## Local commands
 

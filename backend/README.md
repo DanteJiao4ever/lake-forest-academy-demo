@@ -26,8 +26,9 @@ Drive file ID or access token.
 5. Run `pnpm dev`. Process and database checks are available at `/health/live`
    and `/health/ready`; `/health/upload-ready` additionally verifies ClamAV and
    the configured Drive submission root. `/health/account-security-ready`
-   advertises the compatible password-change API, while
-   `/health/password-reset-ready` verifies the delegated Gmail mailbox.
+   advertises the compatible password-change API,
+   `/health/password-reset-ready` verifies the delegated Gmail mailbox, and
+   `/health/workspace-auth-ready` independently gates faculty Workspace login.
 
 No user or default password is embedded in this repository. Public student
 registration always creates the `student` role. Teacher and administrator roles
@@ -57,7 +58,7 @@ window.LFA_AUTH_CONFIG = {
   passwordResetEndpoint: "https://api.lakeforestacademy.ca/v1/auth/password-resets",
   passwordChangeEndpoint: "https://api.lakeforestacademy.ca/v1/auth/password-change",
   enrollmentsEndpoint: "https://api.lakeforestacademy.ca/v1/me/enrollments",
-  googleWorkspaceAuthStart: "",
+  googleWorkspaceAuthStart: "https://api.lakeforestacademy.ca/v1/auth/google-workspace/start",
   workspaceSessionEndpoint: "https://api.lakeforestacademy.ca/v1/auth/session",
   workspaceLogoutEndpoint: "https://api.lakeforestacademy.ca/v1/auth/logout",
   allowDeviceAccounts: false,
@@ -93,6 +94,11 @@ session receive the same value and PostgreSQL stores no raw CSRF token.
   `{token,newPassword,confirmPassword}` and revokes every previous session.
 - `POST /v1/auth/password-change` — requires the current cookie, CSRF token and
   `{currentPassword,newPassword,confirmPassword}`, then revokes every session.
+- `GET /v1/auth/google-workspace/start` begins a browser-bound faculty-only
+  Google OIDC flow; `returnTo` accepts only `teacher/dashboard`.
+- `GET /v1/auth/google-workspace/callback` consumes the one-time state, verifies
+  Google claims, binds an existing active faculty account, and issues the same
+  opaque first-party session used by password login.
 
 Other browser contracts:
 
@@ -195,11 +201,17 @@ cannot add children. It never silently rewrites an existing row. An exact,
 active administrator-created target using runtime ADC is adopted without
 changing its audit actor.
 
-The Google Workspace OAuth start/callback endpoints are **not implemented in
-this service yet**. Faculty login currently uses the same server-side bcrypt
-credential and opaque cookie-session flow as student login. Adding Workspace
-OAuth later should link an approved Google identity to an already provisioned
-faculty user; it must not create teacher roles from arbitrary Google accounts.
+Google Workspace OIDC is disabled unless
+`GOOGLE_WORKSPACE_OAUTH_PROVIDER=google` and its client, callback, hosted-domain,
+frontend and two Secret Manager values are complete. The flow requests only
+`openid email`, uses state, nonce, PKCE and an independent browser-binding
+cookie, and stores no Google token or raw PKCE verifier. The transaction secret
+derives nonce and verifier values using domain-separated HMACs; PostgreSQL keeps
+only state and browser-cookie digests. A verified Workspace email may bind only
+to an already provisioned active `teacher` or `teacher_admin`. Later logins use
+the immutable Google issuer/subject binding, so email reuse cannot rebind or
+create a teacher account. Password login remains available as a separate
+first-party recovery path.
 
 ## Container deployment
 
@@ -239,6 +251,18 @@ revision. The Cloud SQL connection uses
 `INSTANCE_UNIX_SOCKET=/cloudsql/project:region:instance`; set
 `DATABASE_SSL=false` because the managed Auth Proxy already encrypts it.
 
+Workspace OIDC remains disabled by default. Enabling it additionally requires
+the `GOOGLE_WORKSPACE_OAUTH_*` production variables plus two pre-provisioned
+Secret Manager entries named by `GCP_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET` and
+`GCP_GOOGLE_WORKSPACE_OAUTH_TRANSACTION_SECRET`. The deployment workflow probes
+`/health/workspace-auth-ready` before promotion whenever the provider is
+`google`. That readiness check validates local configuration, database schema
+and runtime privileges; it cannot validate the OAuth client secret or the
+redirect URI registered in Google Cloud. Complete one real, pre-provisioned
+faculty Workspace sign-in after every first enablement or Google Console client
+change. Only after that backend revision is public should the Pages variable
+`LFA_GOOGLE_AUTH_START=/v1/auth/google-workspace/start` be set and Pages rebuilt.
+
 On Cloud Run, prefer Application Default Credentials: share only the two
 approved Drive roots with `GCP_RUNTIME_SERVICE_ACCOUNT` and leave both Google
 credential environment variables empty. This avoids a long-lived JSON key.
@@ -251,7 +275,8 @@ credential environment variables empty. This avoids a long-lived JSON key.
   the runtime service identity for Drive instead of a service-account JSON key.
 - Share only the approved curriculum root and
   `Lake Forest Learning - Student Submissions` root with the service account.
-  Do not grant domain-wide delegation.
+  Do not grant domain-wide delegation to that Drive runtime identity. Password
+  reset mail, if enabled, uses a separate least-privilege delegated identity.
 - Run ClamAV and set `CLAMAV_REQUIRED=true` in production. Uploads fail closed
   if the required scanner is unavailable.
 - Put the API behind HTTPS and a reverse proxy that preserves `Origin` and
