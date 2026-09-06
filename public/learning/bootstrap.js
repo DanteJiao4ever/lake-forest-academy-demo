@@ -14,7 +14,9 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "workspace-auth-v1";
+  const SCRIPT_VERSION = "login-recovery-v2";
+  let pendingServiceCheck = null;
+  let lastFileConfig = {};
 
   function setApiStatus(state, message, origin = "") {
     window.LFA_API_STATUS = Object.freeze({
@@ -165,21 +167,27 @@
   }
 
   async function readRuntimeConfig() {
-    let fileConfig = {};
+    let fileConfig = lastFileConfig;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
     try {
       const response = await fetch(`./runtime-config.json?t=${Date.now()}`, {
         cache: "no-store",
         credentials: "same-origin",
         headers: { Accept: "application/json" },
+        signal: controller.signal,
       });
       if (response.ok) {
         const payload = await response.json();
         if (payload && typeof payload === "object" && !Array.isArray(payload)) {
           fileConfig = payload;
+          lastFileConfig = payload;
         }
       }
     } catch {
       // A missing runtime file must never prevent the static portal from opening.
+    } finally {
+      window.clearTimeout(timeout);
     }
     const injected =
       window.LFA_RUNTIME_CONFIG &&
@@ -255,7 +263,29 @@
     root.replaceChildren(main);
   }
 
-  async function start() {
+  async function probeServices(origin, config) {
+    const checks = [
+      [config.healthPath || DEFAULT_CONFIG.healthPath, 10000],
+      [config.uploadHealthPath || DEFAULT_CONFIG.uploadHealthPath, 2500],
+      [config.driveCatalogHealthPath || DEFAULT_CONFIG.driveCatalogHealthPath, 2500],
+      [config.passwordResetHealthPath || DEFAULT_CONFIG.passwordResetHealthPath, 2500],
+      [config.accountSecurityHealthPath || DEFAULT_CONFIG.accountSecurityHealthPath, 2500],
+      [config.workspaceAuthHealthPath || DEFAULT_CONFIG.workspaceAuthHealthPath, 2500],
+    ];
+    const probe = ([path, ceiling]) => apiIsReady(origin, path, config, ceiling);
+    const results = await Promise.all(checks.map(probe));
+    // A cold start or a transient network failure must not disable login for
+    // the whole visit. Retry only failed health GETs, never auth submissions.
+    if (results.some((ready) => !ready)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      return Promise.all(checks.map((check, index) =>
+        results[index] ? true : probe(check),
+      ));
+    }
+    return results;
+  }
+
+  async function configureServices(config) {
     setApiStatus(
       "checking",
       "Checking whether secure school services are ready.",
@@ -264,7 +294,6 @@
       "checking",
       "Checking whether the secure course-material catalogue is ready.",
     );
-    const config = await readRuntimeConfig();
     const requestedOrigin = config.apiOrigin || localApiOrigin();
     const origin = secureApiOrigin(requestedOrigin);
 
@@ -304,47 +333,7 @@
         passwordResetReady,
         accountSecurityReady,
         workspaceAuthReady,
-      ] = await Promise.all([
-        apiIsReady(
-          origin,
-          config.healthPath || DEFAULT_CONFIG.healthPath,
-          config,
-        ),
-        apiIsReady(
-          origin,
-          config.uploadHealthPath || DEFAULT_CONFIG.uploadHealthPath,
-          config,
-          2500,
-        ),
-        apiIsReady(
-          origin,
-          config.driveCatalogHealthPath ||
-            DEFAULT_CONFIG.driveCatalogHealthPath,
-          config,
-          2500,
-        ),
-        apiIsReady(
-          origin,
-          config.passwordResetHealthPath ||
-            DEFAULT_CONFIG.passwordResetHealthPath,
-          config,
-          2500,
-        ),
-        apiIsReady(
-          origin,
-          config.accountSecurityHealthPath ||
-            DEFAULT_CONFIG.accountSecurityHealthPath,
-          config,
-          2500,
-        ),
-        apiIsReady(
-          origin,
-          config.workspaceAuthHealthPath ||
-            DEFAULT_CONFIG.workspaceAuthHealthPath,
-          config,
-          2500,
-        ),
-      ]);
+      ] = await probeServices(origin, config);
       if (coreReady) {
         const driveCatalogReady = driveCatalogHealthReady === true;
         applyEndpointConfiguration(origin, config, {
@@ -379,7 +368,7 @@
         applyEndpointConfiguration("");
         setApiStatus(
           "unavailable",
-          "Secure school services are temporarily unavailable. Sign-in and registration remain disabled while the public learning page stays available.",
+          "We could not connect to secure school services. Check your internet connection, then try again. Your password has not been submitted.",
           origin,
         );
         setUploadStatus(
@@ -395,6 +384,20 @@
       }
     }
 
+    return window.LFA_API_STATUS;
+  }
+
+  function recheckServices() {
+    if (pendingServiceCheck) return pendingServiceCheck;
+    pendingServiceCheck = readRuntimeConfig()
+      .then(configureServices)
+      .finally(() => { pendingServiceCheck = null; });
+    return pendingServiceCheck;
+  }
+
+  async function start() {
+    window.LFA_RECHECK_SERVICES = recheckServices;
+    await recheckServices();
     await loadScript("course-catalog.js");
     await loadScript("platform-sequences.js");
     await loadScript("app.js");

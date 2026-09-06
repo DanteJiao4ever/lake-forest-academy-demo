@@ -2,18 +2,14 @@
   "use strict";
 
   const APP_ROOT = document.querySelector("#app");
-  const API_STATUS = Object.freeze({
-    state: String(window.LFA_API_STATUS?.state || "disabled"),
-    message: String(window.LFA_API_STATUS?.message || "").trim(),
-  });
-  const DRIVE_CATALOG_STATUS = Object.freeze({
-    state: String(
-      window.LFA_DRIVE_CATALOG_STATUS?.state || "disabled",
-    ).trim(),
-    message: String(
-      window.LFA_DRIVE_CATALOG_STATUS?.message || "",
-    ).trim(),
-  });
+  function serviceStatus(value) {
+    return Object.freeze({
+      state: String(value?.state || "disabled").trim(),
+      message: String(value?.message || "").trim(),
+    });
+  }
+  let API_STATUS = serviceStatus(window.LFA_API_STATUS);
+  let DRIVE_CATALOG_STATUS = serviceStatus(window.LFA_DRIVE_CATALOG_STATUS);
   const STATE_KEY = "lake-forest-learning-state-v1";
   const SESSION_KEY = "lake-forest-learning-session-v1";
   const ACCOUNTS_KEY = "lake-forest-learning-accounts-v1";
@@ -75,89 +71,112 @@
   const SUBMISSION_FILE_TYPE_LABEL =
     "PDF, DOCX, XLSX, PPTX, TXT, PNG or JPEG";
   const ACCESS_EMAIL = "student@lakeforestacademy.ca";
-  const AUTH_CONFIG = {
-    loginEndpoint: String(
-      window.LFA_AUTH_CONFIG?.loginEndpoint || "",
-    ).trim(),
-    registrationEndpoint: String(
-      window.LFA_AUTH_CONFIG?.registrationEndpoint || "",
-    ).trim(),
-    passwordResetRequestEndpoint: String(
-      window.LFA_AUTH_CONFIG?.passwordResetRequestEndpoint || "",
-    ).trim(),
-    passwordResetEndpoint: String(
-      window.LFA_AUTH_CONFIG?.passwordResetEndpoint || "",
-    ).trim(),
-    passwordChangeEndpoint: String(
-      window.LFA_AUTH_CONFIG?.passwordChangeEndpoint || "",
-    ).trim(),
-    enrollmentsEndpoint: String(
-      window.LFA_AUTH_CONFIG?.enrollmentsEndpoint || "",
-    ).trim(),
-    googleWorkspaceAuthStart: String(
-      window.LFA_AUTH_CONFIG?.googleWorkspaceAuthStart || "",
-    ).trim(),
-    workspaceSessionEndpoint: String(
-      window.LFA_AUTH_CONFIG?.workspaceSessionEndpoint || "",
-    ).trim(),
-    workspaceLogoutEndpoint: String(
-      window.LFA_AUTH_CONFIG?.workspaceLogoutEndpoint || "",
-    ).trim(),
-    allowDeviceAccounts:
-      window.LFA_AUTH_CONFIG?.allowDeviceAccounts === true &&
-      ["localhost", "127.0.0.1"].includes(window.location.hostname),
-  };
-  const DRIVE_CONFIG = Object.freeze({
-    sourceName: String(
-      window.LFA_DRIVE_CONFIG?.sourceName || "Lotus Google Drive",
-    ).trim(),
-    sourceConfigured:
-      window.LFA_DRIVE_CONFIG?.sourceConfigured === true,
-    syncEndpoint: String(
-      window.LFA_DRIVE_CONFIG?.syncEndpoint || "",
-    ).trim(),
-  });
-  const SUBMISSION_CONFIG = Object.freeze({
-    submissionsEndpoint: String(
-      window.LFA_SUBMISSION_CONFIG?.submissionsEndpoint ||
-        window.LFA_DRIVE_CONFIG?.submissionsEndpoint ||
-        "",
-    ).trim(),
-    gradingEndpoint: String(
-      window.LFA_SUBMISSION_CONFIG?.gradingEndpoint ||
-        window.LFA_DRIVE_CONFIG?.gradingEndpoint ||
-        "",
-    ).trim(),
-    uploadReady:
-      window.LFA_SUBMISSION_CONFIG?.uploadReady !== false &&
-      window.LFA_DRIVE_CONFIG?.uploadReady !== false,
-  });
-  const PLATFORM_API_CONFIG = Object.freeze({
-    coursesEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.coursesEndpoint || "",
-    ).trim(),
-    studentProgressEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.studentProgressEndpoint || "",
-    ).trim(),
-    studentGradesEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.studentGradesEndpoint || "",
-    ).trim(),
-    notificationsEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.notificationsEndpoint || "",
-    ).trim(),
-    moduleProgressEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.moduleProgressEndpoint || "",
-    ).trim(),
-    activityProgressEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.activityProgressEndpoint || "",
-    ).trim(),
-    teacherCoursesEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.teacherCoursesEndpoint || "",
-    ).trim(),
-    teacherStudentsEndpoint: String(
-      window.LFA_PLATFORM_API_CONFIG?.teacherStudentsEndpoint || "",
-    ).trim(),
-  });
+  function readAuthConfiguration() {
+    return {
+      loginEndpoint: String(
+        window.LFA_AUTH_CONFIG?.loginEndpoint || "",
+      ).trim(),
+      registrationEndpoint: String(
+        window.LFA_AUTH_CONFIG?.registrationEndpoint || "",
+      ).trim(),
+      passwordResetRequestEndpoint: String(
+        window.LFA_AUTH_CONFIG?.passwordResetRequestEndpoint || "",
+      ).trim(),
+      passwordResetEndpoint: String(
+        window.LFA_AUTH_CONFIG?.passwordResetEndpoint || "",
+      ).trim(),
+      passwordChangeEndpoint: String(
+        window.LFA_AUTH_CONFIG?.passwordChangeEndpoint || "",
+      ).trim(),
+      enrollmentsEndpoint: String(
+        window.LFA_AUTH_CONFIG?.enrollmentsEndpoint || "",
+      ).trim(),
+      googleWorkspaceAuthStart: String(
+        window.LFA_AUTH_CONFIG?.googleWorkspaceAuthStart || "",
+      ).trim(),
+      workspaceSessionEndpoint: String(
+        window.LFA_AUTH_CONFIG?.workspaceSessionEndpoint || "",
+      ).trim(),
+      workspaceLogoutEndpoint: String(
+        window.LFA_AUTH_CONFIG?.workspaceLogoutEndpoint || "",
+      ).trim(),
+      allowDeviceAccounts:
+        window.LFA_AUTH_CONFIG?.allowDeviceAccounts === true &&
+        ["localhost", "127.0.0.1"].includes(window.location.hostname),
+    };
+  }
+  let AUTH_CONFIG = readAuthConfiguration();
+  function readDriveConfiguration() {
+    return Object.freeze({
+      sourceName: String(
+        window.LFA_DRIVE_CONFIG?.sourceName || "Lotus Google Drive",
+      ).trim(),
+      sourceConfigured:
+        window.LFA_DRIVE_CONFIG?.sourceConfigured === true,
+      syncEndpoint: String(
+        window.LFA_DRIVE_CONFIG?.syncEndpoint || "",
+      ).trim(),
+    });
+  }
+  let DRIVE_CONFIG = readDriveConfiguration();
+  function readSubmissionConfiguration() {
+    return Object.freeze({
+      submissionsEndpoint: String(
+        window.LFA_SUBMISSION_CONFIG?.submissionsEndpoint ||
+          window.LFA_DRIVE_CONFIG?.submissionsEndpoint ||
+          "",
+      ).trim(),
+      gradingEndpoint: String(
+        window.LFA_SUBMISSION_CONFIG?.gradingEndpoint ||
+          window.LFA_DRIVE_CONFIG?.gradingEndpoint ||
+          "",
+      ).trim(),
+      uploadReady:
+        window.LFA_SUBMISSION_CONFIG?.uploadReady !== false &&
+        window.LFA_DRIVE_CONFIG?.uploadReady !== false,
+    });
+  }
+  let SUBMISSION_CONFIG = readSubmissionConfiguration();
+  function readPlatformConfiguration() {
+    return Object.freeze({
+      coursesEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.coursesEndpoint || "",
+      ).trim(),
+      studentProgressEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.studentProgressEndpoint || "",
+      ).trim(),
+      studentGradesEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.studentGradesEndpoint || "",
+      ).trim(),
+      notificationsEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.notificationsEndpoint || "",
+      ).trim(),
+      moduleProgressEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.moduleProgressEndpoint || "",
+      ).trim(),
+      activityProgressEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.activityProgressEndpoint || "",
+      ).trim(),
+      teacherCoursesEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.teacherCoursesEndpoint || "",
+      ).trim(),
+      teacherStudentsEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.teacherStudentsEndpoint || "",
+      ).trim(),
+    });
+  }
+  let PLATFORM_API_CONFIG = readPlatformConfiguration();
+
+  function refreshServiceConfiguration() {
+    API_STATUS = serviceStatus(window.LFA_API_STATUS);
+    DRIVE_CATALOG_STATUS = serviceStatus(window.LFA_DRIVE_CATALOG_STATUS);
+    AUTH_CONFIG = readAuthConfiguration();
+    DRIVE_CONFIG = readDriveConfiguration();
+    SUBMISSION_CONFIG = readSubmissionConfiguration();
+    PLATFORM_API_CONFIG = readPlatformConfiguration();
+  }
+  let serviceRetryPending = false;
+  let authSubmissionPending = false;
   const WORKSPACE_GMAIL_URL =
     "https://mail.google.com/a/lakeforestacademy.ca";
   const SCHOOL_ACCOUNT = {
@@ -4506,7 +4525,7 @@
     return workspaceCallbackFeedback;
   }
 
-  async function restoreWorkspaceSession() {
+  async function restoreWorkspaceSession({ canApply = () => true } = {}) {
     if (sessionStorage.getItem(WORKSPACE_LOGOUT_SUPPRESS_KEY) === "1") {
       remoteSessionValidated = true;
       sessionStorage.removeItem(SESSION_KEY);
@@ -4523,6 +4542,10 @@
         timeout: 5000,
         skipSessionExpiry: true,
       });
+      if (!canApply()) {
+        remoteSessionValidated = true;
+        return false;
+      }
       const account = authenticatedUserFrom(session);
       if (!account) {
         remoteSessionValidated = true;
@@ -4554,6 +4577,7 @@
       return true;
     } catch {
       remoteSessionValidated = true;
+      if (!canApply()) return false;
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(CSRF_TOKEN_KEY);
       return false;
@@ -7111,10 +7135,83 @@
           <div class="login-panel-inner">
             <img class="login-mobile-logo" src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
             ${content}
+            ${connectionRecoveryView()}
           </div>
         </section>
       </main>
     `;
+  }
+
+  function connectionRecoveryView() {
+    if (
+      typeof window.LFA_RECHECK_SERVICES !== "function" ||
+      !["ready", "unavailable"].includes(API_STATUS.state)
+    ) return "";
+    return `<div class="connection-recovery">
+      <p class="auth-setup-note" data-connection-feedback role="status" aria-live="polite">${serviceRetryPending ? "Checking the connection…" : "Having trouble connecting? Check the connection without leaving this page."}</p>
+      <button type="button" class="button button-secondary full-width" data-action="retry-services" ${serviceRetryPending ? 'disabled aria-busy="true"' : ""}>${serviceRetryPending ? "Checking Connection…" : "Check Connection Again"}</button>
+    </div>`;
+  }
+
+  async function retrySchoolServices(target) {
+    if (serviceRetryPending || authSubmissionPending || typeof window.LFA_RECHECK_SERVICES !== "function") return;
+    serviceRetryPending = true;
+    const route = window.location.hash;
+    const generation = platformSessionGeneration;
+    const unchanged = () => window.location.hash === route &&
+      platformSessionGeneration === generation;
+    const originalLabel = target.textContent;
+    target.disabled = true;
+    target.setAttribute("aria-busy", "true");
+    target.textContent = "Checking Connection…";
+    const feedback = () => document.querySelector("[data-connection-feedback]");
+    if (feedback()) feedback().textContent = "Checking secure services. Your form has not been submitted.";
+    let restored = false;
+    try {
+      await window.LFA_RECHECK_SERVICES();
+      refreshServiceConfiguration();
+      if (!unchanged() || isSignedIn()) return;
+      if (AUTH_CONFIG.workspaceSessionEndpoint) {
+        remoteSessionValidated = false;
+        restored = await restoreWorkspaceSession({ canApply: unchanged });
+      }
+      if (window.location.hash !== route || (!restored && !unchanged())) return;
+      // Keep values in the current DOM only. Do not persist passwords, replay
+      // a form submission, or discard edits made while the check was running.
+      const fields = [...(document.querySelectorAll?.(".login-panel input, .login-panel select, .login-panel textarea") || [])]
+        .filter((field) => field.id && field.type !== "file")
+        .map((field) => ({ id: field.id, value: field.value, checked: field.checked }));
+      serviceRetryPending = false;
+      render(false, true);
+      if (!restored) {
+        for (const field of fields) {
+          const input = document.getElementById?.(field.id);
+          if (input) { input.value = field.value; input.checked = field.checked; }
+        }
+        updatePasswordRules();
+        if (feedback()) feedback().textContent = API_STATUS.state === "ready"
+          ? "Connection checked. Available sign-in options are shown above."
+          : "Still unable to connect. Check your internet connection and try again in a moment.";
+        document.querySelector('[data-action="retry-services"]')?.focus();
+      }
+    } catch {
+      if (unchanged() && feedback()) feedback().textContent = "The connection check could not finish. Please try again.";
+    } finally {
+      serviceRetryPending = false;
+      target.disabled = false;
+      target.setAttribute("aria-busy", "false");
+      target.textContent = originalLabel;
+      // A route switch during the check may have rendered a different button.
+      const currentButton = document.querySelector('[data-action="retry-services"]');
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.setAttribute("aria-busy", "false");
+        currentButton.textContent = "Check Connection Again";
+      }
+      if (remoteSessionValidated && document.querySelector("[data-session-check]")) {
+        render(false, true);
+      }
+    }
   }
 
   function sessionCheckView() {
@@ -7123,7 +7220,7 @@
       `
         <p class="eyebrow">Secure Access</p>
         <h1>Checking Your Session</h1>
-        <p class="login-intro" role="status">Confirming whether you are already signed in to Lake Forest Learning&hellip;</p>
+        <p class="login-intro" data-session-check role="status">Confirming whether you are already signed in to Lake Forest Learning&hellip;</p>
       `,
     );
   }
@@ -7208,7 +7305,7 @@
                 ${
                   workspaceReady
                     ? "Google Workspace sign-in is available."
-                    : "Workspace authorization will activate after the school OAuth client and secure callback are connected."
+                    : "Google Workspace sign-in is unavailable right now. Check the connection below, or use your assigned faculty credentials."
                 }
               </p>
               <p class="login-help"><strong>Private Session</strong>Signing out of Lake Forest Learning does not sign you out of Google in this browser.</p>
@@ -9580,7 +9677,7 @@
     }
   }
 
-  document.addEventListener("submit", async (event) => {
+  async function handleFormSubmit(event) {
     if (event.target.id === "submission-message-form") {
       event.preventDefault();
       const form = event.target;
@@ -10748,6 +10845,20 @@
         { tone: fileStorageWarning ? "error" : "success" },
       );
     }
+  }
+
+  document.addEventListener("submit", async (event) => {
+    const authForm = Boolean(event.target.closest?.(".login-panel"));
+    if (authForm && (serviceRetryPending || authSubmissionPending)) {
+      event.preventDefault();
+      return;
+    }
+    if (authForm) authSubmissionPending = true;
+    try {
+      await handleFormSubmit(event);
+    } finally {
+      if (authForm) authSubmissionPending = false;
+    }
   });
 
   document.addEventListener("input", (event) => {
@@ -10768,6 +10879,10 @@
       }
     }
     if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
+    updatePasswordRules();
+  });
+
+  function updatePasswordRules() {
     const password = document.querySelector("#newPassword")?.value || "";
     const email =
       document.querySelector("#registerEmail")?.value ||
@@ -10783,7 +10898,7 @@
         `${rule.label}: ${password && rule.met ? "met" : "not yet met"}`,
       );
     });
-  });
+  }
 
   document.addEventListener("change", (event) => {
     const assignmentForm = event.target.closest?.("#assignment-form");
@@ -11140,11 +11255,14 @@
       }
       setFormAlert(form);
       input?.focus();
+    } else if (action === "retry-services") {
+      await retrySchoolServices(target);
     } else if (action === "google-workspace-signin") {
+      if (serviceRetryPending) return;
       const authorizationUrl = googleWorkspaceAuthUrl();
       if (!authorizationUrl) {
         showToast(
-          "Google Workspace needs the school OAuth client and backend callback endpoint before authorization can begin.",
+          "Google Workspace sign-in is unavailable. Check the connection or use your assigned faculty credentials.",
         );
         document.querySelector(".auth-setup-note")?.setAttribute("role", "alert");
         return;

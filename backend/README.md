@@ -46,6 +46,31 @@ idempotently creates the matching actorless system target before uploads begin.
 The identifier is not placed in student-facing configuration; the existing
 administrator-only target API retains its management response contract.
 
+## Read-only faculty preflight
+
+Before provisioning or testing Workspace login, check the existing application
+account using a securely injected `DATABASE_URL` (runtime SELECT access is
+sufficient). Optional database-only settings are `DATABASE_SSL` and
+`INSTANCE_UNIX_SOCKET`; no Google secret, CSRF secret or account password is
+needed. Run from `backend`, listing only the intended course scope explicitly:
+
+```powershell
+pnpm check-faculty -- --email james@lakeforestacademy.ca --courses SCH4U,ICS4U
+```
+
+The two courses above are an example, not an assertion of James's approved
+assignments. The check never creates an account, changes grants, binds an
+identity or signs in. It uses a read-only transaction with a five-second
+statement timeout. JSON reports active faculty eligibility, requested/missing
+courses and any broader access. `teacher` requires assignment rows;
+`teacher_admin` has access to all active courses without those rows. An absent
+Workspace identity binding is normal before first login; a present binding
+does not verify the current Google account. `googleSignInVerified` remains
+false: separately check `/health/workspace-auth-ready` and complete a real
+faculty Workspace sign-in. Exit codes: `0` requested application access ready,
+`1` account/course prerequisites incomplete, `2` invalid input or unavailable
+check. Output omits password hashes, Google subjects and connection secrets.
+
 ## Browser configuration
 
 Configure the frontend with these HTTPS URLs:

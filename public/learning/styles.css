@@ -429,6 +429,18 @@ textarea:focus-visible {
   margin-top: 2px;
 }
 
+.connection-recovery {
+  border-top: 1px solid #d7dfdb;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+
+.connection-recovery .auth-setup-note {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin: 0 0 0.75rem;
+}
+
 .auth-form-links a {
   min-height: 40px;
   display: inline-flex;

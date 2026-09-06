@@ -17,6 +17,17 @@ before enabling login, registration and database-backed course services. It
 checks `/health/upload-ready` separately before enabling Drive uploads, so a
 scanner or Drive outage does not unnecessarily disable sign-in.
 
+Failed readiness probes retry once after a short pause; successful dependencies
+are not probed twice. The sign-in and recovery screens also provide **Check
+Connection Again** without reloading or submitting the form. A manual check
+refreshes all endpoint snapshots and revalidates the cookie session, retaining
+current form values only in memory. Checks and authentication submissions do not
+overlap. Runtime-config reads are time-bounded and retain the last successfully
+loaded file on a transient outage; an explicit empty or invalid origin still
+disables access. These checks never bypass Google verification or application
+role permissions. See the backend's read-only faculty preflight for account and
+course-access diagnostics.
+
 After the API is healthy, set `LFA_API_ORIGIN` to the HTTPS API origin (for
 example `https://api.lakeforestacademy.ca`) and run the Pages workflow. Optional
 repository variables are `LFA_API_HEALTH_PATH`,
