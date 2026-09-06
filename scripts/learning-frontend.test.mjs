@@ -96,6 +96,10 @@ async function bootstrapConfiguration({
   accountSecurityReady = true,
   workspaceAuthReady = true,
   workspaceAuthStart = "",
+  runtimeOverrides = {},
+  healthFetch,
+  runtimeResponses = [{}],
+  injectedConfig = true,
 } = {}) {
   const requestedUrls = [];
   const loadedScripts = [];
@@ -112,14 +116,17 @@ async function bootstrapConfiguration({
       healthTimeoutMs: 1000,
       googleWorkspaceAuthStart: workspaceAuthStart,
       driveSyncPath: "/v1/admin/drive/sources/source-1/sync",
+      ...runtimeOverrides,
     },
     setTimeout: (...args) => {
+      if (args[1] === 750) { queueMicrotask(args[0]); return null; }
       const timer = setTimeout(...args);
       timer.unref?.();
       return timer;
     },
     clearTimeout,
   };
+  if (!injectedConfig) delete window.LFA_RUNTIME_CONFIG;
   const document = {
     querySelector: () => null,
     createElement: () => ({}),
@@ -134,30 +141,39 @@ async function bootstrapConfiguration({
     ok: ready,
     json: async () => ({ status: ready ? "ready" : "unavailable" }),
   });
+  const readiness = { coreReady, uploadReady, driveCatalogReady, passwordResetReady, accountSecurityReady, workspaceAuthReady };
+  const nextReadiness = (key) => {
+    const value = readiness[key];
+    return readinessResponse(Array.isArray(value)
+      ? (value.length > 1 ? value.shift() : value[0]) : value);
+  };
   const fetch = async (request) => {
     const value = String(request);
     requestedUrls.push(value);
     if (value.startsWith("./runtime-config.json")) {
-      return { ok: true, json: async () => ({}) };
+      const payload = runtimeResponses.length > 1 ? runtimeResponses.shift() : runtimeResponses[0];
+      if (payload instanceof Error) throw payload;
+      return { ok: payload !== null, json: async () => payload };
     }
     const url = new URL(value);
+    if (healthFetch) return healthFetch(url, request);
     if (url.pathname === "/health/ready") {
-      return readinessResponse(coreReady);
+      return nextReadiness("coreReady");
     }
     if (url.pathname === "/health/upload-ready") {
-      return readinessResponse(uploadReady);
+      return nextReadiness("uploadReady");
     }
     if (url.pathname === "/health/drive-catalog-ready") {
-      return readinessResponse(driveCatalogReady);
+      return nextReadiness("driveCatalogReady");
     }
     if (url.pathname === "/health/password-reset-ready") {
-      return readinessResponse(passwordResetReady);
+      return nextReadiness("passwordResetReady");
     }
     if (url.pathname === "/health/account-security-ready") {
-      return readinessResponse(accountSecurityReady);
+      return nextReadiness("accountSecurityReady");
     }
     if (url.pathname === "/health/workspace-auth-ready") {
-      return readinessResponse(workspaceAuthReady);
+      return nextReadiness("workspaceAuthReady");
     }
     throw new Error(`Unexpected bootstrap request: ${value}`);
   };
@@ -182,8 +198,230 @@ async function bootstrapConfiguration({
     await new Promise((resolve) => setImmediate(resolve));
   }
 
-  return { window, requestedUrls, loadedScripts };
+  return { window, requestedUrls, loadedScripts, readiness };
 }
+
+test("transient core and optional health failures recover with one bounded retry", async () => {
+  const { window, requestedUrls } = await bootstrapConfiguration({
+    coreReady: [false, true], workspaceAuthReady: [false, true],
+    workspaceAuthStart: "/v1/auth/google-workspace/start",
+  });
+  assert.equal(window.LFA_API_STATUS.state, "ready");
+  assert.notEqual(window.LFA_AUTH_CONFIG.googleWorkspaceAuthStart, "");
+  assert.equal(requestedUrls.filter((url) => url.endsWith("/health/ready")).length, 2);
+  assert.equal(requestedUrls.filter((url) => url.endsWith("/health/workspace-auth-ready")).length, 2);
+  assert.equal(requestedUrls.filter((url) => url.endsWith("/health/upload-ready")).length, 1);
+});
+
+test("persistent failure stops after two probes and manual retries are single-flight", async () => {
+  const harness = await bootstrapConfiguration({ coreReady: false });
+  assert.equal(harness.requestedUrls.filter((url) => url.endsWith("/health/ready")).length, 2);
+  assert.equal(harness.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  harness.readiness.coreReady = true;
+  const first = harness.window.LFA_RECHECK_SERVICES();
+  const second = harness.window.LFA_RECHECK_SERVICES();
+  assert.equal(first, second);
+  await first;
+  assert.equal(harness.window.LFA_API_STATUS.state, "ready");
+  assert.notEqual(harness.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  assert.equal(harness.loadedScripts.length, 3);
+  assert.equal(harness.requestedUrls.filter((url) => url.endsWith("/health/ready")).length, 3);
+});
+
+test("invalid or absent API origins never trigger health requests or open login", async () => {
+  for (const apiOrigin of ["", "http://untrusted.example", "https://user:secret@api.example.test", "not a URL"]) {
+    const result = await bootstrapConfiguration({ runtimeOverrides: { apiOrigin } });
+    await result.window.LFA_RECHECK_SERVICES();
+    assert.equal(result.requestedUrls.some((url) => url.includes("/health/")), false);
+    assert.equal(result.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  }
+});
+
+test("a transient runtime-file outage preserves last verified config but explicit empty config disables it", async () => {
+  const result = await bootstrapConfiguration({
+    injectedConfig: false,
+    runtimeResponses: [{ apiOrigin: "https://api.example.test" }, null, new Error("offline"), {}],
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await result.window.LFA_RECHECK_SERVICES();
+    assert.equal(result.window.LFA_API_STATUS.state, "ready");
+    assert.notEqual(result.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+  }
+  await result.window.LFA_RECHECK_SERVICES();
+  assert.equal(result.window.LFA_API_STATUS.state, "disabled");
+  assert.equal(result.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+});
+
+test("network exceptions and malformed health payloads remain fail-closed after retry", async () => {
+  for (const response of [() => { throw new Error("network"); }, () => ({ ok: true, json: async () => ({ status: "ok" }) })]) {
+    const result = await bootstrapConfiguration({ healthFetch: response });
+    assert.equal(result.window.LFA_API_STATUS.state, "unavailable");
+    assert.equal(result.window.LFA_AUTH_CONFIG.loginEndpoint, "");
+    assert.equal(result.requestedUrls.filter((url) => url.includes("/health/")).length, 12);
+  }
+});
+
+test("manual recovery refreshes sign-in controls and preserves current form values without submission", async () => {
+  let release;
+  let attempts = 0;
+  let requestCount = 0;
+  const password = { id: "password", type: "password", value: "in-memory-only", checked: false };
+  const email = { id: "email", type: "email", value: "student@example.test", checked: false };
+  const recreated = { password: {}, email: {} };
+  const notice = { textContent: "" };
+  const result = await renderPortal("#/signin/student", null, {
+    querySelector: (selector) => selector === "[data-connection-feedback]" ? notice : null,
+    querySelectorAll: () => [password, email],
+    getElementById: (id) => recreated[id],
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "unavailable" };
+      window.LFA_RECHECK_SERVICES = async () => {
+        attempts += 1;
+        await new Promise((resolve) => { release = resolve; });
+        window.LFA_API_STATUS = { state: "ready" };
+        window.LFA_AUTH_CONFIG = {
+          loginEndpoint: "https://api.example.test/v1/auth/login",
+          workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+        };
+      };
+    },
+    fetch: async (request, init = {}) => {
+      requestCount += 1;
+      assert.equal(String(request), "https://api.example.test/v1/auth/session");
+      assert.equal(init.method || "GET", "GET");
+      assert.equal(init.body, undefined);
+      return jsonResponse({ authenticated: false });
+    },
+    interact: async ({ listeners }) => {
+      const click = listeners.get("click")[0];
+      const pending = click({ target: actionTarget("retry-services") });
+      await click({ target: actionTarget("retry-services") });
+      password.value = "edited-during-check";
+      release();
+      await pending;
+    },
+    returnHarness: true,
+  });
+  assert.equal(attempts, 1);
+  assert.equal(requestCount, 1);
+  assert.equal(recreated.password.value, "edited-during-check");
+  assert.equal(recreated.email.value, "student@example.test");
+  assert.doesNotMatch(result.html, /login-submit[^>]*disabled/);
+  assert.match(notice.textContent, /Connection checked/);
+  for (const storage of [result.sessionStorage, result.localStorage]) {
+    for (const key of ["lake-forest-learning-session-v1", "lake-forest-learning-accounts-v1", "lake-forest-learning-registration-v1"]) {
+      assert.doesNotMatch(storage.getItem(key) || "", /edited-during-check|in-memory-only/);
+    }
+  }
+});
+
+test("manual recovery revalidates the cookie before opening the teacher workspace", async () => {
+  const requests = [];
+  const result = await renderPortal("#/signin/faculty", null, {
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "unavailable" };
+      window.LFA_RECHECK_SERVICES = async () => {
+        window.LFA_API_STATUS = { state: "ready" };
+        window.LFA_AUTH_CONFIG = {
+          loginEndpoint: "https://api.example.test/v1/auth/login",
+          workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+        };
+      };
+    },
+    fetch: async (request) => {
+      requests.push(String(request));
+      return jsonResponse({ authenticated: true, csrfToken: "recovered-csrf", user: {
+        id: "teacher-test", role: "teacher", email: "faculty@example.test", displayName: "Avery Stone",
+      } });
+    },
+    interact: async ({ listeners }) => {
+      await listeners.get("click")[0]({ target: actionTarget("retry-services") });
+    },
+    returnHarness: true,
+  });
+  assert.deepEqual(requests, ["https://api.example.test/v1/auth/session"]);
+  assert.equal(result.sessionStorage.getItem("lake-forest-learning-csrf-v1"), "recovered-csrf");
+  assert.match(result.html, /Avery Stone/);
+});
+
+test("manual recovery never replaces a new route with the old sign-in screen", async () => {
+  let release;
+  const result = await renderPortal("#/signin/faculty", null, {
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "unavailable" };
+      window.LFA_RECHECK_SERVICES = () => new Promise((resolve) => { release = resolve; });
+    },
+    interact: async ({ listeners, window, appRoot }) => {
+      const check = listeners.get("click")[0]({ target: actionTarget("retry-services") });
+      window.location.hash = "#/register";
+      appRoot.innerHTML = "new registration form with unsaved work";
+      release();
+      await check;
+    },
+  });
+  assert.equal(result, "new registration form with unsaved work");
+});
+
+test("switching routes during recovered session validation does not strand the session placeholder", async () => {
+  let root;
+  let release;
+  const result = await renderPortal("#/signin/faculty", null, {
+    querySelector: (selector) => selector === "[data-session-check]" && root?.innerHTML.includes("data-session-check") ? {} : null,
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "unavailable" };
+      window.LFA_RECHECK_SERVICES = async () => {
+        window.LFA_API_STATUS = { state: "ready" };
+        window.LFA_AUTH_CONFIG = { workspaceSessionEndpoint: "https://api.example.test/v1/auth/session" };
+      };
+    },
+    fetch: async () => new Promise((resolve) => { release = resolve; }),
+    interact: async ({ listeners, window, appRoot }) => {
+      root = appRoot;
+      const check = listeners.get("click")[0]({ target: actionTarget("retry-services") });
+      await new Promise((resolve) => setImmediate(resolve));
+      window.location.hash = "#/register";
+      listeners.get("window:hashchange")[0]();
+      assert.match(appRoot.innerHTML, /Checking Your Session/);
+      release(jsonResponse({ authenticated: false }));
+      await check;
+    },
+  });
+  assert.doesNotMatch(result, /Checking Your Session/);
+  assert.match(result, /Create Your Account/);
+});
+
+test("an in-flight sign-in cannot overlap a manual health recovery", async () => {
+  let release;
+  let retries = 0;
+  const result = await renderPortal("#/signin/student", null, {
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "ready" };
+      window.LFA_AUTH_CONFIG = {
+        loginEndpoint: "https://api.example.test/v1/auth/login",
+        workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+      };
+      window.LFA_RECHECK_SERVICES = async () => { retries += 1; };
+    },
+    FormData: class {
+      get(key) { return { email: "student@example.test", password: "only-a-test-value", portal: "student" }[key]; }
+    },
+    fetch: async (request) => String(request).endsWith("/session")
+      ? jsonResponse({ authenticated: false })
+      : new Promise((resolve) => { release = resolve; }),
+    interact: async ({ listeners }) => {
+      const form = { id: "login-form", closest: () => ({}), querySelector: () => null };
+      const signingIn = listeners.get("submit")[0]({ target: form, preventDefault() {} });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(typeof release, "function");
+      await listeners.get("click")[0]({ target: actionTarget("retry-services") });
+      assert.equal(retries, 0);
+      release(jsonResponse({ error: { message: "Test rejection" } }, 401));
+      await signingIn;
+    },
+  });
+  assert.match(result, /Student Sign In/);
+  assert.equal(retries, 0);
+});
 
 test("core readiness opens sign-in while a failed upload check stays isolated", async () => {
   const { window, requestedUrls, loadedScripts } =
@@ -250,9 +488,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=workspace-auth-v1",
-    "./platform-sequences.js?v=workspace-auth-v1",
-    "./app.js?v=workspace-auth-v1",
+    "./course-catalog.js?v=login-recovery-v2",
+    "./platform-sequences.js?v=login-recovery-v2",
+    "./app.js?v=login-recovery-v2",
   ]);
 });
 
@@ -403,6 +641,8 @@ async function renderPortal(hash, session, options = {}) {
       selector === "#app"
         ? appRoot
         : options.querySelector?.(selector) || null,
+    querySelectorAll: (selector) => options.querySelectorAll?.(selector) || [],
+    getElementById: (id) => options.getElementById?.(id) || null,
     addEventListener(type, listener) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(listener);
@@ -447,7 +687,10 @@ async function renderPortal(hash, session, options = {}) {
     setTimeout: windowSetTimeout,
     clearTimeout,
     scrollTo() {},
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(`window:${type}`)) listeners.set(`window:${type}`, []);
+      listeners.get(`window:${type}`).push(listener);
+    },
   };
   const context = vm.createContext({
     window,
@@ -1161,7 +1404,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "workspace-auth-v1";/,
+    /const SCRIPT_VERSION = "login-recovery-v2";/,
   );
 });
 

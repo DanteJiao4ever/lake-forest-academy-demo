@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { createPool, PostgresRepository } from "../src/db/postgres.js";
+import { checkFacultyPreflight } from "../src/services/faculty-preflight.js";
 
 const runtimeDatabaseUrl = process.env.RUNTIME_DATABASE_URL || "";
 
@@ -238,6 +239,19 @@ test(
         role: "teacher",
       });
       const oauthTransactionId = randomUUID();
+      const unboundFacultyPreflight = await checkFacultyPreflight(pool, {
+        email: grader.email.toUpperCase(), courses: ["ICS4U"],
+      });
+      assert.equal(unboundFacultyPreflight.appAccountEligible, true);
+      assert.equal(unboundFacultyPreflight.appPreflightReady, false);
+      assert.equal(unboundFacultyPreflight.workspaceIdentityBinding, "absent");
+      assert.deepEqual(unboundFacultyPreflight.courseAccess.missingCourseCodes, ["ICS4U"]);
+      assert.equal(unboundFacultyPreflight.googleSignInVerified, false);
+      const studentPreflight = await checkFacultyPreflight(pool, {
+        email: user.email, courses: ["ICS4U"],
+      });
+      assert.equal(studentPreflight.appAccountEligible, false);
+      assert.equal(studentPreflight.courseAccess.ready, false);
       const oauthStateHash = createHash("sha256")
         .update(`state:${suffix}`)
         .digest("hex");
@@ -305,6 +319,22 @@ test(
         last_verified_email: grader.email,
         hosted_domain_at_binding: "lakeforestacademy.ca",
       });
+      const bindingMetadataBefore = await pool.query(
+        "SELECT last_verified_email, last_authenticated_at FROM workspace_identities WHERE user_id = $1",
+        [grader.id],
+      );
+      const boundFacultyPreflight = await checkFacultyPreflight(pool, {
+        email: grader.email, courses: ["ICS4U"],
+      });
+      assert.equal(boundFacultyPreflight.workspaceIdentityBinding, "present");
+      assert.equal(boundFacultyPreflight.googleSignInVerified, false);
+      assert.equal(Object.hasOwn(boundFacultyPreflight.account, "passwordHash"), false);
+      assert.ok(!JSON.stringify(boundFacultyPreflight).includes(workspaceIdentity.subject));
+      const bindingMetadataAfter = await pool.query(
+        "SELECT last_verified_email, last_authenticated_at FROM workspace_identities WHERE user_id = $1",
+        [grader.id],
+      );
+      assert.deepEqual(bindingMetadataAfter.rows, bindingMetadataBefore.rows);
       const draftGrade = await repository.createGrade({
         submissionId,
         score: 82,
