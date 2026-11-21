@@ -1235,6 +1235,7 @@ export class FakeRepository {
       submissionId: input.submissionId,
       score: input.score,
       feedback: input.feedback,
+      rubric: input.rubric ?? null,
       gradedBy: input.grader.publicId,
       gradedByDisplayName: input.grader.displayName,
       gradedAt: now,
