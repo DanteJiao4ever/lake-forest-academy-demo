@@ -14,7 +14,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "login-recovery-v2";
+  const SCRIPT_VERSION = "course-workspace-v4";
   let pendingServiceCheck = null;
   let lastFileConfig = {};
 
@@ -146,6 +146,7 @@
     });
     window.LFA_PLATFORM_API_CONFIG = Object.freeze({
       coursesEndpoint: ready ? apiUrl(origin, "/v1/courses") : "",
+      announcementsEndpoint: ready ? apiUrl(origin, "/v1/announcements") : "",
       studentProgressEndpoint: ready ? apiUrl(origin, "/v1/me/progress") : "",
       studentGradesEndpoint: ready ? apiUrl(origin, "/v1/me/grades") : "",
       notificationsEndpoint: ready
