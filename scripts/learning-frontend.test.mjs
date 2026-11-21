@@ -488,9 +488,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=login-recovery-v2",
-    "./platform-sequences.js?v=login-recovery-v2",
-    "./app.js?v=login-recovery-v2",
+    "./course-catalog.js?v=course-workspace-v4",
+    "./platform-sequences.js?v=course-workspace-v4",
+    "./app.js?v=course-workspace-v4",
   ]);
 });
 
@@ -1396,6 +1396,50 @@ function actionTarget(action, dataset = {}) {
   };
 }
 
+test("faculty can publish a single announcement to selected courses and a student sees the reading view", async () => {
+  const publicationId = "52bb4212-d09c-48fc-aa6a-7941b63bb314";
+  const text = "Lab <schedule>";
+  const message = "Bring your workbook.";
+  const targetCourses = ["ICS4U", "MHF4U"];
+  const publications = [];
+  const options = {
+    platformApiConfig: { announcementsEndpoint: "https://api.example.test/v1/announcements" },
+    beforeApp(window) { window.crypto = { randomUUID: () => publicationId }; },
+    FormData: class {
+      constructor(form) { this.values = form.formValues; }
+      get(key) { return this.values[key]; }
+      getAll(key) { return this.values[key]; }
+    },
+    async fetch(request, settings) {
+      assert.equal(new URL(request).pathname, "/v1/announcements");
+      if (settings.method === "POST") {
+        publications.push(JSON.parse(settings.body));
+        return jsonResponse({ id: publicationId }, 201);
+      }
+      const data = publications.map((item) => ({
+        ...item, id: publicationId, authorName: "Teacher", publishedAt: "2026-08-01T14:00:00Z",
+      }));
+      return jsonResponse({ data, courseCodes: targetCourses });
+    },
+  };
+  const form = interactiveForm("announcement-form", {}, { title: text, body: message, courseCode: targetCourses });
+  form.querySelectorAll = () => Object.values(form.elements);
+  const faculty = await renderPortal("#/teacher/announcements", { role: "teacher", email: "faculty@example.test" }, {
+    ...options, interact: async ({ listeners, appRoot }) => {
+      assert.match(appRoot.innerHTML, /id="announcement-form"/);
+      assert.match(appRoot.innerHTML, /name="courseCode" value="MHF4U"/);
+      assert.doesNotMatch(appRoot.innerHTML, /name="courseCode" value="SPH4U"/);
+      await listeners.get("submit")[0]({ target: form, preventDefault() {} });
+    },
+  });
+  assert.deepEqual(publications, [{ publicationId, courseCodes: targetCourses, title: text, body: message }]);
+  assert.match(faculty, /Lab &lt;schedule&gt;/);
+  const student = await renderPortal("#/announcements", { role: "student", email: "student@example.test" }, options);
+  assert.match(student, /Lab &lt;schedule&gt;/);
+  assert.match(student, /Bring your workbook/);
+  assert.doesNotMatch(student, /id="announcement-form"/);
+});
+
 test("bootstrap loads the permanent course metadata and platform sequence before the app", async () => {
   const bootstrap = await source("public/learning/bootstrap.js");
   const catalog = bootstrap.indexOf('loadScript("course-catalog.js")');
@@ -1404,7 +1448,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "login-recovery-v2";/,
+    /const SCRIPT_VERSION = "course-workspace-v4";/,
   );
 });
 
@@ -1562,7 +1606,7 @@ test("student and faculty module routes render the merged course sequence", asyn
     email: "student@lakeforestacademy.ca",
     role: "student",
   });
-  assert.match(calendar, /Offering schedule/);
+  assert.match(calendar, /No dates are posted for the next seven days/);
   assert.doesNotMatch(calendar, /Invalid Date/);
 });
 
@@ -1628,14 +1672,40 @@ test("locked module lessons and assignments cannot be opened through deep links 
     },
   });
   assert.ok(progressRequests > 0);
-  assert.match(
-    calendar,
-    /<article class="deadline-row is-locked" aria-disabled="true">[\s\S]*?Safer Organic Product Reformulation Dossier[\s\S]*?Locked/,
-  );
+  assert.doesNotMatch(calendar, /Safer Organic Product Reformulation Dossier/);
   assert.doesNotMatch(
     calendar,
     /href="#\/assignment\/sch4u-m02-assignment"/,
   );
+});
+
+test("calendar filters published assignments by course and groups UTC due dates by Toronto day", async () => {
+  const session = { email: "student@lakeforestacademy.ca", role: "student" };
+  const options = {
+    platformApiConfig: studentPlatformApiConfig,
+    localStorageSeed: studentStateStorage(session.email, { enrolledCourseIds: ["sch4u", "ics4u"] }),
+    settleTurns: 14,
+    fetch: async (request) => {
+      const url = new URL(String(request));
+      if (url.pathname === "/v1/me/progress" && url.searchParams.get("courseCode") === "SCH4U") {
+        return jsonResponse({ data: [{ moduleKey: "SCH4U-M02", moduleNumber: 2, status: "available" }] });
+      }
+      if (url.pathname === "/v1/courses/SCH4U/assignments") {
+        return jsonResponse({ data: [{
+          id: "sch4u-m02-assignment", moduleNumber: 2, unitNumber: 1,
+          dueAt: "2099-08-02T01:00:00Z", status: "open",
+        }] });
+      }
+      return jsonResponse({ data: [] });
+    },
+  };
+  const chemistry = await renderPortal("#/calendar/sch4u", session, options);
+  assert.match(chemistry, /href="#\/calendar\/sch4u" aria-current="page"/);
+  assert.match(chemistry, /Later Dates[\s\S]*href="#\/assignment\/sch4u-m02-assignment"[\s\S]*datetime="2099-08-01"/);
+
+  const computing = await renderPortal("#/calendar/ics4u", session, options);
+  assert.match(computing, /href="#\/calendar\/ics4u" aria-current="page"/);
+  assert.doesNotMatch(computing, /href="#\/assignment\/sch4u-m02-assignment"/);
 });
 
 test("starting a course records Orientation in progress and keeps the next module locked", async () => {
@@ -3001,7 +3071,7 @@ test("platform contracts include published grades, remote unit numbers and direc
   );
 });
 
-test("submission grading drafts sync centrally and remain unpublished", async () => {
+async function checkCentralDraft(rubric) {
   const submissionId = "11111111-1111-4111-8111-111111111111";
   const submittedAt = "2026-08-01T14:00:00.000Z";
   const gradedAt = "2026-08-02T03:30:00.000Z";
@@ -3053,6 +3123,7 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
         data: {
           submissionId,
           score: 81,
+          rubric,
           feedback: "Updated central draft feedback.",
           gradedAt: "2026-08-02T04:00:00.000Z",
           publishedAt: null,
@@ -3084,7 +3155,7 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
         const click = listeners.get("click")?.[0];
         assert.equal(typeof click, "function");
         const score = {
-          value: "81",
+          value: rubric ? "" : "81",
           removeAttribute() {},
           setAttribute() {},
         };
@@ -3107,6 +3178,15 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
             submission: submissionId,
           },
           elements: { feedback, score },
+          querySelectorAll(selector) {
+            assert.equal(selector, ".rubric-row");
+            return (rubric || []).map((row) => ({
+              querySelector(field) {
+                const key = field.slice("[data-rubric-".length, -1);
+                return { value: String(row[key]) };
+              },
+            }));
+          },
           querySelector(selector) {
             if (selector === "#grading-form-alert") return alert;
             if (selector === ".grading-status") return status;
@@ -3141,6 +3221,7 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
   assert.deepEqual(JSON.parse(gradeRequest.init.body), {
     submissionId,
     score: 81,
+    ...(rubric ? { rubric } : {}),
     feedback: "Updated central draft feedback.",
     publish: false,
   });
@@ -3155,7 +3236,16 @@ test("submission grading drafts sync centrally and remain unpublished", async ()
   assert.match(result.html, /value="81"/);
   assert.match(result.html, />Updated central draft feedback\.<\/textarea>/);
   assert.doesNotMatch(result.html, /Returned at 81%/);
-});
+}
+
+test("submission grading drafts sync centrally and remain unpublished", () => checkCentralDraft(null));
+
+test("rubric drafts submit the calculated percentage and preserve earned and possible points", () =>
+  checkCentralDraft([
+    { label: "Reasoning", points: 10, maximum: 12 },
+    { label: "Evidence", points: 7, maximum: 9 },
+  ]),
+);
 
 test("published grades and revision requests use distinct workflow language", async () => {
   const submissionId = "22222222-2222-4222-8222-222222222222";
@@ -3178,6 +3268,7 @@ test("published grades and revision requests use distinct workflow language", as
     grade: {
       score: 100,
       feedback: "Excellent evidence and clear reasoning.",
+      rubric: [{ label: "Reasoning & evidence", points: 7, maximum: 7 }],
       gradedBy: "teacher-daniel",
       gradedByDisplayName: "Daniel Brooks",
       gradedAt: publishedAt,
@@ -3213,6 +3304,7 @@ test("published grades and revision requests use distinct workflow language", as
   );
   assert.match(teacher, /Grade Published/);
   assert.match(teacher, /Published at 100%/);
+  assert.match(teacher, /Use assignment rubric/);
   assert.doesNotMatch(teacher, /Returned to Student|Returned at 100%/);
 
   const student = await renderPortal(
@@ -3227,6 +3319,7 @@ test("published grades and revision requests use distinct workflow language", as
   );
   assert.match(student, /Daniel Brooks/);
   assert.match(student, /100% · Published/);
+  assert.match(student, /<dt>Reasoning &amp; evidence<\/dt><dd>7 \/ 7<\/dd>/);
   assert.doesNotMatch(student, /100% · Returned/);
 
   const revisionFetch = async (request) => {

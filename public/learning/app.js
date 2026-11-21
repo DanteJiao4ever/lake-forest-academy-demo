@@ -139,6 +139,9 @@
   let SUBMISSION_CONFIG = readSubmissionConfiguration();
   function readPlatformConfiguration() {
     return Object.freeze({
+      announcementsEndpoint: String(
+        window.LFA_PLATFORM_API_CONFIG?.announcementsEndpoint || "",
+      ).trim(),
       coursesEndpoint: String(
         window.LFA_PLATFORM_API_CONFIG?.coursesEndpoint || "",
       ).trim(),
@@ -1419,9 +1422,11 @@
     errors: {},
   };
   const platformRequests = new Map();
+  let announcementBoard = null;
 
   function resetPlatformRuntime() {
     platformSessionGeneration += 1;
+    announcementBoard = null;
     platformRuntime.modules = {};
     platformRuntime.assignments = {};
     platformRuntime.studentProgress = {};
@@ -1470,6 +1475,58 @@
     return token;
   }
 
+  function assignmentRubricRows(assignment) {
+    const criteria = assignment?.rubric;
+    if (!Array.isArray(criteria) || !criteria.length || criteria.length > 12) return [];
+    const rows = criteria.map((item) => ({
+      label: String(item.label || "").trim(), points: "", maximum: Number(item.points),
+    }));
+    return rows.every((row) => row.label && row.label.length <= 100 &&
+      Number.isInteger(row.maximum) && row.maximum >= 1 && row.maximum <= 100) ? rows : [];
+  }
+
+  function rubricRowMarkup(row = {}) {
+    return `<div class="rubric-row">
+      <label>Criterion<input data-rubric-label maxlength="100" value="${escapeHtml(row.label)}" required /></label>
+      <label>Earned<input data-rubric-points type="number" min="0" max="100" step="1" value="${escapeHtml(row.points)}" required /></label>
+      <label>Possible<input data-rubric-maximum type="number" min="1" max="100" step="1" value="${escapeHtml(row.maximum)}" required /></label>
+      <button type="button" class="button button-quiet" data-action="remove-criterion">Remove criterion</button>
+    </div>`;
+  }
+
+  function readRubric(form) {
+    return Array.from(form.querySelectorAll?.(".rubric-row") || [], (row) => ({
+      label: row.querySelector("[data-rubric-label]").value.trim(),
+      points: row.querySelector("[data-rubric-points]").value,
+      maximum: row.querySelector("[data-rubric-maximum]").value,
+    }));
+  }
+
+  function rubricResult(rows) {
+    if (!rows.length) return {};
+    const rubric = rows.map((row) => ({ label: row.label, points: Number(row.points), maximum: Number(row.maximum) }));
+    if (rows.some((row) => !row.label || row.points === "" || row.maximum === "") ||
+        rubric.some((row) => !Number.isInteger(row.points) || !Number.isInteger(row.maximum) ||
+          row.maximum < 1 || row.maximum > 100 || row.points < 0 || row.points > row.maximum)) {
+      return { error: "Give each criterion a name, 1–100 possible points, and earned points from zero to the possible points." };
+    }
+    if (new Set(rubric.map((row) => row.label.toLowerCase())).size !== rows.length) {
+      return { error: "Use a different name for each criterion." };
+    }
+    const earned = rubric.reduce((total, row) => total + row.points, 0);
+    const possible = rubric.reduce((total, row) => total + row.maximum, 0);
+    return { rubric, score: Math.round(100 * earned / possible) };
+  }
+
+  function updateRubricEditor(form) {
+    const rows = readRubric(form);
+    form.elements.score.readOnly = rows.length > 0;
+    if (rows.length) form.elements.score.value = rubricResult(rows).score ?? "";
+    form.querySelector('[data-action="add-criterion"]').disabled = rows.length >= 12;
+    const preset = form.querySelector('[data-action="use-assignment-rubric"]');
+    if (preset) preset.hidden = rows.length > 0;
+  }
+
   function loadGradingDrafts() {
     try {
       const saved = JSON.parse(sessionStorage.getItem(GRADING_DRAFTS_KEY));
@@ -1510,6 +1567,7 @@
     const draft = {
       score: String(values?.score ?? ""),
       feedback: String(values?.feedback ?? ""),
+      rubric: values?.rubric || [],
       savedAt: new Date().toISOString(),
     };
     gradingDrafts[key] = draft;
@@ -1576,6 +1634,7 @@
         ...record.submission,
         id: submissionId,
         score: Number.isInteger(returnedScore) ? returnedScore : score,
+        rubric: responseSource?.rubric || null,
         feedback:
           typeof responseSource?.feedback === "string"
             ? responseSource.feedback
@@ -1633,7 +1692,9 @@
     const values = {
       score: form.elements.score?.value || "",
       feedback: form.elements.feedback?.value || "",
+      rubric: readRubric(form),
     };
+    const parsedRubric = rubricResult(values.rubric);
     const serverValues = {
       score:
         record.submission.score == null ? "" : String(record.submission.score),
@@ -1642,7 +1703,11 @@
     if (
       !gradingDraftFor(record) &&
       values.score === serverValues.score &&
-      values.feedback === serverValues.feedback
+      values.feedback === serverValues.feedback &&
+      !parsedRubric.error &&
+      JSON.stringify(parsedRubric.rubric || []) === JSON.stringify(
+        (record.submission.rubric || []).map(({ label, points, maximum }) => ({ label, points, maximum })),
+      )
     ) {
       return null;
     }
@@ -2946,6 +3011,7 @@
         feedback: scalarLabel(
           source.feedback || source.teacherFeedback || source.grade?.feedback,
         ),
+        rubric: Array.isArray(source.grade?.rubric) ? source.grade.rubric : null,
         gradedBy: scalarLabel(source.gradedBy || source.grade?.gradedBy),
         gradedByDisplayName: scalarLabel(
           source.gradedByDisplayName || source.grade?.gradedByDisplayName,
@@ -5190,17 +5256,39 @@
       : "Set in the course offering";
   }
 
+  const torontoDayFormatter = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric", month: "2-digit", day: "2-digit", timeZone: "America/Toronto",
+  });
+
+  function torontoDayKey(date) {
+    const parts = torontoDayFormatter.formatToParts(date);
+    return ["year", "month", "day"].map((key) => parts.find((part) => part.type === key).value).join("-");
+  }
+
+  function nextSevenDays(now = new Date()) {
+    const today = new Date(`${torontoDayKey(now)}T00:00:00Z`);
+    return Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(today);
+      day.setUTCDate(day.getUTCDate() + index);
+      return day.toISOString().slice(0, 10);
+    });
+  }
+
   function calendarEvents() {
     const dueDates = studentAssignments()
       .filter(assignmentIsUnlocked)
-      .filter((assignment) => Boolean(assignment.due))
+      .filter((assignment) => assignment.due && Number.isFinite(Date.parse(assignment.due)))
       .map((assignment) => {
       const course = findCourse(assignment.courseId);
       return {
         id: `due-${assignment.id}`,
         courseId: assignment.courseId,
-        date: assignment.due.slice(0, 10),
-        time: formatTime(assignment.due),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(assignment.due)
+          ? assignment.due
+          : torontoDayKey(new Date(assignment.due)),
+        time: /^\d{4}-\d{2}-\d{2}$/.test(assignment.due)
+          ? "Time not set"
+          : formatTime(assignment.due),
         title: assignment.title,
         type: "Assignment Due",
         route: `assignment/${assignment.id}`,
@@ -5486,14 +5574,13 @@
       assignments: "Assessments",
       progress: "Progress & Grades",
       notifications: "Notifications",
-      announcements: "Notifications",
+      announcements: "Course Announcements",
       support: "Student Support",
       security: "Account Security",
     }[section] || "Page Not Found";
   }
 
   function activeSection(route) {
-    if (route[0] === "announcements") return "notifications";
     if (
       route[0] === "course" ||
       route[0] === "guide" ||
@@ -5551,6 +5638,7 @@
             ${navLink("assessments", "Assessments", "clipboard", pending)}
             ${navLink("progress", "Progress & Grades", "chart")}
             ${navLink("notifications", "Notifications", "bell", unread)}
+            ${navLink("announcements", "Course Announcements", "book")}
             ${navLink("support", "Student Support", "award")}
             ${navLink("security", "Account Security", "lock")}
           </nav>
@@ -5598,6 +5686,7 @@
       dashboard: "Faculty Dashboard",
       courses: "Course Management",
       submissions: "Action Inbox",
+      announcements: "Course Announcements",
       notifications: "Notifications",
       materials: "Course Materials",
       security: "Account Security",
@@ -5641,6 +5730,7 @@
             ${teacherNavLink("courses", "Course Management", "book")}
             ${teacherNavLink("submissions", "Action Inbox", "clipboard", awaitingReview)}
             ${teacherNavLink("notifications", "Notifications", "bell", unread)}
+            ${teacherNavLink("announcements", "Course Announcements", "book")}
             ${teacherNavLink("materials", "Course Materials", "file")}
             ${teacherNavLink("security", "Account Security", "lock")}
             <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
@@ -6921,6 +7011,7 @@
     const gradeScoreValue =
       gradingDraft?.score ??
       (record.submission.score == null ? "" : String(record.submission.score));
+    const gradeRubric = gradingDraft?.rubric ?? record.submission.rubric ?? [];
     const gradeFeedbackValue =
       gradingDraft?.feedback ?? record.submission.feedback ?? "";
     const nextAwaitingRecord = teacherSubmissionRecords().find(
@@ -7048,9 +7139,16 @@
               data-submission="${escapeHtml(record.submission.id || record.id)}"
               data-student="${escapeHtml(studentRecordKey(record.student))}"
               data-assignment="${escapeHtml(record.assignment.id)}">
+              <fieldset class="grading-rubric" ${gradingBlockedByRevision ? "disabled" : ""}>
+                <legend>Rubric (optional)</legend>
+                <p>Each criterion contributes its possible points to the total. The percentage is rounded to the nearest whole number.</p>
+                <div class="rubric-rows">${gradeRubric.map(rubricRowMarkup).join("")}</div>
+                ${assignmentRubricRows(record.assignment).length ? `<button type="button" class="button button-secondary" data-action="use-assignment-rubric" ${gradeRubric.length ? "hidden" : ""}>Use assignment rubric</button>` : ""}
+                <button type="button" class="button button-secondary" data-action="add-criterion" ${gradeRubric.length >= 12 ? "disabled" : ""}>Add criterion</button>
+              </fieldset>
               <label for="grade-score">Percentage Score</label>
               <div class="grade-score-input">
-                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="grading-form-alert grading-help" value="${escapeHtml(gradeScoreValue)}" ${gradingBlockedByRevision ? "disabled" : ""} />
+                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="grading-form-alert grading-help" value="${escapeHtml(gradeScoreValue)}" ${gradeRubric.length ? "readonly" : ""} ${gradingBlockedByRevision ? "disabled" : ""} />
                 <span aria-hidden="true">%</span>
               </div>
               <label for="grade-feedback">Teacher Feedback</label>
@@ -7615,7 +7713,8 @@
     const feedback = unreadFeedback();
     const standaloneFeedback = unreadStandaloneFeedbackNotifications();
     const feedbackCount = feedback.length + standaloneFeedback.length;
-    const weekEvents = calendarEvents().slice(0, 5);
+    const week = nextSevenDays();
+    const weekEvents = calendarEvents().filter((event) => week.includes(event.date));
     const workspace = studentWorkspaceStatus();
     const primaryCopy = workspace.loading
       ? "Synchronizing your official course progress, submissions and feedback."
@@ -7651,6 +7750,25 @@
         <a class="metric" href="#/assignments" aria-label="${pending.length} items need attention. Open Assignments."><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span>${icon("arrow", 16)}</a>
         <a class="metric" href="#/progress" aria-label="${feedbackCount} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedbackCount}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
       </section>
+      <div class="dashboard-overview">
+        <section class="dashboard-courses" aria-labelledby="dashboard-courses-heading">
+          <header class="panel-header">
+            <div><h2 id="dashboard-courses-heading">My Courses</h2><p>Open a course to continue your modules.</p></div>
+            <a class="text-link" href="#/courses">View all courses ${icon("arrow", 16)}</a>
+          </header>
+          ${enrolled.length
+            ? `<div class="dashboard-course-cards">${enrolled.map(dashboardCourseCard).join("")}</div>`
+            : '<div class="empty-state"><p>No courses selected yet.</p><a class="button button-secondary" href="#/course-selection">Open Course Selection</a></div>'}
+        </section>
+        <section class="panel dashboard-agenda" aria-labelledby="dashboard-agenda-heading">
+          <header class="panel-header">
+            <div><h2 id="dashboard-agenda-heading">Next 7 Days</h2><p>Published dates · Toronto time</p></div>
+            <a class="text-link" href="#/calendar">View All ${icon("arrow", 16)}</a>
+          </header>
+          ${agendaEntries(weekEvents.slice(0, 5)) ||
+            '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
+        </section>
+      </div>
       <section class="dashboard-grid">
         <div class="panel dashboard-priority">
           <header class="panel-header">
@@ -7684,37 +7802,12 @@
           }
         </div>
         <div class="panel">
-          <header class="panel-header">
-            <div><h2>This Week</h2><p>Classes, support and due dates</p></div>
-            <a class="text-link" href="#/calendar">View All ${icon("arrow", 16)}</a>
-          </header>
-          ${
-            weekEvents.length
-              ? weekEvents
-                  .slice(0, 5)
-                  .map(
-                    (event) => `
-                      <a class="task-row" href="#/${event.route}">
-                        <span class="task-date"><strong>${formatDate(event.date).split(",")[0]}</strong><small>${event.time}</small></span>
-                        <span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(event.courseCode)} · ${escapeHtml(event.type)}</p></span>
-                        ${icon("arrow", 17)}
-                      </a>
-                    `,
-                  )
-                  .join("")
-              : '<div class="empty-state"><p>You are all caught up.</p></div>'
-          }
-        </div>
-        <div class="panel">
-          <header class="panel-header">
-            <div><h2>My Courses</h2><p>Progress, pacing and course guides</p></div>
-            <a class="text-link" href="#/courses">View All ${icon("arrow", 16)}</a>
-          </header>
-          ${
-            enrolled.length
-              ? enrolled.map(courseRow).join("")
-              : '<div class="empty-state"><p>No courses selected yet.</p><a class="button button-secondary" href="#/course-selection">Open Course Selection</a></div>'
-          }
+          <header class="panel-header"><div><h2>Start Here</h2><p>Set up your courses and find help.</p></div></header>
+          <div class="dashboard-starter-links">
+            <a href="#/course-selection">Review course selection ${icon("arrow", 16)}</a>
+            <a href="#/announcements">Read course announcements ${icon("arrow", 16)}</a>
+            <a href="#/support">Find student support ${icon("arrow", 16)}</a>
+          </div>
         </div>
         <div class="panel">
           <header class="panel-header"><div><h2>Feedback & Support</h2><p>Published feedback and people who can help</p></div></header>
@@ -7755,6 +7848,22 @@
         </div>
       </section>
     `;
+  }
+
+  function dashboardCourseCard(course) {
+    const progress = courseProgress(course);
+    return `<a class="dashboard-course-card" href="#/course/${escapeHtml(course.id)}">
+      <img src="${escapeHtml(course.image)}" alt="" loading="lazy" />
+      <div>
+        <span class="course-code">${escapeHtml(course.code)}</span>
+        <h3>${escapeHtml(course.title)}</h3>
+        ${progress.official
+          ? `<progress max="100" value="${progress.percent}" aria-label="Official module progress"></progress>
+            <p>${progress.completed} of ${progress.total} modules complete</p>`
+          : '<p>Open the course to view module progress.</p>'}
+        <span class="dashboard-course-action">Open course ${icon("arrow", 16)}</span>
+      </div>
+    </a>`;
   }
 
   function courseRow(course) {
@@ -8465,110 +8574,62 @@
     `;
   }
 
-  function calendarView() {
-    const events = calendarEvents();
-    const dates = [...new Set(events.map((event) => event.date).filter(Boolean))]
-      .sort()
-      .slice(0, 5);
-    const deadlineEvents = events.filter(
-      (event) => event.type === "Assignment Due",
+  function agendaEntries(events) {
+    return events.map((event) => `
+      <a class="agenda-event" href="#/${escapeHtml(event.route)}">
+        <span class="agenda-date"><time datetime="${escapeHtml(event.date)}">${formatDate(event.date).split(",")[0]}</time><small>${escapeHtml(event.time)}</small></span>
+        <span><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.courseCode)} · ${escapeHtml(event.type)}</small></span>
+        ${icon("arrow", 17)}
+      </a>`).join("");
+  }
+
+  function calendarView(courseId) {
+    const courses = studentCourses();
+    const selected = courses.find((course) => course.id === courseId);
+    const week = nextSevenDays();
+    const today = week[0];
+    const lastDay = week[6];
+    const upcoming = calendarEvents().filter((event) =>
+      event.date >= today && (!selected || event.courseId === selected.id),
     );
+    const thisWeek = upcoming.filter((event) => event.date <= lastDay);
+    const later = upcoming.filter((event) => event.date > lastDay);
+    const chip = (label, href, active) =>
+      `<a href="${href}"${active ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
+
     return `
       ${pageHeading(
-        "Offering Schedule",
+        "Course Schedule",
         "Learning Calendar",
-        "Scheduled classes, support sessions and assignment deadlines appear here when the active course offering is published.",
-        `<a class="button button-secondary" href="#/assignments">${icon("clipboard", 17)} View Assignments</a>`,
+        "Check published deadlines and scheduled events in Toronto time.",
+        '<a class="button button-secondary" href="#/assignments">View Assignments</a>',
       )}
-      <section class="calendar-summary" aria-label="Schedule summary">
-        <div><strong>${events.filter((event) => dates.includes(event.date) && event.type === "Live Class").length}</strong><span>Live Classes</span></div>
-        <div><strong>${deadlineEvents.filter((event) => dates.includes(event.date)).length}</strong><span>Published Deadlines</span></div>
-        <div><strong>${events.filter((event) => dates.includes(event.date) && event.type === "Student Support").length}</strong><span>Support Session</span></div>
-        <div><strong>${smartActions().filter((action) => action.priority <= 2).length}</strong><span>Priority Actions</span></div>
+      ${courses.length ? `<nav class="agenda-filters" aria-label="Filter calendar by course">
+        ${chip("All courses", "#/calendar", !selected)}
+        ${courses.map((course) => chip(course.code, `#/calendar/${encodeURIComponent(course.id)}`, course.id === selected?.id)).join("")}
+      </nav>` : ""}
+      <section class="panel agenda-panel" aria-labelledby="agenda-week">
+        <header class="panel-header"><div><h2 id="agenda-week">Next 7 Days</h2>
+          <p>${formatDate(today)} – ${formatDate(lastDay)}</p></div></header>
+        ${agendaEntries(thisWeek) || '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
       </section>
-      <section class="week-calendar" aria-label="Published offering schedule">
-        ${dates.length ? dates
-          .map((date) => {
-            const dayEvents = events.filter((event) => event.date === date);
-            const dateObject = new Date(`${date}T12:00:00-04:00`);
-            const day = new Intl.DateTimeFormat("en-CA", {
-              weekday: "short",
-              timeZone: "America/Toronto",
-            }).format(dateObject);
-            const number = new Intl.DateTimeFormat("en-CA", {
-              day: "numeric",
-              timeZone: "America/Toronto",
-            }).format(dateObject);
-            return `
-              <section class="calendar-day">
-                <header><span>${day}</span><strong>${number}</strong></header>
-                <div>
-                  ${
-                    dayEvents.length
-                      ? dayEvents
-                          .map(
-                            (event) => `
-                              <a class="calendar-event ${event.type === "Assignment Due" ? "is-deadline" : event.type === "Student Support" ? "is-support" : ""}" href="#/${event.route}">
-                                <span>${escapeHtml(event.time)}</span>
-                                <strong>${escapeHtml(event.title)}</strong>
-                                <small>${escapeHtml(event.courseCode)} · ${escapeHtml(event.type)}</small>
-                              </a>
-                            `,
-                          )
-                          .join("")
-                      : '<p class="calendar-empty">No scheduled items</p>'
-                  }
-                </div>
-              </section>
-            `;
-          })
-          .join("") : '<p class="calendar-empty">No offering dates have been published.</p>'}
+      <section class="panel agenda-panel" aria-labelledby="agenda-later">
+        <header class="panel-header"><div><h2 id="agenda-later">Later Dates</h2></div></header>
+        ${agendaEntries(later) || '<div class="empty-state"><p>No later dates are posted.</p></div>'}
       </section>
-      <section class="calendar-lower-grid">
-        <div class="panel">
-          <header class="panel-header"><div><h2>Upcoming Deadlines</h2><p>Due date and final submission window</p></div></header>
-          ${studentAssignments().slice()
-            .sort((a, b) => {
-              if (!a.due && !b.due) return a.title.localeCompare(b.title);
-              if (!a.due) return 1;
-              if (!b.due) return -1;
-              return new Date(a.due) - new Date(b.due);
-            })
-            .map((assignment) => {
-              const course = findCourse(assignment.courseId);
-              const status = assignmentStatus(assignment);
-              const locked = status.key === "locked";
-              const rowTag = locked ? "article" : "a";
-              const rowTarget = locked
-                ? ' aria-disabled="true"'
-                : ` href="#/assignment/${assignment.id}"`;
-              return `
-                <${rowTag} class="deadline-row ${locked ? "is-locked" : ""}"${rowTarget}>
-                  <span class="deadline-date"><strong>${assignment.due ? formatDate(assignment.due).split(",")[0] : "TBD"}</strong><small>${assignment.due ? formatTime(assignment.due) : "Offering schedule"}</small></span>
-                  <span><p class="course-code">${course.code}</p><h3>${escapeHtml(assignment.title)}</h3><p>${assignment.due ? `Available until ${assignmentAvailabilityLabel(assignment)}` : "Schedule set separately for the active course offering"}</p></span>
-                  <span class="badge ${status.className}">${status.label}</span>
-                  ${icon(locked ? "clock" : "arrow", 17)}
-                </${rowTag}>
-              `;
-            })
-            .join("")}
+      <p class="agenda-note">For overdue work or assignments without a published date, <a class="text-link" href="#/assignments">open Assignments</a>.</p>
+      ${courses.length ? `<section class="panel agenda-panel agenda-study" aria-labelledby="agenda-study">
+        <header class="panel-header"><div><h2 id="agenda-study">Weekly Study Plan</h2><p>Recommended independent study time</p></div>
+          <a class="text-link" href="#/support">Ask for planning help ${icon("arrow", 16)}</a>
+        </header>
+        <div class="panel-content">
+          ${(selected ? [selected] : courses).map((course) => `
+            <a class="study-plan-row" href="#/course/${escapeHtml(course.id)}">
+              <span class="course-chip">${escapeHtml(course.code)}</span>
+              <span><strong>${escapeHtml(course.plannedHours)} planned hours</strong></span>
+            </a>`).join("")}
         </div>
-        <aside class="panel weekly-plan">
-          <header class="panel-header"><div><h2>Weekly Study Plan</h2><p>Recommended independent study time</p></div></header>
-          <div class="panel-content">
-            ${studentCourses().map((course) => {
-              const progress = courseProgress(course);
-              return `
-                <a class="study-plan-row" href="#/course/${course.id}">
-                  <span class="course-chip">${course.code}</span>
-                  <span><strong>${course.plannedHours} planned hours</strong><small>${progress.percent}% official module progress</small></span>
-                </a>
-              `;
-            }).join("")}
-            <a class="button button-primary full-width" href="#/support">Ask for Planning Help</a>
-          </div>
-        </aside>
-      </section>
+      </section>` : ""}
     `;
   }
 
@@ -9008,6 +9069,9 @@
                       <strong>${score}%</strong>
                     </div>
                     <p>${escapeHtml(feedback || "No written comment was added to this grade.")}</p>
+                    ${submission?.rubric?.length ? `<dl class="rubric-breakdown" aria-label="Score by criterion">
+                      ${submission.rubric.map((row) => `<div><dt>${escapeHtml(row.label)}</dt><dd>${escapeHtml(row.points)} / ${escapeHtml(row.maximum)}</dd></div>`).join("")}
+                    </dl>` : ""}
                     ${
                       submission?.updatedAt || submission?.gradedAt
                         ? `<small class="grade-updated-at">Updated ${formatDate(submission.updatedAt || submission.gradedAt, true)}</small>`
@@ -9301,7 +9365,49 @@
   }
 
   function announcementsView() {
-    return notificationsView();
+    const heading = pageHeading(isTeacher() ? "Faculty" : "My Courses", "Course Announcements",
+      isTeacher() ? "Post an update to one or more courses." : "Updates from your course teachers.");
+    if (!announcementBoard) {
+      const board = { loaded: false, error: "", items: [], courses: [] };
+      announcementBoard = board;
+      requestPlatformJson(PLATFORM_API_CONFIG.announcementsEndpoint)
+        .then((payload) => {
+          if (!Array.isArray(payload.data) || !Array.isArray(payload.courseCodes)) {
+            throw new Error("The announcements service returned an unreadable response.");
+          }
+          board.items = payload.data;
+          board.courses = payload.courseCodes;
+          board.loaded = true;
+        })
+        .catch((error) => { board.error = error.message || "Could not load course announcements."; })
+        .finally(() => {
+          if (announcementBoard === board) renderAfterBackgroundRefresh();
+        });
+    }
+    const board = announcementBoard;
+    if (board.error) return heading + `<div class="notification-state" role="alert"><p>${escapeHtml(board.error)}</p>
+      <button class="button button-secondary" type="button" data-action="reload-announcements">Try again</button></div>`;
+    if (!board.loaded) return heading + '<p role="status">Loading course announcements…</p>';
+    const composer = isTeacher() && board.courses.length ? `
+      <section class="teacher-section"><h2>New announcement</h2>
+        <form id="announcement-form" class="announcement-composer">
+          <fieldset><legend>Publish to courses</legend>
+            ${board.courses.map((code) => `<label><input type="checkbox" name="courseCode" value="${escapeHtml(code)}"> ${escapeHtml(code)}</label>`).join("")}
+          </fieldset>
+          <label for="announcement-title">Title</label>
+          <input id="announcement-title" name="title" required maxlength="160">
+          <label for="announcement-body">Message</label>
+          <textarea id="announcement-body" name="body" required rows="4" maxlength="3000"></textarea>
+          <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+          <button type="submit" class="button button-primary">Publish announcement</button>
+        </form>
+      </section>` : "";
+    const articles = board.items.map((item) => `<article class="announcement-card"><div>
+      <p class="course-code">${escapeHtml(item.courseCodes.join(" · "))}</p>
+      <h2>${escapeHtml(item.title)}</h2><p class="course-announcement-body">${escapeHtml(item.body)}</p>
+      <div class="announcement-meta"><span>${escapeHtml(item.authorName)}</span><span>${formatDate(item.publishedAt, true)}</span></div>
+      </div></article>`).join("");
+    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || '<p class="empty-state compact">No announcements for your courses yet.</p>'}</section>`;
   }
 
   function notFoundView() {
@@ -9389,6 +9495,8 @@
       view = teacherMaterialsView();
     } else if (teacherRoute[1] === "notifications") {
       view = notificationsView();
+    } else if (teacherRoute[1] === "announcements") {
+      view = announcementsView();
     } else if (teacherRoute[1] === "security") {
       view = securityView();
     } else if (teacherRoute[1] === "course") {
@@ -9453,6 +9561,7 @@
   }
 
   function renderAfterBackgroundRefresh() {
+    if (document.querySelector('#announcement-form[data-dirty="true"]')) return false;
     if (assignmentFormHasUnsavedWork()) return false;
     render(false, true);
     return true;
@@ -9524,7 +9633,7 @@
     if (route[0] === "dashboard") view = dashboardView();
     else if (route[0] === "course-selection") view = courseSelectionView();
     else if (route[0] === "courses") view = coursesView();
-    else if (route[0] === "calendar") view = calendarView();
+    else if (route[0] === "calendar") view = calendarView(safeDecode(route[1] || ""));
     else if (route[0] === "course") {
       const course = findCourse(route[1]);
       if (!course) {
@@ -9574,7 +9683,8 @@
             : notFoundView()
         : notFoundView();
     } else if (route[0] === "progress") view = progressView();
-    else if (route[0] === "notifications" || route[0] === "announcements") {
+    else if (route[0] === "announcements") view = announcementsView();
+    else if (route[0] === "notifications") {
       view = notificationsView();
     }
     else if (route[0] === "support") view = supportView();
@@ -9678,6 +9788,55 @@
   }
 
   async function handleFormSubmit(event) {
+    if (event.target.id === "announcement-form") {
+      event.preventDefault();
+      const form = event.target;
+      const button = form.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      const values = new FormData(form);
+      const courseCodes = values.getAll("courseCode");
+      if (!courseCodes.length) {
+        setFormAlert(form, "Select at least one course.");
+        return;
+      }
+      const title = values.get("title").trim();
+      const body = values.get("body").trim();
+      if (!title || !body) {
+        setFormAlert(form, "Enter a title and a message.");
+        return;
+      }
+      const board = announcementBoard;
+      const fingerprint = JSON.stringify([courseCodes, title, body]);
+      if (form.dataset.fingerprint !== fingerprint) {
+        form.dataset.publicationId = window.crypto.randomUUID();
+        form.dataset.fingerprint = fingerprint;
+      }
+      setFormAlert(form);
+      form.dataset.dirty = "true";
+      const editableFields = form.querySelectorAll("input, textarea");
+      for (const field of editableFields) field.disabled = true;
+      button.disabled = true;
+      try {
+        const published = await requestPlatformJson(PLATFORM_API_CONFIG.announcementsEndpoint, {
+          method: "POST",
+          body: JSON.stringify({ publicationId: form.dataset.publicationId, courseCodes, title, body }),
+        });
+        if (published?.id !== form.dataset.publicationId) {
+          throw new Error("Publication could not be confirmed. Try again with the same message.");
+        }
+        if (announcementBoard === board) {
+          announcementBoard = null;
+          render(false, true);
+          showToast("Announcement published.");
+        }
+      } catch (error) {
+        if (announcementBoard === board) setFormAlert(form, error.message || "Publication failed. Try again.");
+      } finally {
+        for (const field of editableFields) field.disabled = false;
+        button.disabled = false;
+      }
+      return;
+    }
     if (event.target.id === "submission-message-form") {
       event.preventDefault();
       const form = event.target;
@@ -10391,7 +10550,13 @@
     if (event.target.id === "grading-form") {
       event.preventDefault();
       setGradingAlert(event.target);
-      const scoreText = String(new FormData(event.target).get("score") || "");
+      const rows = readRubric(event.target);
+      const result = rubricResult(rows);
+      if (result.error) {
+        setGradingAlert(event.target, result.error);
+        return;
+      }
+      const scoreText = String(result.score ?? new FormData(event.target).get("score") ?? "");
       const score = Number(scoreText);
       const feedback = String(
         new FormData(event.target).get("feedback") || "",
@@ -10448,7 +10613,7 @@
         );
         return;
       }
-      saveGradingDraft(record, { score: scoreText, feedback });
+      saveGradingDraft(record, { score: scoreText, feedback, rubric: rows });
       const gradedAt = new Date().toISOString();
       const { endpoint: gradingEndpoint, submissionId: targetSubmissionId } =
         gradingRequestTarget(record, submissionId);
@@ -10474,6 +10639,7 @@
             },
             body: JSON.stringify({
               submissionId: targetSubmissionId,
+              ...(result.rubric ? { rubric: result.rubric } : {}),
               score,
               feedback,
               publish: true,
@@ -10491,6 +10657,7 @@
             studentState.submissions?.[assignmentId] || record.submission;
           studentState.submissions[assignmentId] = {
             ...currentSubmission,
+            rubric: result.rubric ?? null,
             score,
             feedback,
             status: "graded",
@@ -10862,6 +11029,8 @@
   });
 
   document.addEventListener("input", (event) => {
+    const composer = event.target.closest?.("#announcement-form");
+    if (composer) composer.dataset.dirty = "true";
     const assignmentForm = event.target.closest?.("#assignment-form");
     if (assignmentForm) assignmentForm.dataset.dirty = "true";
     const interactionForm = event.target.closest(
@@ -10870,6 +11039,7 @@
     if (interactionForm) delete interactionForm.dataset.idempotencyKey;
     const gradingForm = event.target.closest("#grading-form");
     if (gradingForm) {
+      if (event.target.closest(".rubric-row")) updateRubricEditor(gradingForm);
       setGradingAlert(gradingForm);
       const statusMessage = gradingForm.querySelector(".grading-status");
       if (statusMessage) {
@@ -10980,6 +11150,9 @@
     if (action === "dismiss-toast") {
       window.clearTimeout(toastTimer);
       target.closest(".toast")?.remove();
+    } else if (action === "reload-announcements") {
+      announcementBoard = null;
+      render(false, true);
     } else if (action === "refresh-notifications") {
       target.disabled = true;
       await ensureNotifications({ force: true });
@@ -11064,6 +11237,23 @@
           tone: "success",
         });
       }
+    } else if (["add-criterion", "remove-criterion", "use-assignment-rubric"].includes(action)) {
+      const form = target.closest("#grading-form");
+      const rows = form.querySelector(".rubric-rows");
+      if (action === "use-assignment-rubric" && !rows.children.length) {
+        const preset = assignmentRubricRows(findAssignment(form.dataset.assignment));
+        rows.insertAdjacentHTML("beforeend", preset.map(rubricRowMarkup).join(""));
+        rows.querySelector("[data-rubric-points]")?.focus();
+      } else if (action === "add-criterion" && rows.children.length < 12) {
+        rows.insertAdjacentHTML("beforeend", rubricRowMarkup());
+        rows.lastElementChild.querySelector("input").focus();
+      } else if (action === "remove-criterion") {
+        target.closest(".rubric-row").remove();
+        form.querySelector('[data-action="add-criterion"]').disabled = false;
+        form.querySelector('[data-action="add-criterion"]').focus();
+      }
+      updateRubricEditor(form);
+      form.elements.score.dispatchEvent(new Event("input", { bubbles: true }));
     } else if (action === "focus-grading") {
       const form = document.querySelector("#grading-form");
       form?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -11159,10 +11349,12 @@
         return;
       }
       setGradingAlert(form);
-      const scoreText = String(form.elements.score?.value || "").trim();
+      const rows = readRubric(form);
+      const result = rubricResult(rows);
+      const scoreText = String(result.score ?? form.elements.score?.value ?? "").trim();
       const score = Number(scoreText);
       const feedback = String(form.elements.feedback?.value || "").trim();
-      const draft = saveGradingDraft(record, { score: scoreText, feedback });
+      const draft = saveGradingDraft(record, { score: scoreText, feedback, rubric: rows });
       const statusMessage = form.querySelector(".grading-status");
       if (statusMessage && draft) {
         statusMessage.className = "grading-status is-draft";
@@ -11172,6 +11364,10 @@
         record,
         form.dataset.submission || "",
       );
+      if (result.error) {
+        setGradingAlert(form, "Draft saved on this device. " + result.error);
+        return;
+      }
       if (!submissionsEndpointUrl() || !endpoint) {
         showToast("Grading draft saved on this device.", {
           tone: "success",
@@ -11209,6 +11405,7 @@
           },
           body: JSON.stringify({
             submissionId,
+            ...(result.rubric ? { rubric: result.rubric } : {}),
             score,
             feedback,
             publish: false,
@@ -11800,7 +11997,10 @@
   drawerMedia.addEventListener("change", (event) => {
     if (!event.matches) setDrawerOpen(false, { restoreFocus: false });
   });
-  window.addEventListener("hashchange", () => render(true));
+  window.addEventListener("hashchange", () => {
+    announcementBoard = null;
+    render(true);
+  });
   workspaceCallbackFeedback = consumeWorkspaceCallbackFeedback();
   const sessionCheckWasPending = !remoteSessionValidated;
   render();

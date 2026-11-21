@@ -380,6 +380,8 @@ footer { background: #041713; color: white; padding: 60px clamp(24px, 8vw, 128px
 .page-next h2 { max-width: 15ch; margin: 0; font-size: clamp(42px, 4.8vw, 66px); line-height: 1.03; }
 .page-next p:not(.eyebrow) { max-width: 61ch; color: rgba(255,255,255,.7); }
 .page-next-actions { display: grid; gap: 12px; align-content: end; }
+.admissions-next { scroll-margin-top: 66px; }
+.admissions-email { min-width: 0; overflow-wrap: anywhere; text-align: center; text-transform: none; }
 .light-link { width: max-content; color: white; border-color: var(--gold); }
 
 .course-catalogue-hero .inner-hero-media img { object-position: center; }
@@ -797,4 +799,67 @@ h3, .menu-group h3, .menu-actions button, .search-results strong,
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *:before, *:after { transition: none !important; animation: none !important; }
+}
+
+.family-paths {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(16px, 2.5vw, 32px);
+  padding-block: clamp(28px, 4vw, 58px);
+  background: var(--cream);
+}
+.family-paths a {
+  display: grid;
+  align-content: start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.family-paths a:hover { border-color: var(--forest); }
+.family-paths img { width: 100%; aspect-ratio: 2.55; object-fit: cover; }
+.family-paths a > div { position: relative; padding: 22px 48px 23px 22px; }
+.family-paths h2 { color: var(--forest); font-size: 1.25rem; font-weight: 700; line-height: 1.25; margin: 0 0 7px; }
+.family-paths p { color: var(--muted); margin: 0; font-size: .9375rem; }
+.family-paths span { position: absolute; top: 21px; right: 20px; color: var(--forest); font-size: 1.2rem; }
+.course-finder { padding: clamp(22px, 4vw, 46px); background: var(--paper); border-top: 3px solid var(--forest); margin-bottom: 42px; }
+.course-finder h2 { margin: 0 0 20px; font-size: clamp(1.65rem, 3vw, 2.5rem); }
+.course-finder-fields { display: grid; grid-template-columns: 2fr 1fr 1.3fr; gap: 16px; }
+.course-finder-fields label { display: grid; gap: 7px; color: var(--forest); font-weight: 700; min-width: 0; }
+.course-finder-fields input, .course-finder-fields select {
+  min-width: 0; width: 100%; min-height: 48px; padding: 8px 12px; color: var(--ink);
+  border: 1px solid #85968e; background: white; border-radius: 2px; font-weight: 400;
+}
+.course-finder-summary { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; }
+.course-finder-summary p, .course-finder-empty { color: var(--muted); margin: 0; }
+.course-finder-summary button { padding: 4px 0; border: 0; border-bottom: 1px solid var(--gold); background: transparent; cursor: pointer; }
+.course-finder-summary button:disabled { visibility: hidden; }
+.course-finder-empty { margin-top: 8px; }
+@media (max-width: 740px) {
+  .family-paths, .course-finder-fields { grid-template-columns: 1fr; }
+  .family-paths img { aspect-ratio: 3.4; }
+}
+
+.course-catalogue.is-filtered .course-area { padding-top: clamp(24px, 4vw, 46px); }
+.course-catalogue.is-filtered .course-area + .course-area { margin-top: 44px; }
+
+.header-learning {
+  align-self: center; display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; margin-right: 8px; padding: 4px 10px; border: 1px solid var(--line);
+  color: var(--forest); font-size: var(--text-label); font-weight: 700; text-align: center;
+}
+.header-learning:hover { background: var(--cream); border-color: var(--forest); }
+.online-learning {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  gap: 24px; padding-block: clamp(30px, 4vw, 64px); color: white; background: var(--forest);
+}
+.online-learning h2 { margin: 0 0 8px; color: white; font-size: var(--text-h2); }
+.online-learning p { margin: 0; color: #e8f3ed; }
+.online-learning-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.online-learning-actions .button { margin: 0; }
+@media (max-width: 740px) {
+  .online-learning { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .site-header .nav-links { display: none; }
+  .header-learning { max-width: 86px; padding-inline: 6px; margin-right: 0; line-height: 1.2; }
+  .site-header .brand-logo { width: clamp(110px, 36vw, 174px); }
 }
