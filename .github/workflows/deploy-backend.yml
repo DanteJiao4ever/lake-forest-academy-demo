@@ -157,10 +157,35 @@ jobs:
           token_format: access_token
       - uses: google-github-actions/setup-gcloud@v3
       - name: Verify existing resources (never create infrastructure)
+        env:
+          REGISTRY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         shell: bash
         run: |
           set -euo pipefail
-          gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" >/dev/null
+          if ! gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" >/dev/null; then
+            echo "Checking the same registry with the billing project explicitly selected."
+            if gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" --billing-project "$PROJECT_ID" >/dev/null; then
+              echo "Artifact Registry accepted the explicit billing project."
+            fi
+
+            registry_url="https://artifactregistry.googleapis.com/v1/projects/$PROJECT_ID/locations/$REGION/repositories/$REPOSITORY"
+            probe_registry() {
+              local label="$1"
+              shift
+              local status response
+              response="$(mktemp "$RUNNER_TEMP/registry-probe.XXXXXX")"
+              if status="$(printf 'header = "Authorization: Bearer %s"\n' "$REGISTRY_ACCESS_TOKEN" |
+                curl --config - --silent --show-error --connect-timeout 10 --max-time 20 \
+                  --output "$response" --write-out '%{http_code}' "$@" "$registry_url")"; then
+                printf '%s returned HTTP %s\n' "$label" "$status"
+                jq -c '[.error.details[]? | select(.reason? != null) | {reason, consumer: .metadata.consumer}]' "$response" || true
+              fi
+              rm -f "$response"
+            }
+            probe_registry "Artifact Registry REST with inferred billing project"
+            probe_registry "Artifact Registry REST with explicit billing project" --header "x-goog-user-project: $PROJECT_ID"
+            exit 1
+          fi
           gcloud sql instances describe "${SQL_INSTANCE##*:}" --project "$PROJECT_ID" >/dev/null
           for secret in "$DB_RUNTIME_SECRET" "$DB_MIGRATION_SECRET" "$CSRF_SECRET"; do
             gcloud secrets describe "$secret" --project "$PROJECT_ID" >/dev/null
