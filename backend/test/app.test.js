@@ -1427,6 +1427,21 @@ describe("Lake Forest Learning API", () => {
     assert.equal(returnedReplay.statusCode, 201, returnedReplay.body);
     assert.equal(returnedReplay.json().data.id, returned.json().data.id);
 
+    const gradeReturnedAttempt = await app.inject({
+      method: "PUT",
+      url: `/v1/grades/${firstId}`,
+      headers: {
+        origin, cookie: faculty.cookie, "x-csrf-token": faculty.body.csrfToken,
+        "idempotency-key": "grade-returned-rubric", "if-match": '"grade-v0"',
+      },
+      payload: {
+        submissionId: firstId, score: 50, feedback: "Evidence needs revision.", publish: true,
+        rubric: [{ label: "Evidence", points: 2, maximum: 4 }],
+      },
+    });
+    assert.equal(gradeReturnedAttempt.statusCode, 409, gradeReturnedAttempt.body);
+    assert.equal(gradeReturnedAttempt.json().error.code, "SUBMISSION_RETURNED");
+
     const revisionState = await app.inject({
       method: "GET",
       url: "/v1/submissions?courseCode=MHF4U",
@@ -1491,6 +1506,7 @@ describe("Lake Forest Learning API", () => {
         submissionId: secondId,
         score: 87,
         feedback: "Draft feedback that must stay private.",
+        rubric: [{ label: "Draft criterion", points: 20, maximum: 23 }],
         publish: false,
       },
     });
@@ -1505,6 +1521,7 @@ describe("Lake Forest Learning API", () => {
     const teacherDraftSubmission =
       teacherDraftQueue.json().data[0].students[0].units[0].submissions[0];
     assert.equal(teacherDraftSubmission.grade.score, 87);
+    assert.equal(teacherDraftSubmission.grade.rubric[0].label, "Draft criterion");
     assert.equal(teacherDraftSubmission.workflowStatus, "under_review");
 
     const hiddenDraft = await app.inject({
@@ -1514,6 +1531,7 @@ describe("Lake Forest Learning API", () => {
     });
     assert.equal(hiddenDraft.statusCode, 200, hiddenDraft.body);
     assert.equal(hiddenDraft.json().data[0].grade, null);
+    assert.ok(!hiddenDraft.body.includes("Draft criterion"));
     assert.equal("score" in hiddenDraft.json().data[0], false);
     assert.equal(hiddenDraft.json().data[0].workflowStatus, "resubmitted");
 
@@ -1531,6 +1549,7 @@ describe("Lake Forest Learning API", () => {
         submissionId: secondId,
         score: 87,
         feedback: "Clear revision and well-supported reasoning.",
+        rubric: [{ label: "Reasoning", points: 20, maximum: 23 }],
         publish: true,
       },
     });
@@ -1544,6 +1563,7 @@ describe("Lake Forest Learning API", () => {
     assert.equal(graded.statusCode, 200, graded.body);
     assert.equal(graded.json().data[0].workflowStatus, "graded");
     assert.equal(graded.json().data[0].score, 87);
+    assert.deepEqual(graded.json().data[0].grade.rubric, [{ label: "Reasoning", points: 20, maximum: 23 }]);
     assert.equal(graded.json().data[0].history.length, 2);
     assert.equal(
       graded.json().data[0].messages.some((item) =>

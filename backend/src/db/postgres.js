@@ -215,6 +215,7 @@ function gradeLateral(role) {
       SELECT json_build_object(
         'score', g.score,
         'feedback', g.feedback,
+        'rubric', g.rubric,
         'gradedBy', g.graded_by,
         'gradedByDisplayName', grader.display_name,
         'gradedAt', g.graded_at,
@@ -865,6 +866,49 @@ export class PostgresRepository {
       return result.rowCount > 0;
     }
     return false;
+  }
+
+  async listCourseAnnouncements(courseCodes) {
+    const result = await this.pool.query(
+      `SELECT a.id, a.title, a.body, a.published_at AS "publishedAt",
+              u.display_name AS "authorName",
+              array_agg(t.course_code ORDER BY t.course_code) AS "courseCodes"
+         FROM course_announcement_targets t
+         JOIN course_announcements a ON a.id = t.announcement_id
+         JOIN app_users u ON u.id = a.author_user_id
+        WHERE t.course_code = ANY($1::text[])
+        GROUP BY a.id, u.display_name
+        ORDER BY a.published_at DESC, a.id DESC
+        LIMIT 100`,
+      [courseCodes],
+    );
+    return result.rows;
+  }
+
+  async publishCourseAnnouncement({ publicationId, courseCodes, title, body, authorUserId }) {
+    // One statement commits the message and all course targets together.
+    const inserted = await this.pool.query(
+      `WITH new_announcement AS (
+         INSERT INTO course_announcements (id, author_user_id, title, body)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id
+       )
+       INSERT INTO course_announcement_targets (announcement_id, course_code)
+       SELECT n.id, c.code FROM new_announcement n CROSS JOIN unnest($5::text[]) AS c(code)`,
+      [publicationId, authorUserId, title, body, courseCodes],
+    );
+    if (inserted.rowCount > 0) return true;
+
+    const previous = await this.pool.query(
+      `SELECT a.id FROM course_announcements a
+         JOIN course_announcement_targets t ON a.id = t.announcement_id
+        WHERE a.id = $1 AND a.author_user_id = $2 AND a.title = $3 AND a.body = $4
+        GROUP BY a.id HAVING array_agg(t.course_code ORDER BY t.course_code) = $5::text[]`,
+      [publicationId, authorUserId, title, body, courseCodes],
+    );
+    if (previous.rowCount) return false;
+    throw new ApiError(409, "ANNOUNCEMENT_CONFLICT", "This publication ID has already been used.");
   }
 
   async listAccessibleCourseCodes(user) {
@@ -2640,12 +2684,12 @@ export class PostgresRepository {
       const result = await client.query(
         `INSERT INTO submission_grades
           (submission_id, version, score, feedback, graded_by_user_id, graded_by,
-           idempotency_key, request_fingerprint, published_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $9 THEN now() ELSE NULL END)
+           idempotency_key, request_fingerprint, published_at, rubric)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $9 THEN now() ELSE NULL END,$10::jsonb)
          RETURNING *`,
         [input.submissionId, currentVersion + 1, input.score, input.feedback,
           input.grader.id, input.grader.publicId, input.idempotencyKey,
-          input.requestFingerprint, input.publish],
+          input.requestFingerprint, input.publish, input.rubric ? JSON.stringify(input.rubric) : null],
       );
       if (input.publish) {
         await client.query(
@@ -2684,6 +2728,7 @@ export class PostgresRepository {
       submissionId: row.submission_id,
       score: row.score,
       feedback: row.feedback,
+      rubric: row.rubric ?? null,
       gradedBy: row.graded_by,
       gradedByDisplayName: grader?.displayName || null,
       gradedAt: row.graded_at,
