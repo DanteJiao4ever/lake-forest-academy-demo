@@ -162,7 +162,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" >/dev/null; then
+          describe_registry_regionally() {
+            [[ "$REGION" == northamerica-northeast2 ]] || return 1
+            echo "Checking Artifact Registry on the northamerica-northeast2 regional endpoint."
+            CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=https://artifactregistry.northamerica-northeast2.rep.googleapis.com/ \
+              gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" --billing-project "$PROJECT_ID" >/dev/null
+          }
+          if ! gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" >/dev/null &&
+             ! describe_registry_regionally; then
             echo "Checking the same registry with the billing project explicitly selected."
             if gcloud artifacts repositories describe "$REPOSITORY" --project "$PROJECT_ID" --location "$REGION" --billing-project "$PROJECT_ID" >/dev/null; then
               echo "Artifact Registry accepted the explicit billing project."
