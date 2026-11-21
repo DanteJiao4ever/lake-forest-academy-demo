@@ -12,6 +12,7 @@ import { csrfTokenFor, deriveOpaqueToken, opaqueToken, publicId, safeTextEqual, 
 import { assertStrongPassword, hashPassword, normalizeEmail, verifyPassword } from "./lib/passwords.js";
 import { assignmentIdSchema, courseCodeSchema, emailSchema, nameSchema, parse, uuidSchema } from "./lib/validation.js";
 import { validateUploadedFile } from "./lib/file-validation.js";
+import { submissionGradeSchema } from "./lib/submission-grade.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { MaterialSyncService } from "./services/material-sync.js";
 import { UnavailablePasswordResetMailer } from "./mail/password-reset-mailer.js";
@@ -1472,6 +1473,37 @@ export async function createApp({
   );
 
   app.get(
+    "/v1/announcements",
+    { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
+    async (request) => {
+      const courses = await repository.listAccessibleCourseCodes(request.auth.user);
+      return { data: await repository.listCourseAnnouncements(courses), courseCodes: courses };
+    },
+  );
+
+  app.post(
+    "/v1/announcements",
+    { preHandler: [requireRoles("teacher", "teacher_admin"), requireCsrf] },
+    async (request, reply) => {
+      const input = parse(z.object({
+        publicationId: uuidSchema,
+        courseCodes: z.array(courseCodeSchema).min(1).max(32),
+        title: z.string().trim().min(1).max(160),
+        body: z.string().trim().min(1).max(3000),
+      }).strict(), request.body, "INVALID_ANNOUNCEMENT");
+      const courseCodes = [...new Set(input.courseCodes)].sort();
+      const allowed = await repository.listAccessibleCourseCodes(request.auth.user);
+      if (courseCodes.some((code) => !allowed.includes(code))) {
+        throw new ApiError(403, "COURSE_ACCESS_DENIED", "You cannot publish to one or more selected courses.");
+      }
+      const created = await repository.publishCourseAnnouncement({
+        ...input, courseCodes, authorUserId: request.auth.user.id,
+      });
+      return reply.status(created ? 201 : 200).send({ id: input.publicationId });
+    },
+  );
+
+  app.get(
     "/v1/courses/:courseCode/modules",
     { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
     async (request) => {
@@ -2510,12 +2542,7 @@ export async function createApp({
     async (request, reply) => {
       const submissionId = parse(uuidSchema, request.params.submissionId, "INVALID_SUBMISSION_ID");
       const body = parse(
-        z.object({
-          submissionId: uuidSchema,
-          score: z.number().int().min(0).max(100),
-          feedback: z.string().max(10000),
-          publish: z.boolean(),
-        }),
+        submissionGradeSchema,
         request.body,
         "INVALID_GRADE",
       );
