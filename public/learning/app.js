@@ -5716,4 +5716,6305 @@
       isAwaitingTeacherReview,
     ).length;
     const unread = unreadNotificationCount();
- [Truncated]
+    const courseMenuOpen = route[1] === "course";
+    return `
+      <div class="app-shell">
+        <aside class="sidebar faculty-sidebar" id="sidebar" aria-label="Faculty navigation">
+          <button class="sidebar-close" type="button" data-action="close-menu" aria-label="Close menu">${icon("close")}</button>
+          <div class="sidebar-brand">
+            <img src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <p>Faculty Learning</p>
+          </div>
+          <nav class="sidebar-nav">
+            ${teacherNavLink("dashboard", "Dashboard", "home")}
+            ${teacherNavLink("courses", "Course Management", "book")}
+            ${teacherNavLink("submissions", "Action Inbox", "clipboard", awaitingReview)}
+            ${teacherNavLink("notifications", "Notifications", "bell", unread)}
+            ${teacherNavLink("announcements", "Course Announcements", "book")}
+            ${teacherNavLink("materials", "Course Materials", "file")}
+            ${teacherNavLink("security", "Account Security", "lock")}
+            <details class="faculty-course-menu" ${courseMenuOpen ? "open" : ""}>
+              <summary>
+                <span class="nav-icon">${icon("book", 19)}</span>
+                <span>Quick Course Access</span>
+              </summary>
+              <div>
+                ${catalogCourses().map((course) => {
+                  const active =
+                    route[1] === "course" && route[2] === course.id;
+                  return `<a class="faculty-course-link ${active ? "is-active" : ""}" href="#/teacher/course/${course.id}" ${active ? 'aria-current="page"' : ""}><strong>${course.code}</strong><span>${course.title}</span></a>`;
+                }).join("")}
+              </div>
+            </details>
+            <a href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">
+              <span class="nav-icon">${icon("file", 19)}</span>
+              <span>Workspace Gmail</span>
+            </a>
+          </nav>
+          <div class="sidebar-student">
+            <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
+            <span><strong>${escapeHtml(user.displayName)}</strong><span>Faculty · All Courses</span></span>
+            <button class="logout-button" type="button" data-action="logout" aria-label="Sign out">${icon("logout")}</button>
+          </div>
+        </aside>
+        <button class="sidebar-scrim" type="button" data-action="close-menu" aria-label="Close menu" hidden></button>
+        <section class="stage">
+          <header class="app-header">
+            <button class="mobile-menu" type="button" data-action="open-menu" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">${icon("menu")}</button>
+            <div class="header-title">
+              <span>Lake Forest Learning</span>
+              <strong>${escapeHtml(teacherPageTitle(route))}</strong>
+            </div>
+            <span class="header-spacer"></span>
+            <span class="faculty-badge">Faculty</span>
+            <a class="notification-link" href="#/teacher/notifications" aria-label="${plural(unread, "unread notification")}">
+              ${icon("bell", 18)}
+              ${unread ? `<small>${unread}</small>` : ""}
+            </a>
+            <div class="header-profile">
+              <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
+              <span>${escapeHtml(user.displayName)}</span>
+            </div>
+          </header>
+          <main id="main-content" class="page teacher-page">
+            ${content}
+          </main>
+        </section>
+      </div>
+    `;
+  }
+
+  function teacherRecordLink(record) {
+    return `#/teacher/submission/${encodeURIComponent(studentRecordKey(record.student))}/${encodeURIComponent(record.assignment.id)}`;
+  }
+
+  function teacherRecordMarkup(record) {
+    const status = teacherSubmissionStatus(record);
+    return `
+      <article class="teacher-record">
+        <a class="teacher-record-main" href="${teacherRecordLink(record)}">
+          <span class="teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(record.student))}</span>
+          <span>
+            <strong>${escapeHtml(record.student.displayName)}</strong>
+            <small>${escapeHtml(record.assignment.title)}</small>
+          </span>
+        </a>
+        <div class="teacher-record-meta">
+          <span><strong>${escapeHtml(record.course.code)}</strong> · ${record.moduleNumber == null ? "Module not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`} · ${escapeHtml(record.assignment.unit)}</span>
+          <span>${formatDate(record.submission.submittedAt, true)}</span>
+          <span>${escapeHtml(record.submission.fileName || "Submission note only")}</span>
+        </div>
+        <span class="status ${status.className}">${status.label}</span>
+        <a class="button button-quiet" href="${teacherRecordLink(record)}">Review</a>
+      </article>
+    `;
+  }
+
+  function teacherHierarchy(
+    records,
+    emptyMessage = "Student work will be organized here by course, student, unit and assignment.",
+    emptyTitle = "No Submissions Yet",
+  ) {
+    if (!records.length) {
+      return `
+        <div class="teacher-empty">
+          ${icon("clipboard", 30)}
+          <h3>${escapeHtml(emptyTitle)}</h3>
+          <p>${escapeHtml(emptyMessage)}</p>
+        </div>
+      `;
+    }
+    const hierarchyCourses = [
+      ...new Map(records.map((record) => [record.course.id, record.course])).values(),
+    ].sort((a, b) => {
+      const aIndex = COURSES.findIndex((course) => course.id === a.id);
+      const bIndex = COURSES.findIndex((course) => course.id === b.id);
+      if (aIndex < 0 && bIndex < 0) return a.code.localeCompare(b.code);
+      if (aIndex < 0) return 1;
+      if (bIndex < 0) return -1;
+      return aIndex - bIndex;
+      });
+    return `
+      <div class="hierarchy-list">
+        ${hierarchyCourses.map((course, courseIndex) => {
+          const courseRecords = records.filter(
+            (record) => record.course.id === course.id,
+          );
+          if (!courseRecords.length) return "";
+          const students = [
+            ...new Map(
+              courseRecords.map((record) => [
+                studentRecordKey(record.student),
+                record.student,
+              ]),
+            ).values(),
+          ];
+          return `
+            <details class="hierarchy-course" ${courseIndex === 0 ? "open" : ""}>
+              <summary>
+                <span><strong>${escapeHtml(course.code)}</strong>${escapeHtml(course.title)}</span>
+                <small>${plural(courseRecords.length, "submission")}</small>
+              </summary>
+              <div class="hierarchy-list">
+                ${students.map((student) => {
+                  const studentRecords = courseRecords.filter(
+                    (record) =>
+                      studentRecordKey(record.student) ===
+                      studentRecordKey(student),
+                  );
+                  const studentKey = studentRecordKey(student);
+                  const studentReference =
+                    student.email || student.id || "Student record";
+                  const units = [
+                    ...new Map(
+                      studentRecords.map((record) => [
+                        record.assignment.unit,
+                        {
+                          id: record.assignment.unit,
+                          title: record.assignment.unitTitle,
+                        },
+                      ]),
+                    ).values(),
+                  ].sort((a, b) => a.id.localeCompare(b.id));
+                  return `
+                    <details class="hierarchy-student">
+                      <summary>
+                        <span class="teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(student))}</span>
+                        <span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(studentReference)}</small></span>
+                        <small>${plural(studentRecords.length, "submission")}</small>
+                      </summary>
+                      <div class="hierarchy-list">
+                        ${units.map((unit) => {
+                          const unitRecords = studentRecords.filter(
+                            (record) => record.assignment.unit === unit.id,
+                          );
+                          const unitHeadingId = `${safeDomId(course.id)}-${safeDomId(studentKey)}-${safeDomId(unit.id)}`;
+                          return `
+                            <section class="hierarchy-unit" aria-labelledby="${unitHeadingId}">
+                              <header>
+                                <span class="course-code">${escapeHtml(unit.id)}</span>
+                                <h3 id="${unitHeadingId}">${escapeHtml(unit.title)}</h3>
+                              </header>
+                              <div>
+                                ${unitRecords.map((record) => {
+                                  const status = teacherSubmissionStatus(record);
+                                  return `
+                                    <a class="hierarchy-assignment" href="${teacherRecordLink(record)}">
+                                      <span>
+                                        <strong>${escapeHtml(record.assignment.title)}</strong>
+                                        <small>${record.moduleNumber == null ? "Module not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`} · ${formatDate(record.submission.submittedAt, true)} · ${escapeHtml(record.submission.fileName || "Note only")}</small>
+                                      </span>
+                                      <span class="status ${status.className}">${status.label}</span>
+                                      ${icon("arrow", 17)}
+                                    </a>
+                                  `;
+                                }).join("")}
+                              </div>
+                            </section>
+                          `;
+                        }).join("")}
+                      </div>
+                    </details>
+                  `;
+                }).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  function driveTimestampLabel(value) {
+    if (!value || Number.isNaN(new Date(value).getTime())) return "Not synced yet";
+    return formatDate(value, true);
+  }
+
+  function groupDriveRecords(records, keyFor) {
+    return records.reduce((groups, record) => {
+      const key = keyFor(record) || "Other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(record);
+      return groups;
+    }, new Map());
+  }
+
+  function driveMaterialItem(record) {
+    const mimeType = String(record.mimeType || "").toLowerCase();
+    const fileKind = mimeType.includes("pdf")
+      ? "PDF"
+      : mimeType.includes("spreadsheet") || mimeType.includes("sheet")
+        ? "XLS"
+        : mimeType.includes("presentation") || mimeType.includes("slide")
+          ? "PPT"
+          : mimeType.includes("video")
+            ? "VID"
+            : mimeType.includes("audio")
+              ? "AUD"
+              : mimeType.includes("image")
+                ? "IMG"
+                : "DOC";
+    const details = [
+      record.mimeType
+        ? record.mimeType.replace(
+            "application/vnd.google-apps.",
+            "Google ",
+          )
+        : "",
+      record.size ? formatFileSize(record.size) : "",
+      record.modifiedAt
+        ? `Updated ${driveTimestampLabel(record.modifiedAt)}`
+        : "",
+    ].filter(Boolean);
+    return `
+      <li class="drive-material-item" data-file-kind="${fileKind}">
+        <span>
+          <strong>${escapeHtml(record.name)}</strong>
+          ${
+            record.description
+              ? `<span class="drive-material-meta">${escapeHtml(record.description)}</span>`
+              : ""
+          }
+          ${
+            details.length
+              ? `<small class="drive-material-meta">${details.map(escapeHtml).join(" · ")}</small>`
+              : ""
+          }
+        </span>
+        ${
+          record.url
+            ? `<a class="button button-secondary" href="${escapeHtml(record.url)}" target="_blank" rel="noopener noreferrer">Open ${icon("arrow", 15)}</a>`
+            : '<span class="badge">Indexed</span>'
+        }
+      </li>
+    `;
+  }
+
+  function driveUnitTree(records) {
+    const unitGroups = groupDriveRecords(records, (record) => record.unit);
+    return [...unitGroups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(
+        ([unit, unitRecords]) => `
+          <details class="drive-unit-group" open>
+            <summary>${escapeHtml(unit)} · ${plural(unitRecords.length, "material")}</summary>
+            ${[...groupDriveRecords(unitRecords, (record) => record.category).entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(
+                ([category, categoryRecords]) => `
+                  <section class="drive-category-group">
+                    <h4>${escapeHtml(category)}</h4>
+                    <ul class="drive-material-list">
+                      ${categoryRecords
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map(driveMaterialItem)
+                        .join("")}
+                    </ul>
+                  </section>
+                `,
+              )
+              .join("")}
+          </details>
+        `,
+      )
+      .join("");
+  }
+
+  function courseDriveMaterials(course) {
+    return driveMaterialsState.records.filter(
+      (record) => record.courseId === course?.id,
+    );
+  }
+
+  function courseDriveMaterialCount(course, records = courseDriveMaterials(course)) {
+    const metadata = driveMaterialsState.courseMetadata?.[course?.code] || {};
+    return Math.max(records.length, Number(metadata.count) || 0);
+  }
+
+  function courseMaterialsBody(course, noun = "Materials") {
+    const records = courseDriveMaterials(course);
+    if (!driveMaterialsReadReady()) {
+      const checking = DRIVE_CATALOG_STATUS.state === "checking";
+      return `<div class="course-materials-status ${checking ? "is-loading" : "is-error"}" role="status">${icon(checking ? "clock" : "file", 18)}<span><strong>${checking ? `Checking ${noun.toLowerCase()}` : `${noun} temporarily unavailable`}</strong><small>${escapeHtml(driveCatalogUnavailableMessage())}</small></span></div>`;
+    }
+    if (driveRequestInFlight && !records.length) {
+      return `<div class="course-materials-status is-loading" role="status">${icon("clock", 18)}<span><strong>Loading ${noun.toLowerCase()}</strong><small>Reading the secure course index.</small></span></div>`;
+    }
+    if (driveMaterialsState.error) {
+      return `<div class="course-materials-status is-error" role="alert">${icon("file", 18)}<span><strong>${noun} could not be loaded</strong><small>${escapeHtml(driveMaterialsState.error)}</small></span><button class="button button-secondary" type="button" data-action="refresh-course-materials">Try Again</button></div>`;
+    }
+    if (!driveEndpointChecked) {
+      return `<div class="course-materials-status is-loading" role="status">${icon("clock", 18)}<span><strong>Connecting ${noun.toLowerCase()}</strong><small>Waiting for the secure course index.</small></span></div>`;
+    }
+    if (!records.length) {
+      return `<div class="course-materials-status" role="status">${icon("file", 18)}<span><strong>No ${noun.toLowerCase()} published yet</strong><small>New course files will appear here after the approved Drive source is synced.</small></span></div>`;
+    }
+    return driveUnitTree(records);
+  }
+
+  function courseMaterialsDisclosure(course, context = "student") {
+    const records = courseDriveMaterials(course);
+    const metadata = driveMaterialsState.courseMetadata?.[course.code] || {};
+    const materialCount = courseDriveMaterialCount(course, records);
+    const disclosureKey = `${context}:${course.id}`;
+    const expanded = expandedCourseMaterials.has(disclosureKey);
+    const panelId = `${context}-${course.id}-materials`;
+    const noun = context === "teacher" ? "Resources" : "Materials";
+    if (!driveMaterialsReadReady()) {
+      return {
+        count: 0,
+        expanded: false,
+        button: `<button class="button button-secondary course-materials-toggle" type="button" disabled aria-disabled="true" aria-expanded="false" title="${escapeHtml(driveCatalogUnavailableMessage())}">${noun} Temporarily Unavailable</button>`,
+        panel: "",
+      };
+    }
+    const countLabel =
+      (driveEndpointChecked && !driveRequestInFlight) || materialCount
+      ? ` (${materialCount})`
+      : "";
+    const buttonLabel = expanded
+      ? `Hide ${noun}`
+      : driveRequestInFlight
+        ? `Loading ${noun}...`
+        : `View ${noun}${countLabel}`;
+    const body = courseMaterialsBody(course, noun);
+
+    return {
+      count: materialCount,
+      expanded,
+      button: `<button class="button button-secondary course-materials-toggle" type="button" data-action="toggle-course-materials" data-course="${course.id}" data-context="${context}" aria-expanded="${expanded}" aria-controls="${panelId}">${escapeHtml(buttonLabel)}</button>`,
+      panel: expanded
+        ? `<section class="course-card-materials" id="${panelId}" aria-label="${course.code} ${noun.toLowerCase()}" aria-live="polite"><header><span><span class="course-code">Secure Course Index</span><strong>${course.code} ${noun}</strong>${metadata.lastSyncedAt ? `<small>Synced ${escapeHtml(driveTimestampLabel(metadata.lastSyncedAt))}</small>` : ""}</span><span class="badge">${plural(materialCount, "item")}</span></header>${body}</section>`
+        : "",
+    };
+  }
+
+  function teacherDriveMaterialTree(records) {
+    if (!records.length) {
+      return `
+        <div class="panel drive-empty-state">
+          <h2>No synced materials yet</h2>
+          <p>When the Lotus folder is connected and synced, its course, unit and category structure will appear here.</p>
+        </div>
+      `;
+    }
+    const courseGroups = groupDriveRecords(records, (record) => record.courseId);
+    return `
+      <div class="drive-material-tree">
+        ${[...courseGroups.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([courseId, courseRecords]) => {
+            const course = findCourse(courseId);
+            const label = course
+              ? `${course.code} · ${course.title}`
+              : courseRecords[0]?.courseCode || "Unassigned";
+            return `
+              <details class="drive-course-group" open>
+                <summary>${escapeHtml(label)} · ${plural(courseRecords.length, "material")}</summary>
+                ${driveUnitTree(courseRecords)}
+              </details>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  function teacherMaterialsView() {
+    const materialsEndpointReady = driveMaterialsReadReady();
+    const syncEndpointReady = Boolean(
+      configuredDriveUrl(DRIVE_CONFIG.syncEndpoint),
+    );
+    const sourceConfigured =
+      DRIVE_CONFIG.sourceConfigured && syncEndpointReady;
+    const canSyncDrive = isTeacherAdmin();
+    const retryVerification = ["invalid", "unavailable"].includes(
+      DRIVE_CATALOG_STATUS.state,
+    );
+    let connection = {
+      label: "Awaiting protected source",
+      className: "warning",
+      detail:
+        "The backend administrator still needs to configure the protected course source and verification endpoint.",
+    };
+    if (!sourceConfigured) {
+      // Keep the source location private; the browser only needs to know
+      // whether the protected backend adapter is configured.
+    } else if (driveRequestInFlight) {
+      connection = {
+        label: materialsEndpointReady ? "Syncing" : "Verifying",
+        className: "info",
+        detail: materialsEndpointReady
+          ? `Refreshing the protected ${DRIVE_CONFIG.sourceName} index.`
+          : `Running a protected verification of ${DRIVE_CONFIG.sourceName}.`,
+      };
+    } else if (!materialsEndpointReady) {
+      connection = {
+        label: retryVerification
+          ? "Verification required"
+          : "Initial verification pending",
+        className: "warning",
+        detail: canSyncDrive
+          ? retryVerification
+            ? "The protected course source is configured, but its read catalogue is not ready. Retry verification to rebuild the secure index."
+            : "Run the first protected verification to build the secure course-material index."
+          : "Course materials are waiting for a platform administrator to verify the protected source.",
+      };
+    } else if (driveMaterialsState.error) {
+      connection = {
+        label: "Needs attention",
+        className: "danger",
+        detail: driveMaterialsState.error,
+      };
+    } else if (driveMaterialsState.records.length) {
+      connection = {
+        label: "Connected",
+        className: "success",
+        detail: `${plural(driveMaterialsState.records.length, "material")} available from ${DRIVE_CONFIG.sourceName}.`,
+      };
+    } else {
+      connection = {
+        label:
+          syncEndpointReady && canSyncDrive
+            ? "Ready to sync"
+            : "Connected read-only",
+        className: "info",
+        detail: syncEndpointReady && canSyncDrive
+          ? "The protected source and backend adapter are configured."
+          : "Materials can be read. Synchronization is reserved for platform administrators.",
+      };
+    }
+    const syncDisabled =
+      !canSyncDrive ||
+      !sourceConfigured ||
+      driveRequestInFlight;
+    const syncLabel = driveRequestInFlight
+      ? materialsEndpointReady
+        ? "Syncing..."
+        : "Verifying..."
+      : materialsEndpointReady
+        ? "Sync from Drive"
+        : retryVerification
+          ? "Retry Drive Verification"
+          : "Verify & Sync Drive";
+    return `
+      <header class="teacher-hero drive-materials-hero">
+        <div>
+          <p class="eyebrow">Faculty Materials</p>
+          <h1>${escapeHtml(DRIVE_CONFIG.sourceName)}</h1>
+          <p>Organize school-owned course materials in Drive and publish the synced index to students without sharing a Google password.</p>
+        </div>
+        <div class="drive-materials-actions">
+          ${canSyncDrive ? `<button class="button button-gold" type="button" data-action="sync-drive-materials" ${syncDisabled ? 'disabled aria-disabled="true"' : ""}>${escapeHtml(syncLabel)} ${icon("arrow", 16)}</button>` : ""}
+        </div>
+      </header>
+      <section class="panel drive-connection-card" aria-label="Drive connection">
+        <div>
+          <p class="eyebrow">Connection</p>
+          <div class="drive-status-line">
+            <h2>Protected course source</h2>
+            <span class="status ${connection.className}">${escapeHtml(connection.label)}</span>
+          </div>
+          <p class="drive-connection-detail">${escapeHtml(connection.detail)}</p>
+          <p class="drive-connection-detail"><strong>Last sync:</strong> ${escapeHtml(driveTimestampLabel(driveMaterialsState.lastSyncedAt))}</p>
+        </div>
+        <div class="drive-folder-convention">
+          <p class="eyebrow">Protected Workflow</p>
+          <strong>Materials remain behind the school API</strong>
+          <ol aria-label="Protected course material workflow">
+            <li>Verify source</li><li>Build index</li><li>Publish catalogue</li><li>Open through API</li>
+          </ol>
+        </div>
+      </section>
+      ${
+        !sourceConfigured
+          ? '<p class="login-help"><strong>Administrator setup required</strong>Configure the protected Drive source on the backend. The browser does not accept or reveal folder identifiers, Drive links or Google passwords.</p>'
+          : ""
+      }
+      <section class="teacher-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">Synced Index</p><h2>Course Materials</h2></div>
+          <span class="badge">${plural(driveMaterialsState.records.length, "material")}</span>
+        </div>
+        ${
+          materialsEndpointReady
+            ? teacherDriveMaterialTree(driveMaterialsState.records)
+            : `<div class="teacher-empty" role="status">${icon("file", 30)}<h3>Course Materials Temporarily Unavailable</h3><p>${escapeHtml(driveCatalogUnavailableMessage())}</p></div>`
+        }
+      </section>
+    `;
+  }
+
+  function studentCourseMaterials(course) {
+    const records = courseDriveMaterials(course);
+    const count = courseDriveMaterialCount(course, records);
+    return `
+      <section class="module course-materials">
+        <header>
+          <p class="course-code">Secure Course Index</p>
+          <h3>Course Materials</h3>
+          <p>${count ? `${plural(count, "resource")} organized by course section and category.` : "Approved course files will appear here after synchronization."}</p>
+        </header>
+        ${courseMaterialsBody(course, "Materials")}
+      </section>
+    `;
+  }
+
+  function teacherDashboardView() {
+    const user = currentUser();
+    const greetingName =
+      user?.firstName || user?.displayName || user?.email || "Faculty";
+    const records = teacherSubmissionRecords();
+    const awaitingReview = records.filter(
+      isAwaitingTeacherReview,
+    ).length;
+    const attachedFiles = records.filter(
+      (record) => record.submission.fileName,
+    ).length;
+    const studentCount = submissionsEndpointUrl()
+      ? new Set(records.map((record) => studentRecordKey(record.student))).size
+      : allStudentAccounts().length;
+    return `
+      <header class="teacher-hero">
+        <div>
+          <p class="eyebrow">Faculty Portal</p>
+          <h1>Welcome Back, ${escapeHtml(greetingName)}</h1>
+          <p>Review student progress and find submitted work across every OSSD course from one organized workspace.</p>
+        </div>
+        <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a>
+      </header>
+      <section class="teacher-metrics" aria-label="Faculty overview">
+        <a class="teacher-metric" href="#/teacher/courses" aria-label="${catalogCourses().length} active courses. Open Course Management."><span>${icon("book", 22)}</span><strong>${catalogCourses().length}</strong><p>Active Courses</p></a>
+        <a class="teacher-metric" href="#/teacher/courses" aria-label="${studentCount} students. Open Course Management."><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></a>
+        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${awaitingReview} submissions awaiting review. Open Action Inbox."><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></a>
+        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${attachedFiles} submitted files. Open Action Inbox."><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></a>
+      </section>
+      <section class="teacher-section">
+        <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
+        <div class="teacher-course-grid">
+          ${catalogCourses().map((course) => {
+            const courseRecords = records.filter(
+              (record) => record.course.id === course.id,
+            );
+            const pending = courseRecords.filter(
+              isAwaitingTeacherReview,
+            ).length;
+            return `
+              <a class="teacher-course-card" href="#/teacher/course/${course.id}">
+                <span class="course-code">${course.code}</span>
+                <h3>${escapeHtml(course.title)}</h3>
+                <p>${escapeHtml(course.subject)} · ${course.plannedHours} planned hours</p>
+                <dl>
+                  <div><dt>Submissions</dt><dd>${courseRecords.length}</dd></div>
+                  <div><dt>Awaiting Review</dt><dd>${pending}</dd></div>
+                </dl>
+                <span class="text-link">Open Course ${icon("arrow", 16)}</span>
+              </a>
+            `;
+          }).join("")}
+        </div>
+      </section>
+      <section class="teacher-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">Latest Activity</p><h2>Recent Submissions</h2></div>
+          <a class="text-link" href="#/teacher/submissions">View All ${icon("arrow", 15)}</a>
+        </div>
+        <div class="teacher-records">
+          ${records.length ? records.slice(0, 5).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
+        </div>
+      </section>
+    `;
+  }
+
+  function teacherCoursesView() {
+    const records = teacherSubmissionRecords();
+    return `
+      ${pageHeading(
+        "Six-Course Programme",
+        "Course Management",
+        "Open a course workspace to review its syllabus, enrolled students, assignments, submissions and Lotus Drive materials.",
+      )}
+      <section class="teacher-course-grid teacher-course-management-grid">
+        ${catalogCourses()
+          .map((course) => {
+            const enrolled = allStudentAccounts().filter((student) =>
+              isCourseEnrolled(course.id, loadState(student)),
+            ).length;
+            const materials = courseMaterialsDisclosure(course, "teacher");
+            const courseRecords = records.filter(
+              (record) => record.course.id === course.id,
+            );
+            const awaiting = courseRecords.filter(
+              isAwaitingTeacherReview,
+            ).length;
+            return `
+              <article class="teacher-course-card ${materials.expanded ? "is-materials-open" : ""}">
+                <span class="course-code">${course.code}</span>
+                <h2>${escapeHtml(course.title)}</h2>
+                <p>${escapeHtml(course.gradeType)} · ${course.plannedHours} hours</p>
+                <dl>
+                  <div><dt>Enrolled</dt><dd>${enrolled}</dd></div>
+                  <div><dt>Awaiting Review</dt><dd>${awaiting}</dd></div>
+                </dl>
+                <div class="teacher-course-card-actions">
+                  <a class="button button-primary" href="#/teacher/course/${course.id}">Open Workspace ${icon("arrow", 16)}</a>
+                  ${materials.button}
+                </div>
+                ${materials.panel}
+              </article>
+            `;
+          })
+          .join("")}
+      </section>
+    `;
+  }
+
+  const DIRECT_GRADE_MODES = new Set([
+    "supervised",
+    "none",
+    "oral_defence",
+  ]);
+
+  function gradebookScoreFor(student, itemId) {
+    return (student?.scores || []).find((score) => score.itemId === itemId) || null;
+  }
+
+  function publishedTeacherGrade(score) {
+    if (!score) return null;
+    if (Object.prototype.hasOwnProperty.call(score, "latestPublished")) {
+      const snapshot = score.latestPublished;
+      return snapshot?.publishedAt && Number.isFinite(Number(snapshot.score))
+        ? snapshot
+        : null;
+    }
+    const legacySnapshot = score.published || null;
+    if (
+      legacySnapshot?.publishedAt &&
+      Number.isFinite(Number(legacySnapshot.score))
+    ) {
+      return legacySnapshot;
+    }
+    if (
+      score.latestPublishedAt &&
+      Number.isFinite(Number(score.publishedScore))
+    ) {
+      return {
+        score: Number(score.publishedScore),
+        feedback: score.publishedFeedback || "",
+        publishedAt: score.latestPublishedAt,
+      };
+    }
+    return score.publishedAt && Number.isFinite(Number(score.score))
+      ? score
+      : null;
+  }
+
+  function teacherPublishedStanding(gradebook, student) {
+    const published = (gradebook?.items || [])
+      .map((item) => ({
+        item,
+        grade: publishedTeacherGrade(gradebookScoreFor(student, item.id)),
+      }))
+      .filter(({ item, grade }) => grade && Number(item.weightPercent) > 0)
+      .map(({ item, grade }) => ({
+        percent: normalizedGradePercent(grade.score, item.maxScore),
+        weight: Number(item.weightPercent),
+      }))
+      .filter((record) => record.percent != null);
+    const weight = published.reduce((sum, record) => sum + record.weight, 0);
+    const earned = published.reduce(
+      (sum, record) => sum + record.percent * record.weight,
+      0,
+    );
+    return {
+      count: published.length,
+      weight,
+      average: weight ? Math.round(earned / weight) : null,
+    };
+  }
+
+  function directGradebookMarkup(course, gradebook) {
+    const directItems = (gradebook?.items || []).filter((item) =>
+      DIRECT_GRADE_MODES.has(item.submissionMode),
+    );
+    if (!directItems.length || !gradebook?.students?.length) {
+      return '<div class="teacher-empty"><p>No teacher-entered gradebook items are available yet.</p></div>';
+    }
+    return `
+      <div class="direct-gradebook-list">
+        ${directItems
+          .map(
+            (item) => `
+              <details class="direct-gradebook-item">
+                <summary>
+                  <span><span class="course-code">${escapeHtml(String(item.submissionMode || "teacher entry").replaceAll("_", " "))}</span><strong>${escapeHtml(item.title)}</strong></span>
+                  <span>${item.weightPercent}% · ${item.maxScore} points</span>
+                </summary>
+                <div class="direct-grade-students">
+                  ${gradebook.students
+                    .map((student) => {
+                      const score = gradebookScoreFor(student, item.id);
+                      const priorPublished = Boolean(
+                        !score?.publishedAt && publishedTeacherGrade(score),
+                      );
+                      const status = score?.publishedAt
+                        ? "Published"
+                        : score?.score != null
+                          ? priorPublished
+                            ? "Draft · prior result published"
+                            : "Draft"
+                          : "Not Entered";
+                      return `
+                        <form class="direct-grade-form" data-course="${course.id}" data-course-code="${course.code}" data-student="${escapeHtml(student.studentId)}" data-item="${escapeHtml(item.id)}" data-version="${Number(score?.version || 0)}" data-max-score="${Number(item.maxScore || 100)}">
+                          <div class="direct-grade-student-heading"><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)}</small></span><span class="badge ${status === "Published" ? "success" : status.startsWith("Draft") ? "warning" : ""}">${status}</span></div>
+                          <div class="form-alert" role="alert" tabindex="-1" hidden></div>
+                          <div class="direct-grade-fields">
+                            <label><span>Score</span><input name="score" type="number" min="0" max="${Number(item.maxScore || 100)}" step="1" value="${score?.score == null ? "" : Number(score.score)}" required /></label>
+                            <label><span>Feedback</span><textarea name="feedback" maxlength="10000" placeholder="Feedback visible after publishing">${escapeHtml(score?.feedback || "")}</textarea></label>
+                          </div>
+                          <div class="direct-grade-actions">
+                            <button class="button button-quiet" type="submit" name="gradeAction" value="draft">Save Draft</button>
+                            <button class="button button-primary" type="submit" name="gradeAction" value="publish">Publish to Student</button>
+                          </div>
+                        </form>
+                      `;
+                    })
+                    .join("")}
+                </div>
+              </details>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  function teacherStandingMarkup(course, gradebook) {
+    if (!gradebook?.students?.length) {
+      return `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No published gradebook records are available yet." : "Connect the secure course service to view the official gradebook."}</p></div>`;
+    }
+    return `
+      <div class="teacher-gradebook-table" role="region" aria-label="${course.code} gradebook">
+        <table>
+          <thead><tr><th>Student</th><th>Published Items</th><th>Weight Graded</th><th>Current Average</th></tr></thead>
+          <tbody>
+            ${gradebook.students
+              .map((student) => {
+                const standing = teacherPublishedStanding(gradebook, student);
+                return `<tr><td><strong>${escapeHtml(student.displayName || student.email)}</strong><small>${escapeHtml(student.email || "")}</small></td><td>${standing.count}</td><td>${standing.weight}%</td><td>${standing.average == null ? "—" : `${standing.average}%`}</td></tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function officialTeacherProgress(course) {
+    const record = platformRuntime.teacherProgress[course?.code];
+    return record && Array.isArray(record.students) ? record : null;
+  }
+
+  function teacherProgressRequestKey(course) {
+    return `teacher-progress:${course?.code || ""}`;
+  }
+
+  function invalidateTeacherProgress(course) {
+    if (!course?.code) return;
+    const key = teacherProgressRequestKey(course);
+    platformRequests.delete(key);
+    delete platformRuntime.teacherProgress[course.code];
+    delete platformRuntime.errors[key];
+  }
+
+  function teacherProgressModule(student, moduleNumber) {
+    return (student?.modules || []).find(
+      (module) => Number(module?.moduleNumber) === Number(moduleNumber),
+    );
+  }
+
+  function teacherProgressStatus(record) {
+    const key = String(record?.status || "").toLowerCase();
+    const statuses = {
+      completed: { label: "Completed", className: "success" },
+      in_progress: { label: "In Progress", className: "info" },
+      available: { label: "Available", className: "warning" },
+      locked: { label: "Locked", className: "" },
+    };
+    return {
+      key: statuses[key] ? key : "unavailable",
+      ...(statuses[key] || { label: "Unavailable", className: "" }),
+    };
+  }
+
+  function teacherProgressStatusMarkup(record, includeOverride = true) {
+    const status = teacherProgressStatus(record);
+    const override = Boolean(record?.override?.active);
+    return `<span class="badge ${status.className} teacher-progress-status" data-status="${status.key}">${status.label}</span>${includeOverride && override ? '<small class="teacher-progress-override">Override active</small>' : ""}`;
+  }
+
+  function teacherProgressOverrideExpiry(value) {
+    if (!value) return "No expiry";
+    try {
+      return `Expires ${formatDate(value, true)}`;
+    } catch {
+      return "Expiry unavailable";
+    }
+  }
+
+  function teacherProgressRefreshButton(course, label = "Refresh") {
+    const connected = Boolean(teacherCourseEndpoint(course, "progress"));
+    return `<button class="button button-quiet" type="button" data-action="refresh-teacher-progress" data-course="${escapeHtml(course.id)}" ${connected ? "" : "disabled"}>${escapeHtml(label)}</button>`;
+  }
+
+  function teacherProgressToolbar(course, progress) {
+    const updated = progress?.loadedAt
+      ? `Last refreshed ${formatDate(progress.loadedAt, true)}`
+      : "Official progress has not been refreshed.";
+    return `<div class="teacher-progress-toolbar"><small>${escapeHtml(updated)}</small>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+  }
+
+  function teacherProgressPlaceholder(course) {
+    const endpoint = teacherCourseEndpoint(course, "progress");
+    const error = platformRuntime.errors[teacherProgressRequestKey(course)];
+    if (!endpoint) {
+      return `<div class="teacher-empty"><p>Connect the secure course service to view official module progress. Browser activity is not used as a faculty record.</p>${teacherProgressRefreshButton(course, "Refresh Official Progress")}</div>`;
+    }
+    if (error) {
+      return `<div class="teacher-empty" role="alert"><h3>Official Progress Unavailable</h3><p>${escapeHtml(error)} No browser-only or roster-derived module status is shown.</p>${teacherProgressRefreshButton(course, "Try Again")}</div>`;
+    }
+    return '<div class="teacher-empty" role="status"><p>Loading official module progress… Only central school records will be shown.</p></div>';
+  }
+
+  function teacherProgressMatrixMarkup(course) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    const modules = [...(course.platformModules || [])].sort(
+      (left, right) => Number(left.number) - Number(right.number),
+    );
+    return `
+      <div class="teacher-gradebook-table teacher-progress-matrix" role="region" aria-label="${course.code} official progress matrix">
+        <table>
+          <thead><tr><th scope="col">Student</th>${modules.map((module) => `<th scope="col"><a class="teacher-progress-module-link" href="#/${platformModuleRoute(course, module, true)}" aria-label="Open Module ${module.number}">M${String(module.number).padStart(2, "0")}</a></th>`).join("")}</tr></thead>
+          <tbody>
+            ${progress.students
+              .map(
+                (student) => `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td>${modules.map((module) => `<td>${teacherProgressStatusMarkup(teacherProgressModule(student, module.number))}</td>`).join("")}</tr>`,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
+  function teacherModuleProgressMarkup(course, module) {
+    const progress = officialTeacherProgress(course);
+    if (!progress) return teacherProgressPlaceholder(course);
+    if (!progress.students.length) {
+      return `<div class="teacher-empty"><p>No official student progress records are available for this course.</p>${teacherProgressToolbar(course, progress)}</div>`;
+    }
+    return `
+      <div class="teacher-gradebook-table teacher-progress-detail" role="region" aria-label="${course.code} Module ${module.number} official student progress">
+        <table>
+          <thead><tr><th scope="col">Student</th><th scope="col">Status</th><th scope="col">Override</th></tr></thead>
+          <tbody>
+            ${progress.students
+              .map((student) => {
+                const record = teacherProgressModule(student, module.number);
+                const override = record?.override?.active
+                  ? record.override
+                  : null;
+                const expiry = teacherProgressOverrideExpiry(
+                  override?.expiresAt,
+                );
+                return `<tr><td><strong>${escapeHtml(student.displayName || student.email || student.studentId || "Student")}</strong><small>${escapeHtml(student.email || "")}</small></td><td>${teacherProgressStatusMarkup(record, false)}</td><td>${override ? `<span class="badge warning">Active Override</span><small>${escapeHtml(override.reason || "Documented faculty override")} · ${escapeHtml(expiry)}</small>` : '<span class="badge">None</span>'}</td></tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      ${teacherProgressToolbar(course, progress)}
+    `;
+  }
+
+  function teacherCourseView(course) {
+    const syllabus = course.syllabus || { units: [] };
+    const records = teacherSubmissionRecords().filter(
+      (record) => record.course.id === course.id,
+    );
+    const awaiting = records.filter(
+      isAwaitingTeacherReview,
+    );
+    const connectedRoster = platformRuntime.teacherRosters[course.code];
+    const roster = Array.isArray(connectedRoster) ? connectedRoster : [];
+    const gradebook = platformRuntime.teacherGradebooks[course.code] || null;
+    const assignments = ASSIGNMENTS.filter(
+      (assignment) => assignment.courseId === course.id,
+    );
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb">
+        <a href="#/teacher/courses">Course Management</a><span>/</span>
+        <span aria-current="page">${course.code}</span>
+      </nav>
+      <header class="teacher-course-hero">
+        <div>
+          <p class="eyebrow light">${escapeHtml(course.subject)} · ${course.code}</p>
+          <h1>${escapeHtml(course.title)}</h1>
+          <p>${escapeHtml(course.description)}</p>
+        </div>
+        <div class="teacher-course-hero-actions">
+          <a class="button button-gold" href="#/teacher/submissions/${course.id}">Action Inbox</a>
+          <a class="button button-on-dark" href="#/teacher/materials">Course Materials</a>
+        </div>
+      </header>
+      <section class="teacher-metrics teacher-course-metrics" aria-label="${course.code} overview">
+        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${roster.length}</strong><p>Enrolled Students</p></article>
+        <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${assignments.length}</strong><p>Formal Assessments</p></article>
+        <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${records.length}</strong><p>Submissions</p></article>
+        <article class="teacher-metric"><span>${icon("clock", 22)}</span><strong>${awaiting.length}</strong><p>Awaiting Review</p></article>
+      </section>
+      <section class="teacher-course-workspace">
+        <div>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Syllabus</p><h2>110-Hour Course Plan</h2></div><span class="badge">${escapeHtml(course.credit)}</span></div>
+            <p class="teacher-section-copy">${escapeHtml(syllabus.description || course.overview)}</p>
+            <div class="teacher-syllabus-list platform-teacher-module-list">
+              ${(course.platformModules || [])
+                .map(
+                  (module) => `
+                    <a href="#/${platformModuleRoute(course, module, true)}"><span>${String(module.number).padStart(2, "0")}</span><div><small>${escapeHtml(module.unitTitle || "Course Sequence")}</small><strong>${escapeHtml(module.title)}</strong></div><b>${module.estimatedCreditHours || 0}h</b>${icon("arrow", 15)}</a>
+                  `,
+                )
+                .join("")}
+            </div>
+            <div class="teacher-evaluation-strip">
+              ${course.evaluation.map((item) => `<span><strong>${item.weight}%</strong>${escapeHtml(item.label)}</span>`).join("")}
+            </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student × Module Matrix</h2></div><span class="badge">${course.platformModules.length} modules</span></div>
+            <p class="teacher-section-copy">Central school records are shown for each enrolled student. Select a module heading to review its status and active overrides in detail.</p>
+            ${teacherProgressMatrixMarkup(course)}
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Evaluation Plan</p><h2>Formal Assessments</h2></div><span class="badge">${assignments.length} tasks</span></div>
+            <p class="teacher-section-copy">Coursework contributes 65%, the final evaluation contributes 25%, and teacher-recorded participation contributes 10%. Open a task to review student submissions in the existing grading workflow.</p>
+            <div class="teacher-assignment-list">
+              ${
+                assignments.length
+                  ? assignments
+                      .map(
+                        (assignment) => `
+                          <article>
+                            <span class="course-chip">${escapeHtml(assignment.unit)}</span>
+                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p></div>
+                            <a class="button button-quiet" href="#/teacher/submissions/${course.id}/${assignment.id}">Submissions</a>
+                          </article>
+                        `,
+                      )
+                      .join("")
+                  : '<div class="teacher-empty"><p>No formal assessments have been added to this course yet.</p></div>'
+              }
+            </div>
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Gradebook</p><h2>Course Standing</h2></div><span class="badge">${course.gradebookItems?.length || assignments.length} items</span></div>
+            ${teacherStandingMarkup(course, gradebook)}
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Teacher-Entered Results</p><h2>Supervised, Participation & Oral Results</h2></div><span class="badge">Draft or Publish</span></div>
+            <p class="teacher-section-copy">Enter results that do not use the student submission workflow. Drafts remain staff-only; published results appear in the student grade report.</p>
+            ${directGradebookMarkup(course, gradebook)}
+          </section>
+          <section class="teacher-section">
+            <div class="section-heading"><div><p class="eyebrow">Student Work</p><h2>Recent Submissions</h2></div><a class="text-link" href="#/teacher/submissions/${course.id}">View All ${icon("arrow", 15)}</a></div>
+            <div class="teacher-records">
+              ${records.length ? records.slice(0, 4).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
+            </div>
+          </section>
+        </div>
+        <aside>
+          <section class="teacher-section teacher-roster-card">
+            <div class="section-heading"><div><p class="eyebrow">Roster</p><h2>Enrolled Students</h2></div></div>
+            ${
+              roster.length
+                ? `<div class="teacher-roster">${roster
+                    .map(
+                      (student) => `
+                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)} · ${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules</small></span></div>
+                      `,
+                    )
+                    .join("")}</div>`
+                : `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No enrolled students are available for this course." : "Connect the secure course service to view the official roster and progress."}</p></div>`
+            }
+          </section>
+          <section class="teacher-section teacher-drive-card">
+            <div class="section-heading"><div><p class="eyebrow">Secure Course Index</p><h2>Course Files</h2></div><span class="badge">${plural(courseDriveMaterialCount(course), "item")}</span></div>
+            <div class="teacher-drive-actions">${courseMaterialsBody(course, "Resources")}</div>
+            <p class="teacher-security-note"><strong>Files open through the school API.</strong> Direct Google Drive sharing is not required, and staff-only access remains enforced by the signed-in role.</p>
+          </section>
+        </aside>
+      </section>
+    `;
+  }
+
+  function teacherModuleView(course, module) {
+    const assignments = platformAssignmentsForModule(course, module);
+    const roster = Array.isArray(platformRuntime.teacherRosters[course.code])
+      ? platformRuntime.teacherRosters[course.code]
+      : [];
+    const remoteModule = remotePlatformModule(course, module);
+    const displayModule = teacherDisplayModule(course, module, remoteModule);
+    const assessment = displayModule.assessment || {};
+    module = displayModule;
+    const unlockReady = Boolean(
+      remoteModule?.id &&
+        roster.length &&
+        configuredDriveUrl(PLATFORM_API_CONFIG.teacherStudentsEndpoint),
+    );
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb"><a href="#/teacher/courses">Course Management</a><span>/</span><a href="#/teacher/course/${course.id}">${course.code}</a><span>/</span><span aria-current="page">Module ${module.number}</span></nav>
+      <header class="teacher-course-hero module-teacher-hero"><div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div><div class="teacher-course-hero-actions"><a class="button button-gold" href="#/teacher/submissions/${course.id}">Open Action Inbox</a><a class="button button-on-dark" href="#/teacher/course/${course.id}">Back to Course</a></div></header>
+      <section class="teacher-module-layout">
+        <div>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Instructional Plan</p><h2>Teacher Presence</h2></div><span class="badge">${module.estimatedCreditHours || 0} hours</span></div><p class="teacher-section-copy">${escapeHtml(module.teacherPresence)}</p><h3>Learning Focus</h3><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Sequence</p><h2>Reading, Practice & Check</h2></div></div><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol><div class="module-activity-grid"><article><h3>Guided Practice</h3><p>${escapeHtml(module.guidedPractice)}</p></article><article><h3>Low-Stakes Check</h3><p>${escapeHtml(module.lowStakesCheck)}</p></article></div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}%</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
+        </div>
+        <aside>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Official Progress</p><h2>Student Module Status</h2></div><span class="badge">M${String(module.number).padStart(2, "0")}</span></div>${teacherModuleProgressMarkup(course, module)}</section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Override</p><h2>Unlock Module</h2></div></div><p>Use only for an accommodation, technical barrier or documented alternative pathway. A reason is required and retained in the audit record.</p><form id="unlock-override-form" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}"><div class="form-alert" role="alert" tabindex="-1" hidden></div><label for="unlock-student">Student</label><select id="unlock-student" name="studentId" required ${!unlockReady ? "disabled" : ""}><option value="">Select a student</option>${roster.map((student) => `<option value="${escapeHtml(student.studentId || student.id || "")}">${escapeHtml(student.displayName)} · ${escapeHtml(student.email)}</option>`).join("")}</select><label for="unlock-reason">Documented reason</label><textarea id="unlock-reason" name="reason" required minlength="10" placeholder="Describe the approved accommodation, technical barrier or alternative pathway." ${!unlockReady ? "disabled" : ""}></textarea><button class="button button-primary full-width" type="submit" ${!unlockReady ? "disabled" : ""}>Create Unlock Override</button>${!unlockReady ? '<p class="teacher-security-note"><strong>Official service required.</strong> Unlocks are never stored as browser-only authority.</p>' : ""}</form></section>
+        </aside>
+      </section>`;
+  }
+
+  function teacherSubmissionsView(courseId = "", assignmentId = "") {
+    const course = courseId ? findCourse(courseId) : null;
+    const assignment = assignmentId ? findAssignment(assignmentId) : null;
+    const allRecords = teacherSubmissionRecords();
+    const unreadNotifications = notificationItems().filter(
+      (item) => !item.readAt,
+    );
+    const selectedCourse =
+      course?.id || teacherSubmissionFilters.course || "all";
+    const selectedStatus = assignment
+      ? "all"
+      : teacherSubmissionFilters.status || "awaiting";
+    const query = teacherSubmissionFilters.query || "";
+    const scopedRecords = allRecords.filter(
+      (record) =>
+        (selectedCourse === "all" || record.course.id === selectedCourse) &&
+        (!assignment || record.assignment.id === assignment.id),
+    );
+    const records = scopedRecords.filter(
+      (record) =>
+        (selectedStatus === "all" ||
+          (selectedStatus === "awaiting"
+            ? isAwaitingTeacherReview(record)
+            : teacherSubmissionBucket(record) === selectedStatus)) &&
+        teacherRecordMatchesQuery(record, query),
+    );
+    const statusCounts = {
+      all: scopedRecords.length,
+      awaiting: scopedRecords.filter(isAwaitingTeacherReview).length,
+      revision: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "revision",
+      ).length,
+      draft: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "draft",
+      ).length,
+      graded: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "graded",
+      ).length,
+      unmapped: scopedRecords.filter(
+        (record) => teacherSubmissionBucket(record) === "unmapped",
+      ).length,
+    };
+    const title = course
+      ? `${course.code} · ${course.title}`
+      : "All Student Submissions";
+    const selectedAssignmentLabel = assignment
+      ? `${assignment.unit} · ${assignment.title}`
+      : "";
+    const lastUpdated = remoteSubmissionsState.lastLoadedAt
+      ? `Updated ${formatDate(remoteSubmissionsState.lastLoadedAt, true)}`
+      : submissionsEndpointUrl()
+        ? "Waiting for the first Lotus Drive refresh"
+        : "Showing submissions available on this device";
+    const emptyTitle =
+      query || selectedStatus !== "awaiting"
+        ? "No Submissions Match These Filters"
+        : "You’re All Caught Up";
+    const recordsMarkup =
+      submissionsRequestInFlight && !allRecords.length
+        ? `<div class="teacher-empty" role="status">${icon("clock", 30)}<h3>Loading Submissions…</h3><p>Checking Lotus Drive for the latest student work.</p></div>`
+        : remoteSubmissionsState.error && !allRecords.length
+          ? `<div class="teacher-empty">${icon("file", 30)}<h3>Couldn’t Load Submissions</h3><p>No records could be loaded. Try the connection again.</p><button class="button button-primary" type="button" data-action="refresh-submissions">Try Again</button></div>`
+          : teacherHierarchy(
+              records,
+              query
+                ? "No submissions match this search. Try a student, assignment, file name or receipt."
+                : selectedStatus === "awaiting"
+                  ? "No submitted work is waiting for review right now."
+                  : selectedStatus !== "all"
+                    ? "No submissions match this review status."
+                    : "Student work will appear here after it is submitted.",
+              emptyTitle,
+            );
+    return `
+      ${pageHeading(
+        course ? course.subject : "Action Inbox",
+        title,
+        course
+          ? `Browse ${course.code} work by student, module and assignment.`
+          : "Every uploaded assignment is organized by course, student, unit and assignment.",
+        course
+          ? '<a class="button button-secondary" href="#/teacher/submissions">View All Courses</a>'
+          : "",
+      )}
+      ${
+        unreadNotifications.length
+          ? `<aside class="teacher-inbox-notification-summary" aria-label="Unread faculty notifications">
+              <span>${icon("bell", 20)}</span>
+              <div><strong>${plural(unreadNotifications.length, "unread update")}</strong><p>${escapeHtml(unreadNotifications[0].title)}${unreadNotifications.length > 1 ? ` and ${unreadNotifications.length - 1} more` : ""}</p></div>
+              <a class="button button-secondary" href="#/teacher/notifications">Review Notifications</a>
+            </aside>`
+          : ""
+      }
+      <section class="teacher-section teacher-submission-centre" aria-busy="${submissionsRequestInFlight}">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">${course ? "Course Files" : "Faculty Records"}</p>
+            <h2>${plural(records.length, "Matching Submission")}</h2>
+          </div>
+          <div class="teacher-refresh-summary">
+            <span>${escapeHtml(lastUpdated)}</span>
+            ${
+              submissionsEndpointUrl()
+                ? `<button class="button button-secondary" type="button" data-action="refresh-submissions" ${submissionsRequestInFlight ? "disabled" : ""}>${submissionsRequestInFlight ? "Refreshing…" : "Refresh"}</button>`
+                : ""
+            }
+          </div>
+        </div>
+        <form class="teacher-submission-filters" id="teacher-submission-filter-form">
+          <label>
+            <span>Search</span>
+            <input name="query" type="search" value="${escapeHtml(query)}" placeholder="Student, assignment, file or receipt" />
+          </label>
+          <label>
+            <span>Course</span>
+            <select name="course">
+              <option value="all" ${selectedCourse === "all" ? "selected" : ""}>All Courses</option>
+              ${catalogCourses()
+                .map(
+                  (item) =>
+                    `<option value="${item.id}" ${selectedCourse === item.id ? "selected" : ""}>${item.code} · ${escapeHtml(item.title)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <button class="button button-primary" type="submit">Apply Filters</button>
+          <button class="button button-quiet" type="button" data-action="clear-teacher-filters">Reset</button>
+        </form>
+        ${
+          selectedAssignmentLabel
+            ? `<div class="teacher-active-filter"><span>Assignment</span><strong>${escapeHtml(selectedAssignmentLabel)}</strong><a href="#/teacher/submissions/${course?.id || ""}">Clear assignment filter</a></div>`
+            : ""
+        }
+        <div class="teacher-queue-tabs" aria-label="Filter submissions by review status">
+          ${[
+            ["awaiting", "Needs Review"],
+            ["draft", "Grading Drafts"],
+            ["revision", "Revision Requested"],
+            ["graded", "Grade Published"],
+            ["unmapped", "Needs Mapping"],
+            ["all", "All"],
+          ]
+            .map(
+              ([key, label]) => `
+                <button type="button" data-action="set-teacher-status" data-status="${key}" aria-pressed="${selectedStatus === key}">
+                  <span>${label}</span><strong>${statusCounts[key]}</strong>
+                </button>
+              `,
+            )
+            .join("")}
+        </div>
+        ${
+          submissionsRequestInFlight
+            ? '<p class="form-notice" role="status">Refreshing submissions from Lotus Drive…</p>'
+            : remoteSubmissionsState.error && allRecords.length
+              ? `<div class="form-notice teacher-refresh-error" role="alert"><span>${escapeHtml(remoteSubmissionsState.error)} Existing records remain available below.</span><button class="button button-secondary" type="button" data-action="refresh-submissions">Try Again</button></div>`
+              : ""
+        }
+        ${recordsMarkup}
+      </section>
+    `;
+  }
+
+  function teacherSubmissionDetailView(studentKey, assignmentId) {
+    const record = teacherSubmissionRecords().find(
+      (item) =>
+        studentRecordKey(item.student) === studentKey &&
+        item.assignment.id === assignmentId,
+    );
+    if (!record) {
+      return `
+        <div class="teacher-empty">
+          ${icon("file", 30)}
+          <h1>Submission Not Found</h1>
+          <p>This record is unavailable or no longer belongs to an active student account.</p>
+          <a class="button button-primary" href="#/teacher/submissions">Return to Action Inbox</a>
+        </div>
+      `;
+    }
+    const status = teacherSubmissionStatus(record);
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      record.submission.workflowStatus || record.submission.status,
+      record.submission.publishedAt,
+    );
+    const attemptNumber = Number(record.submission.attemptNumber || 1);
+    const maximumAttempts = Number(record.submission.maxAttempts || 99);
+    const revisionEndpointReady = Boolean(
+      submissionWorkflowEndpoint(
+        record.submission.id || record.id,
+        "return",
+      ),
+    );
+    const revisionRequestBlockedReason =
+      workflowStatus === "revision_requested"
+        ? "A revision has already been requested for this attempt. Wait for the student to submit a new version."
+        : workflowStatus === "graded"
+          ? "This grade has already been published. Use the documented grade revision process if the result must change."
+          : attemptNumber >= maximumAttempts
+            ? "This assignment has no remaining attempt available for revision."
+            : ["rejected", "withdrawn"].includes(workflowStatus)
+              ? "This submission is no longer active."
+              : record.unmapped
+                ? "Map this submission to the course catalogue before returning it."
+                : !revisionEndpointReady
+                  ? "The secure revision workflow is not connected."
+                  : "";
+    const canRequestRevision = !revisionRequestBlockedReason;
+    const gradingBlockedByRevision = workflowStatus === "revision_requested";
+    const gradingDraft = gradingDraftFor(record);
+    const centralDraft =
+      !gradingDraft &&
+      record.submission.score != null &&
+      !record.submission.publishedAt &&
+      record.submission.status !== "graded";
+    const gradeScoreValue =
+      gradingDraft?.score ??
+      (record.submission.score == null ? "" : String(record.submission.score));
+    const gradeRubric = gradingDraft?.rubric ?? record.submission.rubric ?? [];
+    const gradeFeedbackValue =
+      gradingDraft?.feedback ?? record.submission.feedback ?? "";
+    const nextAwaitingRecord = teacherSubmissionRecords().find(
+      (item) => item.id !== record.id && isAwaitingTeacherReview(item),
+    );
+    const history = record.history.length
+      ? [...record.history].reverse()
+      : [
+          {
+            attemptNumber: record.submission.attemptNumber,
+            fileName: record.submission.fileName,
+            submittedAt: record.submission.submittedAt,
+            receiptId: record.submission.receiptId,
+            fileReceiptId: record.submission.fileReceiptId,
+            fileSize: record.submission.fileSize,
+            fileType: record.submission.fileType,
+          },
+        ];
+    return `
+      <nav class="teacher-breadcrumbs" aria-label="Breadcrumb">
+        <a href="#/teacher/submissions">Action Inbox</a><span>/</span>
+        ${
+          record.unmapped
+            ? `<span>${escapeHtml(record.course.code)}</span>`
+            : `<a href="#/teacher/course/${record.course.id}">${escapeHtml(record.course.code)}</a>`
+        }<span>/</span>
+        <span>${escapeHtml(record.student.displayName)}</span><span>/</span>
+        <span>${escapeHtml(record.assignment.unit)}</span><span>/</span>
+        <span aria-current="page">${escapeHtml(record.assignment.title)}</span>
+      </nav>
+      ${pageHeading(
+        `${escapeHtml(record.course.code)} · ${escapeHtml(record.assignment.unit)}`,
+        escapeHtml(record.assignment.title),
+        `${escapeHtml(record.student.displayName)} · ${escapeHtml(record.student.email || record.student.id || "Student record")}`,
+        `<div class="teacher-detail-heading-actions"><span class="status ${status.className}">${status.label}</span><button class="button button-primary" type="button" data-action="focus-grading" ${gradingBlockedByRevision ? "disabled" : ""}>${gradingBlockedByRevision ? "Awaiting New Version" : "Grade Submission"}</button></div>`,
+      )}
+      <section class="teacher-detail-grid">
+        <div>
+          <article class="teacher-detail-card">
+            <p class="eyebrow">Student Submission</p>
+            <h2>Submission Note</h2>
+            <p>${escapeHtml(record.submission.text || "No written response was included.")}</p>
+          </article>
+          <article class="teacher-detail-card">
+            <div class="section-heading"><div><p class="eyebrow">Files & Versions</p><h2>Submission History</h2></div></div>
+            <div class="teacher-records">
+              ${history.map((version, index) => {
+                const versionNumber = Number.isInteger(
+                  Number(version.attemptNumber),
+                )
+                  ? Number(version.attemptNumber)
+                  : history.length - index;
+                const fileReceiptId =
+                  version.fileReceiptId ||
+                  (index === 0 ? record.submission.fileReceiptId : "");
+                const fileUrl = configuredDriveUrl(
+                  version.fileUrl ||
+                    (index === 0 ? record.submission.fileUrl : ""),
+                  configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
+                    window.location.href,
+                );
+                const fileName =
+                  version.fileName ||
+                  (index === 0 ? record.submission.fileName : "") ||
+                  "Submission note only";
+                return `
+                  <article class="submission-file-card">
+                    <span>${icon("file", 22)}</span>
+                    <div>
+                      <strong>${escapeHtml(fileName)}</strong>
+                      <p>Version ${versionNumber} · ${formatDate(version.submittedAt, true)}</p>
+                      <small>${escapeHtml(version.receiptId || "")}${version.fileSize ? ` · ${formatFileSize(version.fileSize)}` : ""}</small>
+                    </div>
+                    ${fileUrl
+                      ? `<a class="button button-secondary" href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Open File</a>`
+                      : fileReceiptId
+                        ? `<button class="button button-secondary" type="button" data-action="download-submission" data-receipt="${escapeHtml(fileReceiptId)}">Download File</button>`
+                        : '<span class="file-unavailable">File metadata only</span>'}
+                  </article>
+                `;
+              }).join("")}
+            </div>
+            <p class="login-help"><strong>File Availability</strong>${submissionsEndpointUrl() ? "Submitted files are opened through the secure school service. Records without an attached file show metadata only." : "Files saved in this browser can be downloaded here. Records created on another device may show metadata only."}</p>
+          </article>
+          <article class="teacher-detail-card">
+            ${submissionThreadMarkup(record.submission, { faculty: true })}
+          </article>
+        </div>
+        <aside>
+          <article class="teacher-detail-card">
+            <p class="eyebrow">Record Details</p>
+            <h2>${escapeHtml(record.student.displayName)}</h2>
+            <dl>
+              ${
+                record.student.email
+                  ? `<div><dt>Email</dt><dd>${escapeHtml(record.student.email)}</dd></div>`
+                  : `<div><dt>Student ID</dt><dd>${escapeHtml(record.student.id || "Unavailable")}</dd></div>`
+              }
+              <div><dt>Course</dt><dd>${escapeHtml(record.course.code)} · ${escapeHtml(record.course.title)}</dd></div>
+              <div><dt>Unit</dt><dd>${escapeHtml(record.assignment.unit)} · ${escapeHtml(record.assignment.unitTitle)}</dd></div>
+              <div><dt>Module</dt><dd>${record.moduleNumber == null ? "Not mapped" : `Module ${String(record.moduleNumber).padStart(2, "0")}`}</dd></div>
+              <div><dt>Submitted</dt><dd>${formatDate(record.submission.submittedAt, true)}</dd></div>
+              <div><dt>Receipt</dt><dd>${escapeHtml(record.submission.receiptId)}</dd></div>
+              <div><dt>Versions</dt><dd>${record.versionCount}</dd></div>
+            </dl>
+          </article>
+          <article class="teacher-detail-card revision-request-card">
+            <p class="eyebrow">Student Next Step</p>
+            <h2>Request Revision</h2>
+            <p>${escapeHtml(
+              revisionRequestBlockedReason ||
+                "Return this attempt with a clear, assignment-specific message. The student can submit a new version while prior evidence remains available.",
+            )}</p>
+            <form class="interaction-message-form" id="revision-request-form" data-submission="${escapeHtml(record.submission.id || record.id)}">
+              <label for="revision-request-message">Required revision message</label>
+              <textarea id="revision-request-message" name="message" minlength="3" maxlength="10000" required placeholder="Explain what the student should revise and what evidence to resubmit." ${canRequestRevision ? "" : "disabled"}></textarea>
+              <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+              <button class="button button-secondary" type="submit" ${canRequestRevision ? "" : "disabled"}>${workflowStatus === "revision_requested" ? "Revision Requested" : "Return for Revision"}</button>
+            </form>
+          </article>
+          <article class="teacher-detail-card grading-card">
+            <p class="eyebrow">Assessment</p>
+            <h2>Grade This Submission</h2>
+            <form class="assignment-form grading-form" id="grading-form"
+              data-submission="${escapeHtml(record.submission.id || record.id)}"
+              data-student="${escapeHtml(studentRecordKey(record.student))}"
+              data-assignment="${escapeHtml(record.assignment.id)}">
+              <fieldset class="grading-rubric" ${gradingBlockedByRevision ? "disabled" : ""}>
+                <legend>Rubric (optional)</legend>
+                <p>Each criterion contributes its possible points to the total. The percentage is rounded to the nearest whole number.</p>
+                <div class="rubric-rows">${gradeRubric.map(rubricRowMarkup).join("")}</div>
+                ${assignmentRubricRows(record.assignment).length ? `<button type="button" class="button button-secondary" data-action="use-assignment-rubric" ${gradeRubric.length ? "hidden" : ""}>Use assignment rubric</button>` : ""}
+                <button type="button" class="button button-secondary" data-action="add-criterion" ${gradeRubric.length >= 12 ? "disabled" : ""}>Add criterion</button>
+              </fieldset>
+              <label for="grade-score">Percentage Score</label>
+              <div class="grade-score-input">
+                <input id="grade-score" name="score" type="number" min="0" max="100" step="1" inputmode="numeric" required aria-describedby="grading-form-alert grading-help" value="${escapeHtml(gradeScoreValue)}" ${gradeRubric.length ? "readonly" : ""} ${gradingBlockedByRevision ? "disabled" : ""} />
+                <span aria-hidden="true">%</span>
+              </div>
+              <label for="grade-feedback">Teacher Feedback</label>
+              <textarea id="grade-feedback" name="feedback" maxlength="10000" required aria-describedby="grading-form-alert grading-help" placeholder="Explain strengths and the next step for improvement." ${gradingBlockedByRevision ? "disabled" : ""}>${escapeHtml(gradeFeedbackValue)}</textarea>
+              <p class="form-alert is-error" id="grading-form-alert" role="alert" tabindex="-1" hidden></p>
+              <p class="grading-status ${
+                gradingBlockedByRevision
+                  ? "is-pending"
+                  : gradingDraft || centralDraft
+                  ? "is-draft"
+                  : record.submission.score != null
+                    ? "is-graded"
+                    : "is-pending"
+              }">${
+                gradingBlockedByRevision
+                  ? "Revision requested · Grading resumes when the student submits a new version."
+                  : gradingDraft
+                  ? `Draft saved on this device at ${formatDate(gradingDraft.savedAt, true)} · Not published to the student.`
+                  : centralDraft
+                    ? `Draft saved to the school record${record.submission.updatedAt || record.submission.gradedAt ? ` at ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""} · Not published to the student; any earlier published result remains visible.`
+                  : record.submission.score != null
+                    ? `Published at ${record.submission.score}%${record.submission.updatedAt || record.submission.gradedAt ? ` · Updated ${formatDate(record.submission.updatedAt || record.submission.gradedAt, true)}` : ""}`
+                    : "Awaiting grading"
+              }</p>
+              <div class="grading-actions">
+                <button class="button button-secondary" type="button" data-action="save-grade-draft" ${gradingBlockedByRevision ? "disabled" : ""}>Save Draft</button>
+                <button class="button button-primary" type="submit" ${
+                  gradingBlockedByRevision ||
+                  record.unmapped ||
+                  (submissionsEndpointUrl() &&
+                    !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint))
+                    ? "disabled"
+                    : ""
+                }>Publish Grade & Feedback</button>
+              </div>
+              ${
+                gradingBlockedByRevision
+                  ? '<p class="login-help" id="grading-help">This attempt is waiting for a student resubmission. Open the new version from the Action Inbox before grading.</p>'
+                  : record.unmapped
+                  ? '<p class="login-help" id="grading-help">This Lotus record is not matched to the local assignment catalogue. Confirm the course and assignment before publishing.</p>'
+                  : submissionsEndpointUrl() &&
+                      !configuredDriveUrl(SUBMISSION_CONFIG.gradingEndpoint)
+                  ? '<p class="login-help" id="grading-help">You can save a device draft now. Connect the grading service before publishing to the student.</p>'
+                  : '<p class="login-help" id="grading-help">Save Draft syncs a valid score and current feedback to the school record without showing it to the student. Publish releases the percentage and feedback.</p>'
+              }
+              ${
+                nextAwaitingRecord
+                  ? `<a class="button button-quiet grading-next-link" href="${teacherRecordLink(nextAwaitingRecord)}">Review Next Submission ${icon("arrow", 15)}</a>`
+                  : ""
+              }
+            </form>
+          </article>
+        </aside>
+      </section>
+    `;
+  }
+
+  function authStory() {
+    return `
+      <section class="login-story" aria-label="Lake Forest Academy learning community">
+        <img src="../images/academics-seminar.jpg" alt="Students learning together in a classroom" />
+        <span class="login-overlay"></span>
+        <div class="login-story-content">
+          <img class="login-logo" src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+          <div class="login-story-copy">
+            <p class="eyebrow light">Lake Forest Learning</p>
+            <h1>Your Courses.<br />Your Next Step.</h1>
+            <p>Access OSSD lessons, submit assignments, review feedback and keep your learning on track from one clear workspace.</p>
+          </div>
+          <p class="login-location">North York · Ontario · Canada</p>
+        </div>
+      </section>
+    `;
+  }
+
+  function authPage(title, content) {
+    document.title = `${title} | Lake Forest Learning`;
+    APP_ROOT.innerHTML = `
+      <main class="login-page" id="main-content">
+        ${authStory()}
+        <section class="login-panel">
+          <div class="login-panel-inner">
+            <img class="login-mobile-logo" src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
+            ${content}
+            ${connectionRecoveryView()}
+          </div>
+        </section>
+      </main>
+    `;
+  }
+
+  function connectionRecoveryView() {
+    if (
+      typeof window.LFA_RECHECK_SERVICES !== "function" ||
+      !["ready", "unavailable"].includes(API_STATUS.state)
+    ) return "";
+    return `<div class="connection-recovery">
+      <p class="auth-setup-note" data-connection-feedback role="status" aria-live="polite">${serviceRetryPending ? "Checking the connection…" : "Having trouble connecting? Check the connection without leaving this page."}</p>
+      <button type="button" class="button button-secondary full-width" data-action="retry-services" ${serviceRetryPending ? 'disabled aria-busy="true"' : ""}>${serviceRetryPending ? "Checking Connection…" : "Check Connection Again"}</button>
+    </div>`;
+  }
+
+  async function retrySchoolServices(target) {
+    if (serviceRetryPending || authSubmissionPending || typeof window.LFA_RECHECK_SERVICES !== "function") return;
+    serviceRetryPending = true;
+    const route = window.location.hash;
+    const generation = platformSessionGeneration;
+    const unchanged = () => window.location.hash === route &&
+      platformSessionGeneration === generation;
+    const originalLabel = target.textContent;
+    target.disabled = true;
+    target.setAttribute("aria-busy", "true");
+    target.textContent = "Checking Connection…";
+    const feedback = () => document.querySelector("[data-connection-feedback]");
+    if (feedback()) feedback().textContent = "Checking secure services. Your form has not been submitted.";
+    let restored = false;
+    try {
+      await window.LFA_RECHECK_SERVICES();
+      refreshServiceConfiguration();
+      if (!unchanged() || isSignedIn()) return;
+      if (AUTH_CONFIG.workspaceSessionEndpoint) {
+        remoteSessionValidated = false;
+        restored = await restoreWorkspaceSession({ canApply: unchanged });
+      }
+      if (window.location.hash !== route || (!restored && !unchanged())) return;
+      // Keep values in the current DOM only. Do not persist passwords, replay
+      // a form submission, or discard edits made while the check was running.
+      const fields = [...(document.querySelectorAll?.(".login-panel input, .login-panel select, .login-panel textarea") || [])]
+        .filter((field) => field.id && field.type !== "file")
+        .map((field) => ({ id: field.id, value: field.value, checked: field.checked }));
+      serviceRetryPending = false;
+      render(false, true);
+      if (!restored) {
+        for (const field of fields) {
+          const input = document.getElementById?.(field.id);
+          if (input) { input.value = field.value; input.checked = field.checked; }
+        }
+        updatePasswordRules();
+        if (feedback()) feedback().textContent = API_STATUS.state === "ready"
+          ? "Connection checked. Available sign-in options are shown above."
+          : "Still unable to connect. Check your internet connection and try again in a moment.";
+        document.querySelector('[data-action="retry-services"]')?.focus();
+      }
+    } catch {
+      if (unchanged() && feedback()) feedback().textContent = "The connection check could not finish. Please try again.";
+    } finally {
+      serviceRetryPending = false;
+      target.disabled = false;
+      target.setAttribute("aria-busy", "false");
+      target.textContent = originalLabel;
+      // A route switch during the check may have rendered a different button.
+      const currentButton = document.querySelector('[data-action="retry-services"]');
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.setAttribute("aria-busy", "false");
+        currentButton.textContent = "Check Connection Again";
+      }
+      if (remoteSessionValidated && document.querySelector("[data-session-check]")) {
+        render(false, true);
+      }
+    }
+  }
+
+  function sessionCheckView() {
+    authPage(
+      "Checking Secure Session",
+      `
+        <p class="eyebrow">Secure Access</p>
+        <h1>Checking Your Session</h1>
+        <p class="login-intro" data-session-check role="status">Confirming whether you are already signed in to Lake Forest Learning&hellip;</p>
+      `,
+    );
+  }
+
+  function passwordInput(
+    id,
+    label,
+    autocomplete,
+    describedBy = "",
+    hint = "",
+  ) {
+    const fieldHint =
+      hint ||
+      (id === "password"
+        ? "Secure access"
+        : id.toLowerCase().includes("confirm")
+          ? "Enter it again"
+          : "12–128 characters");
+    return `
+      <div class="password-label">
+        <label for="${id}">${label}</label>
+        <span>${escapeHtml(fieldHint)}</span>
+      </div>
+      <div class="auth-input-wrap">
+        <input id="${id}" name="${id}" type="password" autocomplete="${autocomplete}" ${describedBy ? `aria-describedby="${describedBy}"` : ""} required />
+        <button class="password-toggle" type="button" data-action="toggle-password" data-target="${id}" aria-label="Show ${label.toLowerCase()}" aria-pressed="false">Show</button>
+      </div>
+    `;
+  }
+
+  function loginView({
+    error = "",
+    email = "",
+    notice = "",
+    portal = "student",
+  } = {}) {
+    const facultyPortal = portal === "faculty";
+    const savedEmail = email || signInPrefill;
+    const callbackFeedback = facultyPortal ? workspaceLoginFeedback() : null;
+    const message =
+      notice ||
+      signInNotice ||
+      (callbackFeedback?.tone !== "error" ? callbackFeedback?.message || "" : "");
+    const renderedError =
+      error ||
+      (callbackFeedback?.tone === "error" ? callbackFeedback.message : "");
+    const messageClass =
+      !notice &&
+      !signInNotice &&
+      callbackFeedback?.tone === "notice"
+        ? "form-notice"
+        : "form-success";
+    const workspaceReady = Boolean(googleWorkspaceAuthUrl());
+    const passwordSignInReady =
+      serverAuthReady() || AUTH_CONFIG.allowDeviceAccounts;
+    const portalSwitcher = `
+      <nav class="portal-switcher" aria-label="Choose a sign-in portal">
+        <a class="portal-switch-link ${facultyPortal ? "" : "is-active"}" href="#/signin/student" ${facultyPortal ? "" : 'aria-current="page"'}>Student Sign In</a>
+        <a class="portal-switch-link ${facultyPortal ? "is-active" : ""}" href="#/signin/faculty" ${facultyPortal ? 'aria-current="page"' : ""}>Faculty Sign In</a>
+      </nav>
+    `;
+    authPage(
+      facultyPortal ? "Faculty Sign In" : "Student Sign In",
+      `
+        ${portalSwitcher}
+        <p class="eyebrow">${facultyPortal ? "Faculty Portal" : "Student Portal"}</p>
+          <h1>Welcome Back</h1>
+          <p class="login-intro">${
+            facultyPortal
+              ? "Sign in with your Lake Forest Academy Google Workspace account or your assigned faculty credentials."
+              : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
+          }</p>
+        ${message ? `<p class="${messageClass}" role="status">${escapeHtml(message)}</p>` : ""}
+        ${
+          facultyPortal
+            ? `
+              <button class="button workspace-button full-width" type="button" data-action="google-workspace-signin" ${workspaceReady ? "" : 'disabled aria-disabled="true"'}>
+                <span class="google-mark" aria-hidden="true">G</span>
+                Continue with Google Workspace
+              </button>
+              <p class="auth-setup-note ${workspaceReady ? "is-ready" : ""}" role="status">
+                ${
+                  workspaceReady
+                    ? "Google Workspace sign-in is available."
+                    : "Google Workspace sign-in is unavailable right now. Check the connection below, or use your assigned faculty credentials."
+                }
+              </p>
+              <p class="login-help"><strong>Private Session</strong>Signing out of Lake Forest Learning does not sign you out of Google in this browser.</p>
+              <div class="auth-divider"><span>or use faculty credentials</span></div>
+            `
+            : ""
+        }
+        <form id="login-form" novalidate>
+          <input type="hidden" name="portal" value="${facultyPortal ? "faculty" : "student"}" />
+          <label for="email">Email Address</label>
+          <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
+          ${passwordInput("password", "Password", "current-password")}
+          ${
+            configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint)
+              ? `<div class="auth-form-links"><a href="${escapeHtml(`#/forgot-password?portal=${facultyPortal ? "faculty" : "student"}&email=${encodeURIComponent(savedEmail)}`)}">Forgot your password?</a></div>`
+              : ""
+          }
+          ${renderedError ? `<p class="form-error" role="alert">${escapeHtml(renderedError)}</p>` : ""}
+          <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
+        </form>
+        ${
+          passwordSignInReady
+            ? ""
+            : `<p class="auth-setup-note ${API_STATUS.state === "unavailable" || API_STATUS.state === "invalid" ? "is-error" : ""}" role="${API_STATUS.state === "invalid" ? "alert" : "status"}">${escapeHtml(apiAvailabilityMessage("Secure password sign-in is awaiting the school API deployment. No browser-only password is accepted."))}</p>`
+        }
+        ${
+          facultyPortal
+            ? `
+              <div class="auth-switch">
+                <p><strong>Need your school mailbox?</strong>Open the Google Workspace Gmail page in a new tab.</p>
+                <a class="button button-secondary full-width" href="${WORKSPACE_GMAIL_URL}" target="_blank" rel="noopener noreferrer">Open Workspace Gmail</a>
+              </div>
+              <p class="login-help"><strong>Faculty Access</strong>Faculty accounts are provisioned and managed by school administrators.</p>
+            `
+            : `
+              <div class="auth-switch">
+                <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
+                <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
+              </div>
+              <p class="login-help"><strong>School Account</strong>Students with an assigned Lake Forest Academy email can use the credentials issued by the school.</p>
+            `
+        }
+      `,
+    );
+  }
+
+  function authRouteQuery() {
+    const hash = String(window.location.hash || "");
+    const queryIndex = hash.indexOf("?");
+    return new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
+  }
+
+  function passwordRulesMarkup(email = "") {
+    return `
+      <ul class="password-rules" id="password-rules" aria-label="Password requirements" aria-live="polite">
+        ${passwordChecks("", email)
+          .map(
+            (rule) => `<li data-password-rule="${rule.id}" aria-label="${escapeHtml(rule.label)}: not yet met"><span aria-hidden="true">${icon("check", 12)}</span>${escapeHtml(rule.label)}</li>`,
+          )
+          .join("")}
+      </ul>
+    `;
+  }
+
+  function forgotPasswordView({ error = "", notice = "", email = "" } = {}) {
+    const query = authRouteQuery();
+    const portal = query.get("portal") === "faculty" ? "faculty" : "student";
+    const savedEmail = email || normalizeEmail(query.get("email"));
+    const ready = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint),
+    );
+    authPage(
+      "Reset Password",
+      `
+        <p class="eyebrow">Account Recovery</p>
+        <h1>Reset Your Password</h1>
+        <p class="login-intro">Enter the email address attached to your Lake Forest Learning account. If it matches an active account, we will send a one-time link.</p>
+        ${notice ? `<p class="form-success" role="status">${escapeHtml(notice)}</p>` : ""}
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+        <form id="forgot-password-form" class="registration-form" novalidate>
+          <input type="hidden" name="portal" value="${portal}" />
+          <div class="auth-field">
+            <label for="recoveryEmail">Email Address</label>
+            <input id="recoveryEmail" name="email" type="email" autocomplete="email" value="${escapeHtml(savedEmail)}" required />
+          </div>
+          <button class="button button-primary login-submit" type="submit" ${ready ? "" : 'disabled aria-disabled="true"'}>Email Reset Link ${icon("arrow", 17)}</button>
+        </form>
+        ${
+          ready
+            ? '<p class="auth-privacy-note"><strong>For your security.</strong>The same confirmation appears whether or not an account exists. Reset links expire and work only once.</p>'
+            : '<p class="auth-setup-note" role="status">Email password recovery is not available yet. Contact Student Support if you cannot sign in.</p>'
+        }
+        <p class="auth-return"><a href="#/signin/${portal}">Return to ${portal === "faculty" ? "Faculty" : "Student"} Sign In</a></p>
+      `,
+    );
+  }
+
+  function resetPasswordView({ error = "" } = {}) {
+    const token = String(authRouteQuery().get("token") || "").trim();
+    const ready = Boolean(configuredAuthUrl(AUTH_CONFIG.passwordResetEndpoint));
+    authPage(
+      "Choose New Password",
+      `
+        <p class="eyebrow">Secure Account Recovery</p>
+        <h1>Choose a New Password</h1>
+        <p class="login-intro">Choose a password that is different from your current password. Completing this step signs out any existing sessions.</p>
+        ${error ? `<p class="form-error" role="alert">${escapeHtml(error)}</p>` : ""}
+        ${
+          token && ready
+            ? `
+              <form id="reset-password-form" class="registration-form" novalidate>
+                <input type="hidden" name="token" value="${escapeHtml(token)}" />
+                <div class="auth-field">
+                  ${passwordInput("newPassword", "New Password", "new-password", "password-rules")}
+                  ${passwordRulesMarkup()}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("confirmPassword", "Confirm New Password", "new-password")}
+                </div>
+                <button class="button button-primary login-submit" type="submit">Change Password ${icon("arrow", 17)}</button>
+              </form>
+            `
+            : `<div class="error-summary" role="alert"><strong>This reset link cannot be used.</strong><p>${escapeHtml(token ? "Email password recovery is not available yet. Contact Student Support for account access." : "The link is incomplete. Request a new password reset email.")}</p></div>`
+        }
+        <p class="auth-return"><a href="#/forgot-password">Request a New Link</a> · <a href="#/signin/student">Return to Sign In</a></p>
+      `,
+    );
+  }
+
+  function securityView() {
+    const user = currentUser();
+    const ready = Boolean(configuredAuthUrl(AUTH_CONFIG.passwordChangeEndpoint));
+    return `
+      ${pageHeading(
+        "Account Security",
+        "Change Password",
+        "Confirm your current password, then choose a new one. Changing it signs out every active session.",
+      )}
+      <section class="panel security-panel">
+        <header class="panel-header"><div><h2>Password & Sessions</h2><p>${escapeHtml(user?.email || "Signed-in account")}</p></div>${icon("lock", 22)}</header>
+        ${
+          ready
+            ? `
+              <form id="change-password-form" class="registration-form security-form" novalidate>
+                <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+                <div class="auth-field">
+                  ${passwordInput("currentPassword", "Current Password", "current-password", "", "Required to confirm your identity")}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("newPassword", "New Password", "new-password", "password-rules")}
+                  ${passwordRulesMarkup(user?.email || "")}
+                </div>
+                <div class="auth-field">
+                  ${passwordInput("confirmPassword", "Confirm New Password", "new-password")}
+                </div>
+                <button class="button button-primary" type="submit">Update Password</button>
+              </form>
+            `
+            : `<p class="auth-setup-note is-error" role="status">${escapeHtml(apiAvailabilityMessage("Secure password changes are temporarily unavailable."))}</p>`
+        }
+      </section>
+    `;
+  }
+
+  function fieldError(errors, name) {
+    return errors[name]
+      ? `<p class="field-error" id="${name}-error">${escapeHtml(errors[name])}</p>`
+      : "";
+  }
+
+  function registrationView(values = {}, errors = {}) {
+    const serverRegistrationReady = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.registrationEndpoint),
+    );
+    const deviceRegistrationReady =
+      !serverRegistrationReady && AUTH_CONFIG.allowDeviceAccounts;
+    const registrationReady =
+      serverRegistrationReady || deviceRegistrationReady;
+    const errorMessages = Object.values(errors);
+    const errorSummary = errorMessages.length
+      ? `
+        <div class="error-summary" id="registration-errors" role="alert" tabindex="-1">
+          <strong>Please review the following information.</strong>
+          <ul>${errorMessages.map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>
+        </div>
+      `
+      : "";
+    authPage(
+      "Create Account",
+      `
+        <p class="eyebrow">Personal Email Access</p>
+        <h1>Create Your Account</h1>
+        <p class="login-intro">Use any personal email address to create a Lake Forest Learning student profile${deviceRegistrationReady ? " on this development device" : ""}.</p>
+        ${
+          registrationReady
+            ? ""
+            : `<p class="auth-setup-note ${API_STATUS.state === "unavailable" || API_STATUS.state === "invalid" ? "is-error" : ""}" role="${API_STATUS.state === "invalid" ? "alert" : "status"}">${escapeHtml(apiAvailabilityMessage("Registration will open when the secure school API is deployed."))}</p>`
+        }
+        ${errorSummary}
+        <form id="registration-form" class="registration-form" novalidate>
+          <div class="register-name-grid">
+            <div class="auth-field">
+              <label for="firstName">First Name</label>
+              <input id="firstName" name="firstName" type="text" autocomplete="given-name" value="${escapeHtml(values.firstName || "")}" ${errors.firstName ? 'aria-invalid="true" aria-describedby="firstName-error"' : ""} required />
+              ${fieldError(errors, "firstName")}
+            </div>
+            <div class="auth-field">
+              <label for="lastName">Last Name</label>
+              <input id="lastName" name="lastName" type="text" autocomplete="family-name" value="${escapeHtml(values.lastName || "")}" ${errors.lastName ? 'aria-invalid="true" aria-describedby="lastName-error"' : ""} required />
+              ${fieldError(errors, "lastName")}
+            </div>
+          </div>
+          <div class="auth-field">
+            <label for="registerEmail">Personal Email</label>
+            <input id="registerEmail" name="email" type="email" autocomplete="email" value="${escapeHtml(values.email || "")}" ${errors.email ? 'aria-invalid="true" aria-describedby="email-error"' : ""} required />
+            ${fieldError(errors, "email")}
+          </div>
+          <div class="auth-field">
+            ${passwordInput("newPassword", "Password", "new-password", `password-rules${errors.password ? " password-error" : ""}`)}
+            ${fieldError(errors, "password")}
+            <ul class="password-rules" id="password-rules" aria-label="Password requirements" aria-live="polite">
+              ${passwordChecks("", values.email || "")
+                .map(
+                  (rule) => `<li data-password-rule="${rule.id}" aria-label="${escapeHtml(rule.label)}: not yet met"><span aria-hidden="true">${icon("check", 12)}</span>${escapeHtml(rule.label)}</li>`,
+                )
+                .join("")}
+            </ul>
+          </div>
+          <div class="auth-field">
+            ${passwordInput("confirmPassword", "Confirm Password", "new-password", errors.confirmPassword ? "confirmPassword-error" : "")}
+            ${fieldError(errors, "confirmPassword")}
+          </div>
+          ${
+            deviceRegistrationReady
+              ? `<label class="consent-row" for="deviceConsent">
+                  <input id="deviceConsent" name="deviceConsent" type="checkbox" value="yes" ${errors.deviceConsent ? 'aria-invalid="true" aria-describedby="deviceConsent-error"' : ""} />
+                  <span>I understand this development account is saved only on this device.</span>
+                </label>
+                ${fieldError(errors, "deviceConsent")}`
+              : ""
+          }
+          <button class="button button-primary login-submit" type="submit" ${registrationReady ? "" : 'disabled aria-disabled="true"'}>Create Account ${icon("arrow", 17)}</button>
+        </form>
+        <p class="auth-privacy-note"><strong>Your privacy matters.</strong>${deviceRegistrationReady ? "Your name, email and protected password record stay in this development browser." : "Your password is sent only to the secure school API and is never stored in this webpage."}</p>
+        <p class="auth-return">Already have an account? <a href="#/signin/student">Return to Student Sign In</a></p>
+      `,
+    );
+  }
+
+  function accountCreatedView() {
+    let account = null;
+    try {
+      account = JSON.parse(sessionStorage.getItem(REGISTERED_ACCOUNT_KEY));
+    } catch {
+      account = null;
+    }
+    if (!account?.email) {
+      registrationView();
+      return;
+    }
+    authPage(
+      "Account Created",
+      `
+        <div class="account-created">
+          <span class="account-created-mark">${icon("check", 28)}</span>
+          <p class="eyebrow">Registration Complete</p>
+          <h1>Your Account Is Ready</h1>
+          <p class="login-intro">Your personal email account has been created for Lake Forest Learning.</p>
+          <dl>
+            <div><dt>Student</dt><dd>${escapeHtml(account.displayName)}</dd></div>
+            <div><dt>Email</dt><dd>${escapeHtml(account.email)}</dd></div>
+            <div><dt>Account Storage</dt><dd>${AUTH_CONFIG.allowDeviceAccounts && !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) ? "Development browser" : "Secure school account"}</dd></div>
+          </dl>
+          <button class="button button-primary full-width" type="button" data-action="continue-to-signin">Continue to Sign In ${icon("arrow", 17)}</button>
+          <p class="auth-privacy-note"><strong>Next step:</strong>Sign in with the personal email and password you just registered.</p>
+        </div>
+      `,
+    );
+  }
+
+  function pageHeading(eyebrow, title, copy, action = "") {
+    return `
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">${eyebrow}</p>
+          <h1>${title}</h1>
+          ${copy ? `<p>${copy}</p>` : ""}
+        </div>
+        ${action}
+      </header>
+    `;
+  }
+
+  function dashboardView() {
+    const user = currentUser();
+    const greetingName =
+      user?.firstName || user?.displayName || user?.email || "Student";
+    const enrolled = studentCourses();
+    const progress = overallProgress();
+    const actions = smartActions();
+    const primary = actions[0];
+    const pending = studentAssignments().filter((item) =>
+      ["due", "late", "overdue", "revision"].includes(
+        assignmentStatus(item).key,
+      ),
+    );
+    const feedback = unreadFeedback();
+    const standaloneFeedback = unreadStandaloneFeedbackNotifications();
+    const feedbackCount = feedback.length + standaloneFeedback.length;
+    const week = nextSevenDays();
+    const weekEvents = calendarEvents().filter((event) => week.includes(event.date));
+    const workspace = studentWorkspaceStatus();
+    const primaryCopy = workspace.loading
+      ? "Synchronizing your official course progress, submissions and feedback."
+      : workspace.error
+        ? "Some official learning records could not be synchronized. Refresh before choosing your next step."
+      : !enrolled.length
+      ? "Choose your courses to build your learning plan and unlock course syllabi."
+      : primary
+      ? `${escapeHtml(primary.eyebrow)} is the most important item in your learning plan.`
+      : "You are caught up. Review your progress or plan the week ahead.";
+    const primaryAction = workspace.loading
+      ? '<span class="dashboard-sync-status" data-student-workspace-loading role="status"><span class="loading-dot" aria-hidden="true"></span>Syncing learning record</span>'
+      : workspace.error
+        ? '<button class="button button-gold" type="button" data-action="refresh-student-workspace">Try Again</button>'
+      : !enrolled.length
+      ? `<a class="button button-gold" href="#/course-selection">Choose Courses ${icon("arrow", 17)}</a>`
+      : primary
+      ? `<a class="button button-gold" href="${escapeHtml(primary.actionUrl || `#/${primary.route}`)}" ${primary.notificationId ? `data-action="open-notification" data-id="${escapeHtml(primary.notificationId)}"` : ""}>${escapeHtml(primary.cta || "Open Next Action")} ${icon("arrow", 17)}</a>`
+      : `<a class="button button-gold" href="#/calendar">Plan Your Week ${icon("arrow", 17)}</a>`;
+    return `
+      <section class="welcome">
+        <div class="welcome-copy">
+          <p class="eyebrow light">${todayLabel()}</p>
+          <h1>${torontoGreeting()}, ${escapeHtml(greetingName)}.</h1>
+          <p>${primaryCopy}</p>
+          ${primaryAction}
+        </div>
+        <img class="welcome-emblem" src="../images/lake-forest-academy-logo-light.png" alt="" />
+      </section>
+      <section class="metric-grid" aria-label="Learning summary">
+        <a class="metric" href="#/courses" aria-label="${enrolled.length} active courses. Open My Courses."><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/progress" aria-label="${progress}% overall progress. Open Progress and Grades."><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/assignments" aria-label="${pending.length} items need attention. Open Assignments."><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span>${icon("arrow", 16)}</a>
+        <a class="metric" href="#/progress" aria-label="${feedbackCount} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedbackCount}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
+      </section>
+      <div class="dashboard-overview">
+        <section class="dashboard-courses" aria-labelledby="dashboard-courses-heading">
+          <header class="panel-header">
+            <div><h2 id="dashboard-courses-heading">My Courses</h2><p>Open a course to continue your modules.</p></div>
+            <a class="text-link" href="#/courses">View all courses ${icon("arrow", 16)}</a>
+          </header>
+          ${enrolled.length
+            ? `<div class="dashboard-course-cards">${enrolled.map(dashboardCourseCard).join("")}</div>`
+            : '<div class="empty-state"><p>No courses selected yet.</p><a class="button button-secondary" href="#/course-selection">Open Course Selection</a></div>'}
+        </section>
+        <section class="panel dashboard-agenda" aria-labelledby="dashboard-agenda-heading">
+          <header class="panel-header">
+            <div><h2 id="dashboard-agenda-heading">Next 7 Days</h2><p>Published dates · Toronto time</p></div>
+            <a class="text-link" href="#/calendar">View All ${icon("arrow", 16)}</a>
+          </header>
+          ${agendaEntries(weekEvents.slice(0, 5)) ||
+            '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
+        </section>
+      </div>
+      <section class="dashboard-grid">
+        <div class="panel dashboard-priority">
+          <header class="panel-header">
+            <div><h2>Next Actions</h2><p>Ordered by urgency across all courses</p></div>
+            <a class="text-link" href="#/calendar">Open Calendar ${icon("arrow", 16)}</a>
+          </header>
+          ${
+            workspace.loading
+              ? '<div class="dashboard-loading" data-student-workspace-loading role="status"><span class="loading-dot" aria-hidden="true"></span><div><strong>Building your next steps</strong><p>Checking official progress, submissions and feedback.</p></div></div>'
+              : workspace.error
+                ? `<div class="dashboard-loading is-error" role="alert"><div><strong>Next steps could not be confirmed</strong><p>${escapeHtml(workspace.error)}</p></div><button class="button button-secondary" type="button" data-action="refresh-student-workspace">Try Again</button></div>`
+              : actions.length
+              ? actions
+                  .slice(0, 5)
+                  .map(
+                    (action, index) => `
+                      <a class="priority-action-row" href="${escapeHtml(action.actionUrl || `#/${action.route}`)}" ${action.notificationId ? `data-action="open-notification" data-id="${escapeHtml(action.notificationId)}"` : ""}>
+                        <span class="action-rank">${index + 1}</span>
+                        <span>
+                          <p class="course-code">${escapeHtml(action.eyebrow)}</p>
+                          <h3>${escapeHtml(action.title)}</h3>
+                          <p>${escapeHtml(action.meta)}</p>
+                        </span>
+                        <span class="badge ${action.className}">${index === 0 ? "Next" : "Planned"}</span>
+                        ${icon("arrow", 18)}
+                      </a>
+                    `,
+                  )
+                  .join("")
+              : '<div class="empty-state"><p>You are all caught up.</p></div>'
+          }
+        </div>
+        <div class="panel">
+          <header class="panel-header"><div><h2>Start Here</h2><p>Set up your courses and find help.</p></div></header>
+          <div class="dashboard-starter-links">
+            <a href="#/course-selection">Review course selection ${icon("arrow", 16)}</a>
+            <a href="#/announcements">Read course announcements ${icon("arrow", 16)}</a>
+            <a href="#/support">Find student support ${icon("arrow", 16)}</a>
+          </div>
+        </div>
+        <div class="panel">
+          <header class="panel-header"><div><h2>Feedback & Support</h2><p>Published feedback and people who can help</p></div></header>
+          ${
+            feedback.length || standaloneFeedback.length
+              ? feedback
+                  .slice(0, 2)
+                  .map((assignment) => {
+                    const course = findCourse(assignment.courseId);
+                    return `
+                      <a class="feedback-row" href="#/assignment/${assignment.id}">
+                        <span class="feedback-score">${assignmentScore(assignment)}%</span>
+                        <span><p class="course-code">${course.code} · New Feedback</p><h3>${escapeHtml(assignment.title)}</h3></span>
+                        ${icon("arrow", 18)}
+                      </a>
+                    `;
+                  })
+                  .join("") +
+                standaloneFeedback
+                  .slice(0, Math.max(0, 2 - feedback.length))
+                  .map(
+                    (notification) => `
+                      <a class="feedback-row" href="${escapeHtml(notification.actionUrl || "#/progress")}" data-action="open-notification" data-id="${escapeHtml(notification.id)}">
+                        <span class="feedback-score">${icon("bell", 18)}</span>
+                        <span><p class="course-code">New Feedback</p><h3>${escapeHtml(notification.title)}</h3></span>
+                        ${icon("arrow", 18)}
+                      </a>
+                    `,
+                  )
+                  .join("")
+              : '<div class="empty-state compact"><p>No unread feedback.</p></div>'
+          }
+          <a class="support-callout" href="#/support">
+            <span>${icon("award", 22)}</span>
+            <span><strong>Need help?</strong><small>Contact a teacher, counsellor or Learning Technology.</small></span>
+            ${icon("arrow", 18)}
+          </a>
+        </div>
+      </section>
+    `;
+  }
+
+  function dashboardCourseCard(course) {
+    const progress = courseProgress(course);
+    return `<a class="dashboard-course-card" href="#/course/${escapeHtml(course.id)}">
+      <img src="${escapeHtml(course.image)}" alt="" loading="lazy" />
+      <div>
+        <span class="course-code">${escapeHtml(course.code)}</span>
+        <h3>${escapeHtml(course.title)}</h3>
+        ${progress.official
+          ? `<progress max="100" value="${progress.percent}" aria-label="Official module progress"></progress>
+            <p>${progress.completed} of ${progress.total} modules complete</p>`
+          : '<p>Open the course to view module progress.</p>'}
+        <span class="dashboard-course-action">Open course ${icon("arrow", 16)}</span>
+      </div>
+    </a>`;
+  }
+
+  function courseRow(course) {
+    const progress = courseProgress(course);
+    const guide = guideProgress(course);
+    return `
+      <a class="course-row" href="#/course/${course.id}">
+        <span class="course-chip">${course.code}</span>
+        <span><h3>${escapeHtml(course.title)}</h3><p>${progress.completed}/${progress.total} modules · ${progress.official ? "official progress" : `${guide.completed}/${guide.total} guide steps`}</p></span>
+        <span class="progress-track" aria-label="${progress.percent}% complete"><span style="width:${progress.percent}%"></span></span>
+        ${icon("arrow", 18)}
+      </a>
+    `;
+  }
+
+  function courseSelectionView() {
+    const enrolled = studentCourses();
+    const credits = selectedCreditCount();
+    const remoteEnrollmentEnabled = Boolean(
+      configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint),
+    );
+    return `
+      ${pageHeading(
+        "Grade 12 Course Planning",
+        "Course Selection",
+        "Choose from the six courses in the Lotus OSSD course library. Five are university-preparation courses; BBB4M is university/college preparation.",
+        `<span class="selection-count">${enrolled.length} of ${catalogCourses().length} selected</span>`,
+      )}
+      <section class="selection-intro">
+        <div>
+          <p class="eyebrow light">Your Learning Plan</p>
+          <h2>Select a course to add its lessons, assignments and deadlines.</h2>
+          <p>MCV4U requires MHF4U before or at the same time. Other Grade 11 prerequisites are reviewed by Guidance during enrolment.</p>
+        </div>
+        <a class="button button-gold" href="#/courses">Open My Courses ${icon("arrow", 17)}</a>
+      </section>
+      <section class="selection-toolbar" aria-label="Selected course plan">
+        <div class="selection-toolbar-summary">
+          <span class="selection-toolbar-count">${enrolled.length}</span>
+          <span><strong>${plural(enrolled.length, "course")} selected</strong><small>${credits.toFixed(1)} planned OSSD ${credits === 1 ? "credit" : "credits"} · ${remoteEnrollmentEnabled ? "saved to your account" : "saved on this device"}</small></span>
+        </div>
+        <div class="selection-chips">
+          ${
+            enrolled.length
+              ? enrolled
+                  .map(
+                    (course) =>
+                      `<a href="#/course/${course.id}" aria-label="Open ${course.code}: ${escapeHtml(course.title)}">${course.code}</a>`,
+                  )
+                  .join("")
+              : "<span>Choose a course below to begin your plan.</span>"
+          }
+        </div>
+        ${
+          enrolled.length
+            ? `<a class="button button-primary" href="#/courses">Continue to My Courses ${icon("arrow", 16)}</a>`
+            : '<button class="button button-quiet" type="button" disabled>Select Your First Course</button>'
+        }
+      </section>
+      <section class="selection-grid" id="selection-catalog" aria-label="Available courses">
+        ${catalogCourses()
+          .map((course) => {
+            const selected = isCourseEnrolled(course.id);
+            const requirement = enrollmentRequirement(course);
+            const dependent = studentCourses().find((candidate) =>
+              (candidate.prerequisiteCourseIds || []).includes(course.id),
+            );
+            const hasRecord = courseHasAcademicRecord(course);
+            const removalLocked = selected && (hasRecord || dependent);
+            const lockCopy = hasRecord
+              ? "Contact Guidance to withdraw because academic work is recorded."
+              : dependent
+                ? `${dependent.code} currently depends on this course.`
+                : "";
+            return `
+              <article class="selection-card ${selected ? "is-selected" : ""}">
+                <div class="selection-image">
+                  <img src="${course.image}" alt="" />
+                  <span class="status ${selected ? "success" : ""}">${selected ? "Selected" : "Available"}</span>
+                </div>
+                <div class="selection-card-body">
+                  <div class="selection-card-title">
+                    <span class="course-chip">${course.code}</span>
+                    <span>${course.plannedHours} hours · ${escapeHtml(course.credit)}</span>
+                  </div>
+                  <h2>${escapeHtml(course.title)}</h2>
+                  <p>${escapeHtml(course.description)}</p>
+                  <dl class="selection-facts">
+                    <div><dt>Level</dt><dd>${escapeHtml(course.gradeType)}</dd></div>
+                    <div><dt>Prerequisite</dt><dd>${escapeHtml(course.prerequisite)}</dd></div>
+                  </dl>
+                  ${
+                    !selected && !requirement.met
+                      ? `<p class="selection-note warning">${escapeHtml(requirement.message)}</p>`
+                      : removalLocked
+                        ? `<p class="selection-note">${escapeHtml(lockCopy)}</p>`
+                        : ""
+                  }
+                  <div class="selection-actions">
+                    ${
+                      selected
+                        ? `
+                          <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 15)}</a>
+                          <button
+                            class="button button-text-danger"
+                            type="button"
+                            data-action="toggle-enrollment"
+                            data-course="${course.id}"
+                            ${removalLocked ? "disabled" : ""}
+                          >Remove</button>
+                        `
+                        : `
+                          <a class="button button-quiet" href="#/syllabus/${course.id}">View Syllabus</a>
+                          ${
+                            !requirement.met && requirement.missing.includes("mhf4u")
+                              ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+                              : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Select Course</button>`
+                          }
+                        `
+                    }
+                  </div>
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </section>
+      <p class="selection-storage-note">${remoteEnrollmentEnabled ? "Course choices are saved to your account and will be available the next time you sign in." : "Course choices are saved only in this browser until the enrolment service is connected."}</p>
+    `;
+  }
+
+  function courseAccessView(course) {
+    return `
+      ${pageHeading(
+        course.code,
+        "Select This Course First",
+        `${escapeHtml(course.title)} is not currently part of your learning plan.`,
+      )}
+      <section class="course-access-card">
+        <span class="course-chip">${course.code}</span>
+        <h2>${escapeHtml(course.title)}</h2>
+        <p>Review the syllabus, prerequisite and evaluation plan before adding this course.</p>
+        <div>
+          <a class="button button-primary" href="#/course-selection">Open Course Selection</a>
+          <a class="button button-secondary" href="#/syllabus/${course.id}">View Syllabus</a>
+        </div>
+      </section>
+    `;
+  }
+
+  function coursesView() {
+    const enrolled = studentCourses();
+    return `
+      ${pageHeading(
+        "Grade 12 OSSD",
+        "My Courses",
+        "Open a course to review its outline, work through lessons and see your current progress.",
+        '<a class="button button-secondary" href="#/course-selection">Add or Change Courses</a>',
+      )}
+      <section class="course-grid">
+        ${
+          enrolled.length
+            ? enrolled.map((course) => {
+          const progress = courseProgress(course);
+          const materials = courseMaterialsDisclosure(course, "student");
+          return `
+            <article class="course-card ${materials.expanded ? "is-materials-open" : ""}">
+              <div class="course-image">
+                <img src="${course.image}" alt="" />
+                <span class="badge">${course.subject}</span>
+              </div>
+              <div class="course-card-content">
+                <p class="course-code">${course.code}</p>
+                <h2>${escapeHtml(course.title)}</h2>
+                <p>${escapeHtml(course.description)}</p>
+                <div class="course-meta">
+                  <span>${escapeHtml(course.instructor)}</span>
+                  <span>${escapeHtml(course.mode)} · ${course.plannedHours} planned hours</span>
+                </div>
+                <div class="course-progress">
+                  <div><span>${progress.completed} of ${progress.total} modules</span><strong>${progress.percent}%</strong></div>
+                  <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
+                </div>
+                <div class="course-card-actions">
+                  <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 16)}</a>
+                  <a class="button button-secondary" href="#/assessments" aria-label="Open ${course.code} assessments">Assessments</a>
+                  ${materials.button}
+                </div>
+              </div>
+              ${materials.panel}
+            </article>
+          `;
+              }).join("")
+            : '<div class="course-empty-selection"><span class="course-chip">6 Courses Available</span><h2>Build Your Course Plan</h2><p>Select the courses you want to study. Your dashboard, assignments, calendar and grades will follow that plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
+        }
+      </section>
+    `;
+  }
+
+  function courseView(course) {
+    const progress = courseProgress(course);
+    const grade = courseGrade(course.id);
+    const modules = course.platformModules || [];
+    const nextModule =
+      modules.find(
+        (module) =>
+          moduleIsUnlocked(course, module) &&
+          moduleStatus(course, module).key !== "completed",
+      ) || modules[0];
+    if (!modules.length) return notFoundView();
+    const nextStatus = moduleStatus(course, nextModule);
+    const nextRemoteModule = remotePlatformModule(course, nextModule);
+    const nextRoute = platformModuleRoute(course, nextModule);
+    const nextLabel =
+      nextModule.number === 0
+        ? nextStatus.key === "in_progress"
+          ? "Continue Orientation"
+          : "Start Course"
+        : nextStatus.key === "in_progress"
+          ? `Continue Module ${nextModule.number}`
+          : `Start Module ${nextModule.number}`;
+    const progressBlockedLabel =
+      ["unavailable", "invalid"].includes(API_STATUS.state) ||
+      platformRuntime.errors[`student-progress:${course.code}`]
+        ? "Progress Service Unavailable"
+        : "Connecting Progress";
+    const primaryAction =
+      nextStatus.key === "available" && officialProgressConnected(course)
+        ? `<button class="button button-gold" type="button" data-action="start-module" data-course="${course.id}" data-module="${escapeHtml(nextModule.key)}" data-module-id="${escapeHtml(nextRemoteModule?.id || "")}" ${nextRemoteModule?.id ? "" : "disabled"}>${icon("arrow", 17)} ${nextLabel}</button>`
+        : nextStatus.key === "available" && officialProgressRequired(course)
+          ? `<button class="button button-gold" type="button" disabled>${icon("clock", 17)} ${progressBlockedLabel}</button>`
+          : `<a class="button button-gold" href="#/${nextRoute}">${icon("arrow", 17)} ${nextLabel}</a>`;
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="courses">My Courses</button><span>/</span><span>${course.code}</span>
+      </nav>
+      <section class="course-hero">
+        <div class="course-hero-copy">
+          <p class="eyebrow light">${course.subject} · ${course.code}</p>
+          <h1>${escapeHtml(course.title)}</h1>
+          <p>${escapeHtml(course.overview)}</p>
+          <div class="course-progress">
+            <div><span>${progress.completed} of ${progress.total} modules complete</span><strong>${progress.percent}%</strong></div>
+            <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
+          </div>
+          <div class="course-hero-actions">
+            ${primaryAction}
+            <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
+            <a class="button button-on-dark" href="#/assessments">${icon("clipboard", 17)} Open Assessments (${ASSIGNMENTS.filter((assignment) => assignment.courseId === course.id).length})</a>
+          </div>
+        </div>
+        <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
+      </section>
+      <section class="course-detail-grid">
+        <div class="panel">
+          <header class="panel-header"><div><h2>12-Module Learning Path</h2><p>Read, practise, check understanding, complete evidence, then use feedback to unlock the next module.</p></div></header>
+          <div class="platform-connection-note ${progress.official ? "is-connected" : ""}" role="status">
+            ${progress.official ? icon("check", 16) : icon("clock", 16)}
+            <span><strong>${progress.official ? "Official progress connected" : "Catalog preview"}</strong><small>${progress.official ? "Module completion is synchronized with your school record." : "Course content is available to review. Official completion and unlock decisions appear when the secure course service is connected."}</small></span>
+          </div>
+          ${modules
+            .map((module) => {
+              const status = moduleStatus(course, module);
+              const assignments = platformAssignmentsForModule(course, module);
+              const remoteModule = remotePlatformModule(course, module);
+              const rowBody = `
+                  <span class="platform-module-number">${String(module.number).padStart(2, "0")}</span>
+                  <span class="platform-module-copy">
+                    <span class="module-row-meta">${escapeHtml(module.unitTitle || (module.number === 0 ? "Course Orientation" : module.number === 11 ? "Final Evaluation" : `Unit ${module.unitNumber}`))}</span>
+                    <strong>${escapeHtml(module.title)}</strong>
+                    <small>${plural(module.readingSteps.length, "reading step")} · ${plural(module.selfStudyResources.length, "resource")} · ${assignments.length ? `${assignments.reduce((sum, assignment) => sum + Number(assignment.weightPercent || 0), 0)}% assessed` : "formative"}</small>
+                  </span>
+                  <span class="badge ${status.className}">${status.label}</span>
+                  ${icon(status.key === "locked" ? "clock" : "arrow", 17)}
+              `;
+              if (status.key === "locked") {
+                return `<article class="platform-module-row is-locked" aria-disabled="true">${rowBody}</article>`;
+              }
+              if (status.key === "available" && officialProgressConnected(course)) {
+                return `<button class="platform-module-row" type="button" data-action="start-module" data-course="${course.id}" data-module="${escapeHtml(module.key)}" data-module-id="${escapeHtml(remoteModule?.id || "")}" ${remoteModule?.id ? "" : "disabled"}>${rowBody}</button>`;
+              }
+              if (status.key === "available" && officialProgressRequired(course)) {
+                return `<button class="platform-module-row" type="button" disabled aria-disabled="true">${rowBody}</button>`;
+              }
+              return `<a class="platform-module-row" href="#/${platformModuleRoute(course, module)}">${rowBody}</a>`;
+            })
+            .join("")}
+          ${studentCourseMaterials(course)}
+        </div>
+        <aside>
+          <div class="panel guide-status-card">
+            <header class="panel-header"><div><h3>Course Sequence</h3><p>Permanent catalog</p></div><span class="badge">12 modules</span></header>
+            <div class="panel-content">
+              <p>Module 0 establishes course routines. Modules 1–10 move through core reading, self-study, guided application and assessment. Module 11 completes the final evaluation.</p>
+              <a class="button button-secondary full-width" href="#/syllabus/${course.id}">Review Syllabus</a>
+            </div>
+          </div>
+          <div class="panel">
+            <header class="panel-header"><h3>Course Details</h3></header>
+            <div class="panel-content course-facts">
+              <div class="fact"><span>Instructor</span><strong>${escapeHtml(course.instructor)}</strong></div>
+              <div class="fact"><span>Course Mode</span><strong>${escapeHtml(course.mode)}</strong></div>
+              <div class="fact"><span>Planned Learning</span><strong>${course.plannedHours} hours</strong></div>
+              <div class="fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
+              <div class="fact"><span>Current Standing</span><strong>${grade ? `${grade.current}%` : "Not Yet Graded"}</strong></div>
+              <div class="fact"><span>OSSD Credit</span><strong>${escapeHtml(course.credit)}</strong></div>
+            </div>
+          </div>
+          <div class="panel instructor-card">
+            <header class="panel-header"><div><h3>Your Instructor</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
+            <div class="panel-content">
+              <span class="instructor-avatar">${course.instructor.split(" ").map((part) => part[0]).slice(-2).join("")}</span>
+              <h3>${escapeHtml(course.instructor)}</h3>
+              <p>${escapeHtml(course.subject)} · ${course.code}</p>
+              <a class="button button-primary full-width" href="mailto:${encodeURIComponent(course.instructorEmail)}">Email Instructor</a>
+              <a class="text-link centered" href="#/support">View All Student Support ${icon("arrow", 15)}</a>
+            </div>
+          </div>
+        </aside>
+      </section>
+    `;
+  }
+
+  function sequenceList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean);
+    return String(value || "")
+      .split(/\s*[>→]\s*|\s{2,}/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function moduleResourceMarkup(resource) {
+    const href =
+      safeExternalHttpsUrl(resource?.url) ||
+      (driveMaterialsReadReady()
+        ? safeProtectedResourceUrl(resource?.openUrl)
+        : "");
+    const content = `
+      <span class="course-code">${escapeHtml(resource?.provider || "Learning Resource")}</span>
+      <strong>${escapeHtml(resource?.title || "Learning Resource")}</strong>
+      <p>${escapeHtml(resource?.assignedUse || resource?.assigned_use || "Complete the assigned bounded task.")}</p>
+      <span class="text-link">${href ? `Open Resource ${icon("arrow", 14)}` : "Secure link unavailable"}</span>
+    `;
+    return href
+      ? `<a class="module-resource-card" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${content}</a>`
+      : `<article class="module-resource-card" aria-disabled="true">${content}</article>`;
+  }
+
+  function studentModuleView(course, module) {
+    const status = moduleStatus(course, module);
+    const remoteModule = remotePlatformModule(course, module);
+    const assignments = platformAssignmentsForModule(course, module);
+    const assessment = module.assessment || {};
+    if (status.key === "locked") {
+      return `
+        <nav class="breadcrumb" aria-label="Breadcrumb"><button type="button" data-route="courses">My Courses</button><span>/</span><button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span><span>Module ${module.number}</span></nav>
+        <section class="module-lock-card">
+          ${icon("clock", 30)}<p class="course-code">Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1>
+          <p>${escapeHtml(module.unlockRule.ruleText || module.feedbackAndUnlock)}</p>
+          <a class="button button-secondary" href="#/course/${course.id}">Return to Course Path</a>
+        </section>`;
+    }
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb"><button type="button" data-route="courses">My Courses</button><span>/</span><button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span><span>Module ${module.number}</span></nav>
+      <header class="module-detail-hero">
+        <div><p class="eyebrow light">${course.code} · Module ${String(module.number).padStart(2, "0")}</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle || "Course sequence")}</p></div>
+        <span class="badge ${status.className}">${status.label}</span>
+      </header>
+      <section class="module-detail-layout">
+        <div class="module-detail-main">
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Learning Focus</h2><p>${escapeHtml(module.workloadLabel)}</p></div></header><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Required Reading Order</h2><p>Complete each step in sequence</p></div></header><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${module.lessons.length ? `<div class="module-lesson-links">${module.lessons.map((lesson) => `<a class="resource-link" href="#/lesson/${lesson.id}"><span>${icon("book", 18)}</span><span><strong>${escapeHtml(lesson.title)}</strong><small>Core lesson ${lesson.order}</small></span>${icon("arrow", 16)}</a>`).join("")}</div>` : ""}</section>
+          <section class="panel module-content-section"><header class="panel-header"><div><h2>Self-Study Resources</h2><p>Use after the required core reading</p></div></header>${module.selfStudyResources.length ? `<div class="module-resource-grid">${module.selfStudyResources.map(moduleResourceMarkup).join("")}</div>` : '<div class="empty-state compact"><p>No external resource is required in this module.</p></div>'}</section>
+          <section class="module-activity-grid">
+            <article class="panel module-content-section"><h2>Guided Practice</h2><p>${escapeHtml(module.guidedPractice)}</p></article>
+            <article class="panel module-content-section"><h2>Low-Stakes Check</h2><p>${escapeHtml(module.lowStakesCheck)}</p></article>
+          </section>
+          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}% of course grade</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</section>
+        </div>
+        <aside>
+          <section class="panel"><header class="panel-header"><h3>Feedback & Unlock</h3></header><div class="panel-content"><p>${escapeHtml(module.feedbackAndUnlock)}</p><div class="platform-connection-note ${officialProgressConnected(course) ? "is-connected" : ""}"><span>${officialProgressConnected(course) ? "Official record connected" : "Official progress unavailable"}</span></div>${officialProgressConnected(course) ? `<button class="button button-primary full-width" type="button" data-action="set-module-complete" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}" data-activity-id="${escapeHtml(remoteModule?.activity?.id || "")}" ${!remoteModule?.id || (status.key !== "completed" && !remoteModule?.activity?.id) ? "disabled" : ""}>${status.key === "completed" ? "Reopen Module" : `${icon("check", 16)} Mark Module Complete`}</button>` : '<p class="teacher-security-note"><strong>Preview only.</strong> Browser activity is not treated as the school’s official progress record.</p>'}</div></section>
+          <section class="panel"><header class="panel-header"><h3>Module Evidence</h3></header><div class="panel-content"><p><strong>Estimated credit time</strong><br>${module.estimatedCreditHours || 0} hours</p></div></section>
+        </aside>
+      </section>`;
+  }
+
+  function courseGuideView(course) {
+    const guide = guideProgress(course);
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="courses">My Courses</button><span>/</span>
+        <button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span>
+        <span>Course Guide</span>
+      </nav>
+      <section class="guide-hero">
+        <div>
+          <p class="eyebrow light">${course.code} · Start Here</p>
+          <h1>${escapeHtml(course.title)} Course Guide</h1>
+          <p>Understand how the course works, what is expected and where to get help before you begin major course work.</p>
+        </div>
+        <div class="guide-progress-summary">
+          <strong>${guide.percent}%</strong>
+          <span>${guide.completed} of ${guide.total} guide steps complete</span>
+          <div class="progress-track"><span style="width:${guide.percent}%"></span></div>
+        </div>
+      </section>
+      <section class="guide-layout">
+        <div class="guide-main">
+          <section class="panel">
+            <header class="panel-header"><div><h2>Course at a Glance</h2><p>${escapeHtml(course.mode)} · ${escapeHtml(course.credit)}</p></div></header>
+            <div class="guide-fact-grid">
+              <div class="guide-fact"><span>Course Structure</span><strong>${course.platformModules?.length || 0} modules</strong></div>
+              <div class="guide-fact"><span>Planned Learning</span><strong>${course.plannedHours} hours</strong></div>
+              <div class="guide-fact"><span>Weekly Commitment</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
+              <div class="guide-fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>How This Course Works</h2><p>A consistent path through every unit</p></div></header>
+            <div class="learning-path" aria-label="Course learning sequence">
+              ${["Review Learning Goals", "Study Lesson & Resources", "Complete Practice", "Submit Assignment or Quiz", "Use Feedback in the Next Unit"]
+                .map(
+                  (label, index) => `
+                    <div class="path-step"><span>${index + 1}</span><strong>${label}</strong></div>
+                  `,
+                )
+                .join("")}
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Evaluation Plan</h2><p>Your current standing updates when evaluated work is published</p></div></header>
+            <div class="evaluation-list">
+              ${course.evaluation
+                .map(
+                  (item) => `
+                    <div class="evaluation-row">
+                      <span>${escapeHtml(item.label)}</span>
+                      <strong>${item.weight}%</strong>
+                      <div class="progress-track"><span style="width:${item.weight}%"></span></div>
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+            <div class="policy-note">
+              <strong>Submission policy</strong>
+              <p>Submit work before the due date whenever possible. The assignment page shows both the regular due date and the final availability date. Contact your instructor before the deadline if circumstances affect your work.</p>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Technology & Academic Practice</h2><p>Prepare before graded work</p></div></header>
+            <div class="guide-copy">
+              <p>Use a current desktop browser for file submissions and timed assessments. Keep a copy of each submitted file and confirm that a submission receipt appears before leaving the page.</p>
+              <p>All work must reflect your own learning. Sources, tools and collaboration must be acknowledged according to the instructions for each assessment.</p>
+            </div>
+          </section>
+        </div>
+        <aside>
+          <section class="panel guide-checklist">
+            <header class="panel-header"><div><h2>Before You Begin</h2><p>Complete each orientation step</p></div></header>
+            <div class="panel-content">
+              ${COURSE_GUIDE_STEPS.map((step) => {
+                const checked = guide.checked.includes(step.id);
+                return `
+                  <button class="guide-check ${checked ? "is-complete" : ""}" type="button" data-action="toggle-guide-step" data-course="${course.id}" data-step="${step.id}" aria-pressed="${checked}">
+                    <span>${checked ? icon("check", 15) : ""}</span>
+                    <strong>${escapeHtml(step.label)}</strong>
+                  </button>
+                `;
+              }).join("")}
+              <a class="button ${guide.isComplete ? "button-primary" : "button-quiet"} full-width" href="#/course/${course.id}">
+                ${guide.isComplete ? `Open Course ${icon("arrow", 16)}` : "Return to Course"}
+              </a>
+            </div>
+          </section>
+          <section class="panel instructor-card">
+            <header class="panel-header"><div><h3>Course Contact</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
+            <div class="panel-content">
+              <span class="instructor-avatar">${course.instructor.split(" ").map((part) => part[0]).slice(-2).join("")}</span>
+              <h3>${escapeHtml(course.instructor)}</h3>
+              <p>${escapeHtml(course.instructorEmail)}</p>
+              <a class="button button-primary full-width" href="mailto:${encodeURIComponent(course.instructorEmail)}">Email Instructor</a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    `;
+  }
+
+  function courseSyllabusView(course) {
+    const guide = guideProgress(course);
+    const syllabus = course.syllabus || {
+      gradeType: "Grade 12",
+      plannedHours: 110,
+      description: course.overview,
+      units: [],
+    };
+    const selected = isCourseEnrolled(course.id);
+    const nextModule =
+      (course.platformModules || []).find(
+        (module) =>
+          moduleIsUnlocked(course, module) &&
+          moduleStatus(course, module).key !== "completed",
+      ) || course.platformModules?.[0];
+    const requirement = enrollmentRequirement(course);
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="${selected ? "courses" : "course-selection"}">${selected ? "My Courses" : "Course Selection"}</button><span>/</span>
+        <span>${course.code}</span><span>/</span>
+        <span>Course Syllabus</span>
+      </nav>
+      <section class="guide-hero syllabus-hero">
+        <div>
+          <p class="eyebrow light">${course.code} · Course Syllabus</p>
+          <h1>${escapeHtml(course.title)}</h1>
+          <p>${escapeHtml(syllabus.description || course.overview)}</p>
+        </div>
+        <div class="guide-progress-summary">
+          <strong>${syllabus.plannedHours || 110}</strong>
+          <span>planned learning hours · ${escapeHtml(course.credit)}</span>
+          <small>${escapeHtml(syllabus.gradeType || course.gradeType || "Grade 12")}</small>
+        </div>
+      </section>
+      <section class="syllabus-action-card">
+        <div>
+          <p class="eyebrow">${selected ? `${course.code} Learning Path` : "Ready to Begin?"}</p>
+          <h2>${selected ? (nextModule ? escapeHtml(nextModule.title) : "Course Learning Path Complete") : `Add ${course.code} to Your Learning Plan`}</h2>
+          <p>${selected ? (nextModule ? `Module ${nextModule.number} is your next step. Official progress is synchronized when the secure course service is connected.` : "Review your completed work and published feedback.") : `Add this course now to open its modules, assignments and progress tracking.`}</p>
+        </div>
+        ${
+          selected
+            ? `<a class="button button-primary" href="${nextModule ? `#/${platformModuleRoute(course, nextModule)}` : `#/course/${course.id}`}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
+            : !requirement.met && requirement.missing.includes("mhf4u")
+              ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+              : `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
+        }
+      </section>
+      <section class="guide-layout">
+        <div class="guide-main">
+          <section class="panel">
+            <header class="panel-header"><div><h2>Course at a Glance</h2><p>${escapeHtml(course.mode)} · ${escapeHtml(course.credit)}</p></div></header>
+            <div class="guide-fact-grid">
+              <div class="guide-fact"><span>Course Code</span><strong>${course.code}</strong></div>
+              <div class="guide-fact"><span>Course Type</span><strong>${escapeHtml(syllabus.gradeType || course.gradeType || "Grade 12")}</strong></div>
+              <div class="guide-fact"><span>Weekly Commitment</span><strong>${escapeHtml(course.weeklyHours)}</strong></div>
+              <div class="guide-fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>110-Hour Module Plan</h2><p>Learning, assessed evidence, teacher feedback and final evaluation</p></div></header>
+            <div class="syllabus-units">
+              ${(course.platformModules || [])
+                .map((module) => {
+                  const status = moduleStatus(course, module);
+                  return `
+                    <details class="syllabus-unit" ${module.number === 0 ? "open" : ""}>
+                      <summary>
+                        <span class="syllabus-unit-number">${String(module.number).padStart(2, "0")}</span>
+                        <span><span class="course-code">Module ${module.number}</span><strong>${escapeHtml(module.title)}</strong></span>
+                        <span class="syllabus-unit-hours">${module.estimatedCreditHours || 0} hours</span>
+                        <span class="syllabus-unit-toggle">${status.label} ${icon("arrow", 15)}</span>
+                      </summary>
+                      <div class="syllabus-unit-body">
+                        <p>${escapeHtml(module.learningFocus[0] || `Review the learning goals, evidence requirements and assessment for ${module.title}.`)}</p>
+                        ${
+                          selected
+                            ? `<a class="button button-secondary" href="#/${platformModuleRoute(course, module)}">Open Module ${icon("arrow", 15)}</a>`
+                            : `<span class="syllabus-unit-lock">${icon("book", 16)} Add this course to open the module learning path.</span>`
+                        }
+                      </div>
+                    </details>
+                  `;
+                })
+                .join("")}
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Evaluation Plan</h2><p>Current weighting in the Lotus course implementation package</p></div></header>
+            <div class="evaluation-list">
+              ${course.evaluation
+                .map(
+                  (item) => `
+                    <div class="evaluation-row">
+                      <span>${escapeHtml(item.label)}</span>
+                      <strong>${item.weight}%</strong>
+                      <div class="progress-track"><span style="width:${item.weight}%"></span></div>
+                    </div>
+                  `,
+                )
+                .join("")}
+            </div>
+            <div class="policy-note">
+              <strong>Final-evaluation administration</strong>
+              <p>Mandatory examinations are completed in the designated examination period under school-approved identity, supervision, security and accommodation procedures.</p>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Course Materials</h2><p>Student-facing documents from the secure course index</p></div>${selected ? `<span class="badge">${plural(courseDriveMaterialCount(course), "item")}</span>` : ""}</header>
+            <div class="syllabus-resources">
+              ${selected ? courseMaterialsBody(course, "Materials") : `<div class="course-materials-status" role="status">${icon("file", 18)}<span><strong>Select this course to view materials</strong><small>Course files are available only to enrolled students.</small></span></div>`}
+            </div>
+          </section>
+          <section class="panel">
+            <header class="panel-header"><div><h2>Academic Practice</h2><p>Evidence, authorship and accessible learning</p></div></header>
+            <div class="guide-copy">
+              <p>Retain notes, source records, calculations, drafts, tests, feedback and revisions as evidence of process and authorship. Cite external ideas, data, images, quotations, code, models and media in the format specified by the teacher.</p>
+              <p>Approved accommodations may change the format or timing of evidence without changing the curriculum expectation or authentication standard. Contact Student Support before a timed assessment is scheduled.</p>
+            </div>
+          </section>
+        </div>
+        <aside>
+          <section class="panel guide-checklist">
+            <header class="panel-header"><div><h2>${selected ? "Before You Begin" : "Course Selection"}</h2><p>${selected ? "Complete each orientation step" : "Add this course to your plan"}</p></div></header>
+            <div class="panel-content">
+              ${
+                selected
+                  ? COURSE_GUIDE_STEPS.map((step) => {
+                      const checked = guide.checked.includes(step.id);
+                      return `
+                        <button class="guide-check ${checked ? "is-complete" : ""}" type="button" data-action="toggle-guide-step" data-course="${course.id}" data-step="${step.id}" aria-pressed="${checked}">
+                          <span>${checked ? icon("check", 15) : ""}</span>
+                          <strong>${escapeHtml(step.label)}</strong>
+                        </button>
+                      `;
+                    }).join("")
+                  : `<p>Review the prerequisite and syllabus, then add ${course.code} from Course Selection.</p>`
+              }
+              ${
+                selected
+                  ? `<a class="button button-primary full-width" href="${nextModule ? `#/${platformModuleRoute(course, nextModule)}` : `#/course/${course.id}`}">${nextModule ? `Open Module ${nextModule.number}` : "Review Course"} ${icon("arrow", 16)}</a>`
+                  : !requirement.met && requirement.missing.includes("mhf4u")
+                    ? `<button class="button button-primary full-width" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
+                    : `<button class="button button-primary full-width" type="button" data-action="toggle-enrollment" data-course="${course.id}" ${!requirement.met ? "disabled" : ""}>Add ${course.code}</button>`
+              }
+            </div>
+          </section>
+          <section class="panel instructor-card">
+            <header class="panel-header"><div><h3>Course Contact</h3><p>${escapeHtml(course.responseTime)}</p></div></header>
+            <div class="panel-content">
+              <span class="instructor-avatar">${course.instructor.split(" ").map((part) => part[0]).slice(-2).join("")}</span>
+              <h3>${escapeHtml(course.instructor)}</h3>
+              <p>${escapeHtml(course.instructorEmail)}</p>
+              <a class="button button-primary full-width" href="mailto:${encodeURIComponent(course.instructorEmail)}">Email Instructor</a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    `;
+  }
+
+  function lessonView(lesson) {
+    const complete = state.completed.includes(lesson.id);
+    const courseLessons = lesson.course.lessons;
+    const index = courseLessons.findIndex((item) => item.id === lesson.id);
+    const previous = courseLessons[index - 1];
+    const nextCandidate = courseLessons[index + 1];
+    const next =
+      nextCandidate && lessonIsUnlocked({ ...nextCandidate, course: lesson.course })
+        ? nextCandidate
+        : null;
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="courses">My Courses</button><span>/</span>
+        <button type="button" data-route="course/${lesson.course.id}">${lesson.course.code}</button><span>/</span>
+        <span>${lesson.unit}</span>
+      </nav>
+      <section class="lesson-layout">
+        <article class="panel lesson-article">
+          <header class="lesson-title">
+            <p class="course-code">${lesson.course.code} · ${lesson.unit}</p>
+            <h1>${escapeHtml(lesson.title)}</h1>
+            <p>${escapeHtml(lesson.summary)}</p>
+          </header>
+          <section class="lesson-section">
+            <h2>Learning Goals</h2>
+            <ul class="objective-list">
+              ${lesson.objectives.map((objective) => `<li>${escapeHtml(objective)}</li>`).join("")}
+            </ul>
+          </section>
+          <section class="lesson-section">
+            <h2>Lesson Notes</h2>
+            ${lesson.content.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join("")}
+          </section>
+          <section class="lesson-section">
+            <h2>Before You Move On</h2>
+            <ol class="instruction-list">
+              <li>Write one idea from this lesson in your own words.</li>
+              <li>Complete the related practice in your course notebook.</li>
+              <li>Mark the lesson complete when you are confident with the learning goals.</li>
+            </ol>
+          </section>
+        </article>
+        <aside>
+          <div class="panel">
+            <header class="panel-header"><h3>Lesson Progress</h3></header>
+            <div class="panel-content lesson-actions">
+              <span class="badge ${complete ? "success" : "warning"}">${complete ? "Completed" : "In Progress"}</span>
+              <p>${icon("clock", 15)} Estimated time: ${lesson.duration}</p>
+              <button class="button ${complete ? "button-quiet" : "button-primary"}" type="button" data-action="toggle-lesson" data-id="${lesson.id}">
+                ${complete ? "Mark as Incomplete" : `${icon("check", 17)} Mark Complete`}
+              </button>
+              ${previous ? `<a class="button button-quiet" href="#/lesson/${previous.id}">Previous Lesson</a>` : ""}
+              ${next ? `<a class="button button-secondary" href="#/lesson/${next.id}">Next Lesson ${icon("arrow", 16)}</a>` : `<a class="button button-secondary" href="#/course/${lesson.course.id}">Back to Course</a>`}
+            </div>
+          </div>
+        </aside>
+      </section>
+    `;
+  }
+
+  function agendaEntries(events) {
+    return events.map((event) => `
+      <a class="agenda-event" href="#/${escapeHtml(event.route)}">
+        <span class="agenda-date"><time datetime="${escapeHtml(event.date)}">${formatDate(event.date).split(",")[0]}</time><small>${escapeHtml(event.time)}</small></span>
+        <span><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.courseCode)} · ${escapeHtml(event.type)}</small></span>
+        ${icon("arrow", 17)}
+      </a>`).join("");
+  }
+
+  function calendarView(courseId) {
+    const courses = studentCourses();
+    const selected = courses.find((course) => course.id === courseId);
+    const week = nextSevenDays();
+    const today = week[0];
+    const lastDay = week[6];
+    const upcoming = calendarEvents().filter((event) =>
+      event.date >= today && (!selected || event.courseId === selected.id),
+    );
+    const thisWeek = upcoming.filter((event) => event.date <= lastDay);
+    const later = upcoming.filter((event) => event.date > lastDay);
+    const chip = (label, href, active) =>
+      `<a href="${href}"${active ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
+
+    return `
+      ${pageHeading(
+        "Course Schedule",
+        "Learning Calendar",
+        "Check published deadlines and scheduled events in Toronto time.",
+        '<a class="button button-secondary" href="#/assignments">View Assignments</a>',
+      )}
+      ${courses.length ? `<nav class="agenda-filters" aria-label="Filter calendar by course">
+        ${chip("All courses", "#/calendar", !selected)}
+        ${courses.map((course) => chip(course.code, `#/calendar/${encodeURIComponent(course.id)}`, course.id === selected?.id)).join("")}
+      </nav>` : ""}
+      <section class="panel agenda-panel" aria-labelledby="agenda-week">
+        <header class="panel-header"><div><h2 id="agenda-week">Next 7 Days</h2>
+          <p>${formatDate(today)} – ${formatDate(lastDay)}</p></div></header>
+        ${agendaEntries(thisWeek) || '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
+      </section>
+      <section class="panel agenda-panel" aria-labelledby="agenda-later">
+        <header class="panel-header"><div><h2 id="agenda-later">Later Dates</h2></div></header>
+        ${agendaEntries(later) || '<div class="empty-state"><p>No later dates are posted.</p></div>'}
+      </section>
+      <p class="agenda-note">For overdue work or assignments without a published date, <a class="text-link" href="#/assignments">open Assignments</a>.</p>
+      ${courses.length ? `<section class="panel agenda-panel agenda-study" aria-labelledby="agenda-study">
+        <header class="panel-header"><div><h2 id="agenda-study">Weekly Study Plan</h2><p>Recommended independent study time</p></div>
+          <a class="text-link" href="#/support">Ask for planning help ${icon("arrow", 16)}</a>
+        </header>
+        <div class="panel-content">
+          ${(selected ? [selected] : courses).map((course) => `
+            <a class="study-plan-row" href="#/course/${escapeHtml(course.id)}">
+              <span class="course-chip">${escapeHtml(course.code)}</span>
+              <span><strong>${escapeHtml(course.plannedHours)} planned hours</strong></span>
+            </a>`).join("")}
+        </div>
+      </section>` : ""}
+    `;
+  }
+
+  function supportView() {
+    return `
+      ${pageHeading(
+        "Student Services",
+        "Student Support",
+        "Connect with the right person for academic planning, course questions, technology and research support.",
+      )}
+      <section class="support-hero">
+        <div>
+          <p class="eyebrow light">One Clear Starting Point</p>
+          <h2>Tell us what is getting in the way.</h2>
+          <p>If you are unsure who to contact, begin with Student Support. We will connect you with the appropriate teacher or service.</p>
+        </div>
+        <a class="button button-gold" href="mailto:studentservices@lakeforestacademy.ca">Email Student Support ${icon("arrow", 17)}</a>
+      </section>
+      <section class="support-grid">
+        ${SUPPORT_CONTACTS.map(
+          (contact) => `
+            <article class="support-card">
+              <span class="support-monogram">${contact.name
+                .split(" ")
+                .map((part) => part[0])
+                .slice(0, 2)
+                .join("")}</span>
+              <p class="course-code">${escapeHtml(contact.role)}</p>
+              <h2>${escapeHtml(contact.name)}</h2>
+              <p>${escapeHtml(contact.description)}</p>
+              <dl>
+                <div><dt>Email</dt><dd>${escapeHtml(contact.email)}</dd></div>
+                <div><dt>Hours</dt><dd>${escapeHtml(contact.hours)}</dd></div>
+              </dl>
+              <a class="button button-secondary full-width" href="mailto:${encodeURIComponent(contact.email)}">${escapeHtml(contact.action)}</a>
+            </article>
+          `,
+        ).join("")}
+      </section>
+      <section class="support-lower-grid">
+        <div class="panel">
+          <header class="panel-header"><div><h2>Your Course Team</h2><p>Ask content questions and discuss feedback directly</p></div></header>
+          ${studentCourses().map(
+            (course) => `
+              <div class="teacher-row">
+                <span class="instructor-avatar">${course.instructor
+                  .split(" ")
+                  .map((part) => part[0])
+                  .slice(-2)
+                  .join("")}</span>
+                <span><p class="course-code">${course.code} · ${escapeHtml(course.subject)}</p><h3>${escapeHtml(course.instructor)}</h3><p>Expected reply: ${escapeHtml(course.responseTime.toLowerCase())}</p></span>
+                <a class="button button-quiet" href="mailto:${encodeURIComponent(course.instructorEmail)}">Email</a>
+              </div>
+            `,
+          ).join("")}
+        </div>
+        <aside class="panel">
+          <header class="panel-header"><div><h2>Before You Send</h2><p>A useful help request includes</p></div></header>
+          <ol class="support-checklist">
+            <li><span>1</span><p><strong>Course and lesson</strong><br />Include the course code and exact task.</p></li>
+            <li><span>2</span><p><strong>What you tried</strong><br />Describe the step where you became stuck.</p></li>
+            <li><span>3</span><p><strong>What you need next</strong><br />Ask one clear question or request an appointment.</p></li>
+          </ol>
+        </aside>
+      </section>
+      <section class="panel support-faq">
+        <header class="panel-header"><div><h2>Common Questions</h2><p>Quick guidance for frequent learning-platform issues</p></div></header>
+        <details><summary>I cannot submit an assignment.</summary><p>Check the final availability date, use a current desktop browser and confirm that the selected file is not open in another application. If the problem continues, contact Learning Technology and include the assignment title.</p></details>
+        <details><summary>I need more time for course work.</summary><p>Contact your instructor before the deadline and explain the circumstances. For a broader course-plan change, include Vivienne Chow or the Academic Office.</p></details>
+        <details><summary>I need an assessment accommodation.</summary><p>Contact Student Support as early as possible. Approved accommodations should be confirmed before a timed assessment or final evaluation is scheduled.</p></details>
+      </section>
+    `;
+  }
+
+  function assessmentPackageMarkup(course) {
+    const records = courseDriveMaterials(course).filter((record) =>
+      /assessment/i.test(String(record.category || "")),
+    );
+    if (!driveMaterialsReadReady()) {
+      return `<div class="assessment-package-state">${icon("file", 18)}<span><strong>Assessment package unavailable</strong><small>${escapeHtml(driveCatalogUnavailableMessage())}</small></span></div>`;
+    }
+    if (driveRequestInFlight && !records.length) {
+      return `<div class="assessment-package-state">${icon("clock", 18)}<span><strong>Loading assessment package</strong><small>Reading the protected course index.</small></span></div>`;
+    }
+    if (driveMaterialsState.error) {
+      return `<div class="assessment-package-state is-error">${icon("file", 18)}<span><strong>Assessment package could not be loaded</strong><small>${escapeHtml(driveMaterialsState.error)}</small></span><button class="button button-secondary" type="button" data-action="refresh-course-materials">Try Again</button></div>`;
+    }
+    if (!driveEndpointChecked) {
+      return `<div class="assessment-package-state">${icon("clock", 18)}<span><strong>Connecting assessment package</strong><small>Waiting for the protected course index.</small></span></div>`;
+    }
+    if (!records.length) {
+      return `<div class="assessment-package-state">${icon("file", 18)}<span><strong>No separate package published</strong><small>Task instructions remain available in each assessment below.</small></span></div>`;
+    }
+    return `<ul class="drive-material-list assessment-package-list">${records
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(driveMaterialItem)
+      .join("")}</ul>`;
+  }
+
+  function participationAssessmentMarkup(course) {
+    const item = (course.gradebookItems || []).find((gradebookItem) =>
+      /participation/i.test(
+        `${gradebookItem.category || ""} ${gradebookItem.title || ""} ${gradebookItem.type || ""}`,
+      ),
+    );
+    if (!item) return "";
+    const published = publishedDirectGrades(course.code).find(
+      (grade) =>
+        String(grade.gradebookItemId || "").toLowerCase() ===
+        String(item.key || item.id || "").toLowerCase(),
+    );
+    const score = published
+      ? normalizedGradePercent(published.score, published.maxScore)
+      : null;
+    return `
+      <article class="assessment-participation-row">
+        <span class="assessment-module-number">CW</span>
+        <span><small>Coursewide · Teacher Recorded</small><strong>${escapeHtml(item.title || "Participation & Learning Process")}</strong><p>Required contact, checkpoints, conferences and documented use of feedback.</p></span>
+        <span><b>${Number(item.weightPercent || 10)}%</b><small>of course grade</small></span>
+        <span class="badge ${score == null ? "info" : "success"}">${score == null ? "Teacher Recorded" : `Published · ${score}%`}</span>
+      </article>
+    `;
+  }
+
+  function assessmentTaskMarkup(assignment, course) {
+    const status = assignmentStatus(assignment);
+    const cardTag = status.key === "locked" ? "article" : "a";
+    const cardHref =
+      status.key === "locked"
+        ? ' aria-disabled="true"'
+        : ` href="#/assignment/${assignment.id}"`;
+    return `
+      <${cardTag} class="assessment-task-card ${status.key === "locked" ? "is-locked" : ""}"${cardHref}>
+        <span class="assessment-module-number">M${String(assignment.moduleNumber ?? "—").padStart(2, "0")}</span>
+        <span>
+          <small>${escapeHtml(assignment.sectionLabel || assignment.unit || "Course Assessment")}</small>
+          <strong>${escapeHtml(assignment.title)}</strong>
+          <p>${assignmentScheduleLabel(assignment)}</p>
+        </span>
+        <span><b>${assignment.weightPercent || 0}%</b><small>of course grade</small></span>
+        <span class="badge ${status.className}">${status.label}</span>
+        ${icon(status.key === "locked" ? "lock" : "arrow", 18)}
+      </${cardTag}>
+    `;
+  }
+
+  function assessmentsView() {
+    const allAssignments = studentAssignments();
+    const visible = allAssignments.filter((assignment) => {
+      const key = assignmentStatus(assignment).key;
+      if (assignmentFilter === "all") return true;
+      if (assignmentFilter === "open") {
+        return ["open", "due", "upcoming", "late", "overdue", "revision"].includes(
+          key,
+        );
+      }
+      if (assignmentFilter === "submitted") {
+        return ["submitted", "review"].includes(key);
+      }
+      return key === assignmentFilter;
+    });
+    const filters = [
+      ["all", "All"],
+      ["open", "Open"],
+      ["submitted", "Submitted"],
+      ["graded", "Graded"],
+    ];
+    return `
+      ${pageHeading(
+        "Evaluation & Feedback",
+        "Assessment Centre",
+        "Review each course evaluation plan, open protected assessment packages, submit evidence and return to published feedback.",
+      )}
+      <section class="assessment-plan-summary" aria-label="OSSD course evaluation plan">
+        <div><strong>65%</strong><span>Coursework</span><small>Five assessed modules</small></div>
+        <div><strong>25%</strong><span>Final Evaluation</span><small>Culminating task and/or examination</small></div>
+        <div><strong>10%</strong><span>Participation</span><small>Teacher-recorded learning process</small></div>
+      </section>
+      <div class="assignment-filters" role="group" aria-label="Filter assignments">
+        ${filters
+          .map(
+            ([key, label]) =>
+              `<button class="filter-button ${assignmentFilter === key ? "is-active" : ""}" type="button" data-action="filter-assignment" data-filter="${key}" aria-pressed="${assignmentFilter === key}">${label}</button>`,
+          )
+          .join("")}
+      </div>
+      <section class="assessment-course-list">
+        ${
+          studentCourses().length
+            ? studentCourses()
+                .map((course) => {
+                  const courseAssignments = visible
+                    .filter((assignment) => assignment.courseId === course.id)
+                    .sort(
+                      (a, b) =>
+                        Number(a.moduleNumber ?? 99) -
+                          Number(b.moduleNumber ?? 99) ||
+                        a.title.localeCompare(b.title),
+                    );
+                  return `
+                    <article class="assessment-course-panel">
+                      <header>
+                        <div><p class="course-code">${course.code}</p><h2>${escapeHtml(course.title)}</h2></div>
+                        <div><span class="badge">${plural(allAssignments.filter((assignment) => assignment.courseId === course.id).length, "formal task")}</span><a class="text-link" href="#/course/${course.id}">Open Course ${icon("arrow", 15)}</a></div>
+                      </header>
+                      <section class="assessment-package" aria-label="${course.code} assessment package">
+                        <div><p class="eyebrow">Protected Course File</p><h3>Assessment Package</h3></div>
+                        ${assessmentPackageMarkup(course)}
+                      </section>
+                      <div class="assessment-task-list">
+                        ${
+                          courseAssignments.length
+                            ? courseAssignments
+                                .map((assignment) => assessmentTaskMarkup(assignment, course))
+                                .join("")
+                            : '<div class="empty-state compact"><p>No formal assessments match this filter.</p></div>'
+                        }
+                        ${assignmentFilter === "all" || assignmentFilter === "open" || assignmentFilter === "graded" ? participationAssessmentMarkup(course) : ""}
+                      </div>
+                    </article>
+                  `;
+                })
+                .join("")
+            : '<div class="empty-state"><p>Select a course to see its assessment plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
+        }
+      </section>
+    `;
+  }
+
+  function assignmentsView() {
+    return assessmentsView();
+  }
+
+  function submissionWorkflowEndpoint(submissionId, action) {
+    const endpoint = configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint);
+    if (!endpoint || !submissionId) return "";
+    return platformEndpoint(
+      endpoint,
+      `${encodeURIComponent(submissionId)}/${encodeURIComponent(action)}`,
+    );
+  }
+
+  function remoteSubmissionRecordById(submissionId) {
+    return (
+      remoteSubmissionsState.records.find(
+        (record) =>
+          record.id === submissionId ||
+          record.submission?.id === submissionId,
+      ) || null
+    );
+  }
+
+  function appendSubmissionMessage(submission, message) {
+    if (!submission || !message) return;
+    const messages = Array.isArray(submission.messages)
+      ? submission.messages
+      : [];
+    submission.messages = [
+      ...new Map(
+        [...messages, message].map((item) => [item.id, item]),
+      ).values(),
+    ].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  }
+
+  function submissionThreadMarkup(submission, { faculty = false } = {}) {
+    const messages = Array.isArray(submission?.messages)
+      ? submission.messages
+      : [];
+    const submissionId = scalarLabel(submission?.id);
+    const messageReady = Boolean(
+      submissionWorkflowEndpoint(submissionId, "messages"),
+    );
+    return `
+      <section class="lesson-section interaction-thread" aria-label="Assignment conversation">
+        <div class="interaction-thread-heading">
+          <div><p class="course-code">Assignment Conversation</p><h2>Messages</h2></div>
+          <span class="badge">${plural(messages.length, "message")}</span>
+        </div>
+        <div class="interaction-message-list">
+          ${
+            messages.length
+              ? messages
+                  .map((message) => {
+                    const ownMessage = faculty
+                      ? ["teacher", "teacher_admin"].includes(message.authorRole)
+                      : message.authorRole === "student";
+                    const author = ownMessage
+                      ? "You"
+                      : message.authorName ||
+                        (faculty ? "Student" : "Teacher");
+                    return `
+                      <article class="interaction-message ${ownMessage ? "is-own" : ""}">
+                        <div><strong>${escapeHtml(author)}</strong><time>${message.attemptNumber ? `Attempt ${message.attemptNumber} · ` : ""}${message.createdAt ? formatDate(message.createdAt, true) : ""}</time></div>
+                        <p>${escapeHtml(message.body)}</p>
+                      </article>`;
+                  })
+                  .join("")
+              : '<p class="interaction-empty">No messages yet. Keep questions and feedback connected to this assignment.</p>'
+          }
+        </div>
+        ${
+          messageReady
+            ? `<form class="interaction-message-form" id="submission-message-form" data-submission="${escapeHtml(submissionId)}" data-role="${faculty ? "teacher" : "student"}">
+                <label for="submission-message-body">${faculty ? "Reply to student" : "Reply to teacher"}</label>
+                <textarea id="submission-message-body" name="body" maxlength="10000" required placeholder="Write a focused message about this assignment."></textarea>
+                <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+                <button class="button button-secondary" type="submit">Send Message</button>
+              </form>`
+            : '<p class="login-help">Assignment messages will be available when the secure submission service is connected.</p>'
+        }
+      </section>`;
+  }
+
+  function assignmentView(assignment) {
+    const course = findCourse(assignment.courseId);
+    const status = assignmentStatus(assignment);
+    const remoteSubmission = remoteSubmissionFor(assignment.id);
+    const localDeviceDraft = localDeviceDraftForAssignment(assignment.id);
+    const submission = submissionForAssignment(assignment.id);
+    const remoteSubmissionEnabled = submissionUploadEnabled();
+    const deliveredToSchoolRecord =
+      submission?.delivery === "lotus" ||
+      submission?.delivery === "central" ||
+      Boolean(submission?.driveFileId || submission?.fileUrl);
+    const submissionManagedByTeacher =
+      assignment.teacherRecorded || assignment.submissionMode === "supervised";
+    const workflowStatus = normalizeSubmissionWorkflowStatus(
+      submission?.workflowStatus || submission?.status,
+      submission?.publishedAt,
+    );
+    const canResubmit = Boolean(
+      submission &&
+        (workflowStatus === "revision_requested" ||
+          submission.resubmissionAllowed === true),
+    );
+    const canResumeDeviceDraft = Boolean(
+      localDeviceDraft &&
+        remoteSubmissionEnabled &&
+        (!remoteSubmission || canResubmit),
+    );
+    const resumedDeviceDraft =
+      resumingDeviceDraftId === assignment.id ? localDeviceDraft : null;
+    const formSubmission = resumedDeviceDraft || submission;
+    const requiresSubmissionFile =
+      canResubmit ||
+      ["file", "project"].includes(assignment.submissionMode);
+    const showSubmissionForm =
+      !submissionManagedByTeacher &&
+      (!submission ||
+        (replacingSubmissionId === assignment.id &&
+          (canResubmit || canResumeDeviceDraft)));
+    const submittedOnTime =
+      submission &&
+      (!assignment.due ||
+        new Date(submission.submittedAt) <= new Date(assignment.due));
+    const score = assignmentScore(assignment);
+    const feedback = assignmentFeedback(assignment);
+    const feedbackAuthor = assignmentFeedbackAuthor(assignment);
+    const lifecycleIndex =
+      workflowStatus === "revision_requested"
+        ? 2
+        : workflowStatus === "graded" || score != null
+          ? 3
+        : ["under_review", "resubmitted"].includes(workflowStatus)
+          ? 1
+          : submission
+            ? 0
+            : -1;
+    const lifecycle = [
+      [
+        deliveredToSchoolRecord
+          ? "Submitted"
+          : remoteSubmissionEnabled
+            ? "Ready to Submit"
+            : "Saved on This Device",
+        deliveredToSchoolRecord
+          ? "Your work and submission receipt are recorded."
+          : remoteSubmissionEnabled
+            ? requiresSubmissionFile
+              ? "Attach your completed work and submit it securely to your teacher."
+              : "Add a note for the school record, with an attachment if your work includes a file."
+            : "This draft remains in this browser until the Lotus submission service is connected.",
+      ],
+      ["Under Review", "Your instructor is reviewing the submission."],
+      [
+        workflowStatus === "revision_requested"
+          ? "Revision Requested"
+          : "Feedback Available",
+        workflowStatus === "revision_requested"
+          ? "Read the teacher message and submit a new version when ready."
+          : "Comments and rubric results are ready.",
+      ],
+      ["Graded", "The published result is included in your course standing."],
+    ];
+    const feedbackUnread =
+      score != null &&
+      (notificationEndpointFor()
+        ? unreadGradeNotificationsForAssignment(assignment.id).length > 0
+        : !state.feedbackRead.includes(assignment.id));
+    return `
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <button type="button" data-route="assignments">Assignments</button><span>/</span><span>${course.code}</span>
+      </nav>
+      <section class="assignment-detail">
+        <article class="panel assignment-summary">
+          <div class="panel-content">
+            <p class="course-code">${course.code} · ${course.title}</p>
+            <h1>${escapeHtml(assignment.title)}</h1>
+            <span class="badge ${submission && !deliveredToSchoolRecord ? "warning" : status.className}">${submission && !deliveredToSchoolRecord ? "Device-Only Draft" : status.label}</span>
+            <div class="assignment-date-grid">
+              <div><span>Schedule</span><strong>${assignmentScheduleLabel(assignment)}</strong></div>
+              <div><span>Availability</span><strong>${assignmentAvailabilityLabel(assignment)}</strong></div>
+              <div><span>Course Weight</span><strong>${assignment.weightPercent || 0}%</strong></div>
+            </div>
+            <section class="lesson-section">
+              <h2>Assignment Brief</h2>
+              <p>${escapeHtml(assignment.instructions)}</p>
+            </section>
+            <section class="lesson-section">
+              <h2>Assessment Rubric</h2>
+              <div class="rubric-list">
+                ${assignment.rubric
+                  .map(
+                    (criterion) => `
+                      <div><span>${escapeHtml(criterion.label)}</span><strong>${criterion.points} points</strong></div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </section>
+            ${
+              score != null
+                ? `
+                  <section class="lesson-section feedback-panel ${feedbackUnread ? "is-new" : ""}">
+                    <div class="feedback-heading">
+                      <div><p class="course-code">${feedbackUnread ? "New Feedback" : "Instructor Feedback"}</p><h2>${escapeHtml(feedbackAuthor)}</h2></div>
+                      <strong>${score}%</strong>
+                    </div>
+                    <p>${escapeHtml(feedback || "No written comment was added to this grade.")}</p>
+                    ${submission?.rubric?.length ? `<dl class="rubric-breakdown" aria-label="Score by criterion">
+                      ${submission.rubric.map((row) => `<div><dt>${escapeHtml(row.label)}</dt><dd>${escapeHtml(row.points)} / ${escapeHtml(row.maximum)}</dd></div>`).join("")}
+                    </dl>` : ""}
+                    ${
+                      submission?.updatedAt || submission?.gradedAt
+                        ? `<small class="grade-updated-at">Updated ${formatDate(submission.updatedAt || submission.gradedAt, true)}</small>`
+                        : ""
+                    }
+                    ${
+                      feedbackUnread
+                        ? `<button class="button button-quiet" type="button" data-action="mark-feedback-read" data-id="${assignment.id}">Mark Feedback as Reviewed</button>`
+                        : '<span class="badge success">Reviewed</span>'
+                    }
+                  </section>
+                `
+                : ""
+            }
+            ${submission ? submissionThreadMarkup(submission) : ""}
+            <section class="lesson-section">
+              <h2>Submission Progress</h2>
+              <div class="submission-timeline">
+                ${lifecycle
+                  .map(
+                    ([label, copy], index) => `
+                      <div class="submission-stage ${index < lifecycleIndex ? "is-complete" : index === lifecycleIndex ? "is-current" : ""}">
+                        <span>${index <= lifecycleIndex ? icon("check", 14) : index + 1}</span>
+                        <div><strong>${label}</strong><p>${copy}</p></div>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </section>
+          </div>
+        </article>
+        <aside>
+          <div class="panel">
+            <header class="panel-header"><h3>${submission ? "Your Submission" : "Submit Your Work"}</h3></header>
+            <div class="panel-content">
+              <div class="submission-destination ${remoteSubmissionEnabled ? "is-connected" : "is-local"}">
+                <span>${icon(remoteSubmissionEnabled ? "check" : "file", 18)}</span>
+                <span>
+                  <strong>${remoteSubmissionEnabled ? (requiresSubmissionFile ? "Lotus Drive Upload Ready" : "School Submission Service Ready") : "Device-Only Draft Mode"}</strong>
+                  <small>${remoteSubmissionEnabled ? (requiresSubmissionFile ? "Your attached file will be stored in Lotus Drive and available to your teacher." : "A note-only submission is saved to the central school record. If you attach a file, it is stored in Lotus Drive and made available to your teacher.") : "The submission service is not connected yet. Work saved here remains in this browser and is not sent to your teacher."}</small>
+                </span>
+              </div>
+              ${
+                submissionManagedByTeacher
+                  ? `<div class="teacher-recorded-note"><strong>${assignment.submissionMode === "supervised" ? "Supervised assessment" : "Teacher-recorded evidence"}</strong><p>${assignment.submissionMode === "supervised" ? "The school schedules and administers this assessment separately. No browser file upload is required here." : "This gradebook item is based on required contact, checkpoints, conferences and documented use of feedback. No file upload is required here."}</p></div>`
+                  : !showSubmissionForm
+                  ? `
+                    <div class="receipt-card">
+                      <div class="receipt-heading">
+                        <span>${icon("check", 18)}</span>
+                        <div><p class="course-code">${deliveredToSchoolRecord ? (submission.delivery === "central" ? "Submitted to School Record" : "Submitted to Lotus Drive") : "Saved on This Device"}</p><h3>${deliveredToSchoolRecord ? status.label : "Local Draft"}</h3></div>
+                      </div>
+                      <dl>
+                        <div><dt>Receipt ID</dt><dd>${escapeHtml(submission.receiptId)}</dd></div>
+                        <div><dt>${deliveredToSchoolRecord ? "Submitted" : "Saved"}</dt><dd>${formatDate(submission.submittedAt, true)}</dd></div>
+                        <div><dt>Timing</dt><dd>${submittedOnTime ? "On Time" : "Late"}</dd></div>
+                        <div><dt>Version</dt><dd>${submissionVersionNumber(submission)}</dd></div>
+                        <div><dt>File</dt><dd>${escapeHtml(submission.fileName || "Submission note only")}</dd></div>
+                        <div><dt>Grading</dt><dd>${score == null ? "Awaiting grading" : `${score}% · Published`}</dd></div>
+                        ${
+                          score != null && (submission.updatedAt || submission.gradedAt)
+                            ? `<div><dt>Grade Updated</dt><dd>${formatDate(submission.updatedAt || submission.gradedAt, true)}</dd></div>`
+                            : ""
+                        }
+                      </dl>
+                      ${
+                        submission.text
+                          ? `<div class="receipt-note"><strong>Student Note</strong><p>${escapeHtml(submission.text)}</p></div>`
+                          : ""
+                      }
+                    </div>
+                    ${
+                      localDeviceDraft && remoteSubmission
+                        ? `<div class="form-notice"><strong>Unsent device draft retained</strong><p>${escapeHtml(localDeviceDraft.fileName || "Note-only draft")} · saved ${formatDate(localDeviceDraft.submittedAt, true)}. Your official status remains ${escapeHtml(status.label)}. ${canResumeDeviceDraft ? "Continue the saved draft when you are ready to submit the authorized revision." : "This draft cannot replace the official record unless your teacher requests a revision."}</p></div>`
+                        : ""
+                    }
+                    ${
+                      canResumeDeviceDraft
+                        ? `<button class="button button-quiet full-width" type="button" data-action="resume-device-draft" data-id="${assignment.id}">${remoteSubmission ? "Continue Saved Revision" : "Submit Saved Draft"}</button>`
+                        : canResubmit
+                          ? `<button class="button button-quiet full-width" type="button" data-action="replace-submission" data-id="${assignment.id}">Replace Submission</button>`
+                        : ""
+                    }
+                    <div class="submission-history">
+                      <h3>Submission History</h3>
+                      ${(submission.history || [])
+                        .slice()
+                        .reverse()
+                        .map(
+                          (record, index) => {
+                            const versionNumber = Number.isInteger(
+                              Number(record.attemptNumber),
+                            )
+                              ? Number(record.attemptNumber)
+                              : submission.history.length - index;
+                            return `
+                            <div>
+                              <span>${versionNumber}</span>
+                              <p><strong>Version ${versionNumber}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
+                            </div>
+                          `;
+                          },
+                        )
+                        .join("")}
+                    </div>
+                  `
+                  : `
+                    <form class="assignment-form" id="assignment-form" data-id="${assignment.id}" data-requires-file="${requiresSubmissionFile ? "true" : "false"}" data-replacement="${remoteSubmission ? "true" : "false"}">
+                      <div class="form-alert" id="assignment-form-alert" role="alert" tabindex="-1" hidden></div>
+                      ${
+                        resumedDeviceDraft
+                          ? `<p class="form-notice">${remoteSubmission ? "Submitting this saved revision creates a new official version." : "Submitting this saved draft creates the first official attempt."} Select the file again if it must be included.</p>`
+                          : submission
+                            ? '<p class="form-notice">Replacing this work creates a new version. Earlier versions remain in the submission history.</p>'
+                          : ""
+                      }
+                      <label for="submission-note">Submission Note</label>
+                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(formSubmission?.text || "")}</textarea>
+                      <label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
+                      <input id="submission-file" name="file" type="file" accept="${SUBMISSION_FILE_ACCEPT}" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
+                      <p class="field-help" id="submission-file-help">${SUBMISSION_FILE_TYPE_LABEL} · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
+                      <div class="file-preview" id="submission-file-preview" hidden>
+                        <span>${icon("file", 18)}</span>
+                        <span><strong data-file-name></strong><small data-file-meta></small></span>
+                        <button type="button" data-action="clear-submission-file">Remove</button>
+                      </div>
+                      ${formSubmission?.fileName ? `<p class="login-help">Saved file reference: ${escapeHtml(formSubmission.fileName)}. Browser security requires you to select it again before upload.</p>` : ""}
+                      <label class="integrity-check" for="submission-integrity">
+                        <input id="submission-integrity" name="integrity" type="checkbox" value="confirmed" />
+                        <span>I confirm that this is my own work and that I have credited all sources.</span>
+                      </label>
+                      <button class="button button-primary" type="submit">${icon("file", 17)} ${remoteSubmissionEnabled ? (requiresSubmissionFile ? (remoteSubmission ? "Submit New Version to Lotus Drive" : "Upload to Lotus Drive") : "Submit to School Record") : "Save Draft on This Device"}</button>
+                      ${submission || resumedDeviceDraft ? `<button class="button button-quiet" type="button" data-action="cancel-replacement">Keep Existing Submission</button>` : ""}
+                    </form>
+                  `
+              }
+            </div>
+          </div>
+        </aside>
+      </section>
+    `;
+  }
+
+  function progressView() {
+    const enrolled = studentCourses();
+    const standings = enrolled.map((course) => courseGrade(course.id)).filter(Boolean);
+    const average = standings.length
+      ? Math.round(
+          standings.reduce((total, grade) => total + grade.current, 0) /
+            standings.length,
+        )
+      : null;
+    const graded = studentAssignments().filter(
+      (assignment) => assignmentScore(assignment) != null,
+    );
+    const assignmentGradebookIds = new Set(
+      studentAssignments()
+        .map((assignment) => assignment.gradebookItemId)
+        .filter(Boolean),
+    );
+    const standaloneDirectGrades = enrolled.flatMap((course) =>
+      publishedDirectGrades(course.code)
+        .filter(
+          (grade) =>
+            !assignmentGradebookIds.has(
+              String(grade.gradebookItemId || "").toLowerCase(),
+            ),
+        )
+        .map((grade) => ({ course, grade })),
+    );
+    const evaluatedCount = graded.length + standaloneDirectGrades.length;
+    const platformModules = enrolled.flatMap((course) =>
+      (course.platformModules || []).map((module) => ({ course, module })),
+    );
+    const completedModules = platformModules.filter(
+      ({ course, module }) =>
+        studentModuleProgress(course, module)?.status === "completed",
+    ).length;
+    return `
+      ${pageHeading(
+        "Academic Record",
+        "Progress & Grades",
+        "A current view of lesson completion and evaluated course work.",
+      )}
+      <section class="progress-summary">
+        <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${completedModules} of ${platformModules.length} modules complete</span></div>
+        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${enrolled.length} active courses`}</span></div>
+        <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${evaluatedCount}</strong><span>${evaluatedCount === 1 ? "Published gradebook result" : "Published gradebook results"}</span></div>
+      </section>
+      <section class="panel">
+        <header class="panel-header"><div><h2>Course Standing</h2><p>Updated as evaluated work is published</p></div></header>
+        ${enrolled.map((course) => {
+          const grade = courseGrade(course.id);
+          const progress = courseProgress(course);
+          return `
+            <a class="grade-row" href="#/course/${course.id}">
+              <span>
+                <h3>${course.code} · ${escapeHtml(course.title)}</h3>
+                <p>${progress.completed}/${progress.total} modules · Instructor: ${escapeHtml(course.instructor)}</p>
+              </span>
+              <strong class="grade-score">${grade ? `${grade.current}%` : "—"}</strong>
+              <span class="badge ${grade ? "success" : ""}">${grade ? `${grade.gradedWeight || 0}% weight graded` : "Not Yet Graded"}</span>
+            </a>
+          `;
+        }).join("")}
+      </section>
+      <section class="panel" style="margin-top:23px">
+        <header class="panel-header"><div><h2>Published Work</h2><p>Published feedback and scores</p></div></header>
+        ${
+          evaluatedCount
+            ? `${graded
+                .map((assignment) => {
+                  const course = findCourse(assignment.courseId);
+                  return `
+                    <a class="grade-row" href="#/assignment/${assignment.id}">
+                      <span><h3>${escapeHtml(assignment.title)}</h3><p>${course.code} · ${assignmentScheduleLabel(assignment, false)}</p></span>
+                      <strong class="grade-score">${assignmentScore(assignment)}%</strong>
+                      <span>${icon("arrow", 18)}</span>
+                    </a>
+                  `;
+                })
+                .join("")}${standaloneDirectGrades
+                .map(({ course, grade }) => {
+                  const score = normalizedGradePercent(
+                    grade.score,
+                    grade.maxScore,
+                  );
+                  return `
+                    <div class="grade-row direct-grade-row">
+                      <span><h3>${escapeHtml(grade.title || "Gradebook Result")}</h3><p>${course.code} · ${escapeHtml(grade.category || "Direct grade")} · ${Number(grade.weightPercent || 0)}% of course</p>${grade.feedback ? `<small>${escapeHtml(grade.feedback)}</small>` : ""}</span>
+                      <strong class="grade-score">${score == null ? "—" : `${score}%`}</strong>
+                      <span class="badge success">Published</span>
+                    </div>
+                  `;
+                })
+                .join("")}`
+            : '<div class="empty-state compact"><p>No grades have been published for this account.</p></div>'
+        }
+      </section>
+    `;
+  }
+
+  function notificationsView() {
+    const notifications = notificationItems();
+    const unread = unreadNotificationCount();
+    const faculty = isTeacher();
+    return `
+      ${pageHeading(
+        faculty ? "Faculty Updates" : "Learning Updates",
+        "Notifications",
+        faculty
+          ? "New submissions, resubmissions and workflow updates from your courses."
+          : "Assignment feedback, revision requests, grades and course updates in one place.",
+        unread
+          ? '<button class="button button-secondary" type="button" data-action="mark-all-notifications-read">Mark All as Read</button>'
+          : "",
+      )}
+      <section class="announcement-list notification-list" aria-busy="${platformRuntime.notificationsLoading}">
+        ${
+          platformRuntime.notificationsLoading &&
+          !platformRuntime.notificationsLoaded
+            ? '<div class="notification-state" role="status"><span class="loading-dot" aria-hidden="true"></span><h2>Syncing notifications</h2><p>Checking the secure learning record for new activity.</p></div>'
+            : platformRuntime.notificationsError
+              ? `<div class="notification-state" role="alert"><h2>Notifications are temporarily unavailable</h2><p>${escapeHtml(platformRuntime.notificationsError)}</p><button class="button button-primary" type="button" data-action="refresh-notifications">Try Again</button></div>`
+              : notifications.length
+                ? notifications
+                    .map((item) => {
+                      const category = String(item.eventType || "update")
+                        .replace(/[_-]+/g, " ")
+                        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+                      return `
+                        <article class="announcement-card notification-card ${item.readAt ? "" : "unread"}">
+                          <div>
+                            <p class="course-code">${escapeHtml(category)}</p>
+                            <h2>${escapeHtml(item.title)}</h2>
+                            <p>${escapeHtml(item.body)}</p>
+                            <div class="announcement-meta"><span>${item.readAt ? "Read" : "New"}</span><span>${formatDate(item.createdAt, true)}</span></div>
+                          </div>
+                          <div class="notification-actions">
+                            <a class="button button-primary" href="${escapeHtml(item.actionUrl)}" data-action="open-notification" data-id="${escapeHtml(item.id)}">Open</a>
+                            ${item.readAt ? '<span class="badge success">Read</span>' : `<button class="button button-quiet" type="button" data-action="mark-notification-read" data-id="${escapeHtml(item.id)}">Mark as Read</button>`}
+                          </div>
+                        </article>`;
+                    })
+                    .join("")
+                : '<div class="notification-state"><h2>You are up to date</h2><p>New learning and submission activity will appear here.</p></div>'
+        }
+      </section>
+    `;
+  }
+
+  function announcementsView() {
+    const heading = pageHeading(isTeacher() ? "Faculty" : "My Courses", "Course Announcements",
+      isTeacher() ? "Post an update to one or more courses." : "Updates from your course teachers.");
+    if (!announcementBoard) {
+      const board = { loaded: false, error: "", items: [], courses: [] };
+      announcementBoard = board;
+      requestPlatformJson(PLATFORM_API_CONFIG.announcementsEndpoint)
+        .then((payload) => {
+          if (!Array.isArray(payload.data) || !Array.isArray(payload.courseCodes)) {
+            throw new Error("The announcements service returned an unreadable response.");
+          }
+          board.items = payload.data;
+          board.courses = payload.courseCodes;
+          board.loaded = true;
+        })
+        .catch((error) => { board.error = error.message || "Could not load course announcements."; })
+        .finally(() => {
+          if (announcementBoard === board) renderAfterBackgroundRefresh();
+        });
+    }
+    const board = announcementBoard;
+    if (board.error) return heading + `<div class="notification-state" role="alert"><p>${escapeHtml(board.error)}</p>
+      <button class="button button-secondary" type="button" data-action="reload-announcements">Try again</button></div>`;
+    if (!board.loaded) return heading + '<p role="status">Loading course announcements…</p>';
+    const composer = isTeacher() && board.courses.length ? `
+      <section class="teacher-section"><h2>New announcement</h2>
+        <form id="announcement-form" class="announcement-composer">
+          <fieldset><legend>Publish to courses</legend>
+            ${board.courses.map((code) => `<label><input type="checkbox" name="courseCode" value="${escapeHtml(code)}"> ${escapeHtml(code)}</label>`).join("")}
+          </fieldset>
+          <label for="announcement-title">Title</label>
+          <input id="announcement-title" name="title" required maxlength="160">
+          <label for="announcement-body">Message</label>
+          <textarea id="announcement-body" name="body" required rows="4" maxlength="3000"></textarea>
+          <p class="form-alert" role="alert" tabindex="-1" hidden></p>
+          <button type="submit" class="button button-primary">Publish announcement</button>
+        </form>
+      </section>` : "";
+    const articles = board.items.map((item) => `<article class="announcement-card"><div>
+      <p class="course-code">${escapeHtml(item.courseCodes.join(" · "))}</p>
+      <h2>${escapeHtml(item.title)}</h2><p class="course-announcement-body">${escapeHtml(item.body)}</p>
+      <div class="announcement-meta"><span>${escapeHtml(item.authorName)}</span><span>${formatDate(item.publishedAt, true)}</span></div>
+      </div></article>`).join("");
+    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || '<p class="empty-state compact">No announcements for your courses yet.</p>'}</section>`;
+  }
+
+  function notFoundView() {
+    return `
+      <div class="empty-state">
+        <div><h1>Page Not Found</h1><p>The learning page you requested is unavailable.</p><a class="button button-primary" href="#/dashboard">Return to Dashboard</a></div>
+      </div>
+    `;
+  }
+
+  function teacherNotFoundView() {
+    return `
+      <div class="teacher-empty">
+        <h1>Page Not Found</h1>
+        <p>The faculty page you requested is unavailable.</p>
+        <a class="button button-primary" href="#/teacher/courses">Return to Course Management</a>
+      </div>
+    `;
+  }
+
+  function focusMain() {
+    const main = document.querySelector("#main-content");
+    if (main) {
+      main.setAttribute("tabindex", "-1");
+      main.focus();
+    }
+  }
+
+  function setDrawerOpen(open, { restoreFocus = true } = {}) {
+    const sidebar = document.querySelector("#sidebar");
+    const stage = document.querySelector(".stage");
+    const scrim = document.querySelector(".sidebar-scrim");
+    const menuButton = document.querySelector(".mobile-menu");
+    const skipLink = document.querySelector(".skip-link");
+    if (open && sidebar) {
+      drawerScrollY = window.scrollY;
+      sidebar.classList.add("is-open");
+      stage?.setAttribute("inert", "");
+      skipLink?.setAttribute("inert", "");
+      if (scrim) scrim.hidden = false;
+      menuButton?.setAttribute("aria-expanded", "true");
+      document.body.style.top = `-${drawerScrollY}px`;
+      document.body.classList.add("drawer-open");
+      document.querySelector(".sidebar-close")?.focus();
+      return;
+    }
+
+    const wasOpen = Boolean(sidebar?.classList.contains("is-open"));
+    const wasLocked = document.body.classList.contains("drawer-open");
+    sidebar?.classList.remove("is-open");
+    stage?.removeAttribute("inert");
+    skipLink?.removeAttribute("inert");
+    if (scrim) scrim.hidden = true;
+    menuButton?.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("drawer-open");
+    document.body.style.removeProperty("top");
+    if (wasLocked) {
+      window.scrollTo({ top: drawerScrollY, behavior: "instant" });
+    }
+    if (restoreFocus && wasOpen) menuButton?.focus();
+  }
+
+  function replaceRoute(route) {
+    window.history.replaceState(null, "", `#/${route}`);
+  }
+
+  function renderTeacher(route) {
+    let teacherRoute = route;
+    if (teacherRoute[0] !== "teacher") {
+      replaceRoute("teacher/dashboard");
+      teacherRoute = ["teacher", "dashboard"];
+    }
+    document.title = `${teacherPageTitle(teacherRoute)} | Lake Forest Learning`;
+    let view;
+    if (teacherRoute[1] === "dashboard") {
+      view = teacherDashboardView();
+    } else if (teacherRoute[1] === "courses") {
+      view = teacherCoursesView();
+    } else if (teacherRoute[1] === "submissions") {
+      view = teacherSubmissionsView(
+        safeDecode(teacherRoute[2] || ""),
+        safeDecode(teacherRoute[3] || ""),
+      );
+    } else if (teacherRoute[1] === "materials") {
+      view = teacherMaterialsView();
+    } else if (teacherRoute[1] === "notifications") {
+      view = notificationsView();
+    } else if (teacherRoute[1] === "announcements") {
+      view = announcementsView();
+    } else if (teacherRoute[1] === "security") {
+      view = securityView();
+    } else if (teacherRoute[1] === "course") {
+      const course = findCourse(teacherRoute[2]);
+      const moduleRequested = teacherRoute[3] === "module";
+      const module =
+        course && moduleRequested
+          ? findPlatformModule(course, teacherRoute[4])
+          : null;
+      view = !course
+        ? teacherNotFoundView()
+        : moduleRequested
+          ? module
+            ? teacherModuleView(course, module)
+            : teacherNotFoundView()
+          : teacherRoute.length === 3
+            ? teacherCourseView(course)
+            : teacherNotFoundView();
+    } else if (teacherRoute[1] === "submission") {
+      view = teacherSubmissionDetailView(
+        safeDecode(teacherRoute[2] || ""),
+        safeDecode(teacherRoute[3] || ""),
+      );
+    } else {
+      replaceRoute("teacher/dashboard");
+      teacherRoute = ["teacher", "dashboard"];
+      view = teacherDashboardView();
+    }
+    APP_ROOT.innerHTML = teacherShell(view);
+    if (teacherRoute[1] === "course") {
+      ensureTeacherPlatformData(findCourse(teacherRoute[2]));
+    }
+    if (
+      ["course", "courses", "materials"].includes(teacherRoute[1]) &&
+      !driveEndpointChecked &&
+      driveMaterialsReadReady()
+    ) {
+      void refreshDriveMaterials({
+        silent: teacherRoute[1] === "materials",
+      });
+    }
+    if (
+      submissionsEndpointUrl() &&
+      submissionsEndpointCheckedFor !== submissionScopeKey() &&
+      !submissionsRequestInFlight
+    ) {
+      void refreshRemoteSubmissions({
+        silent: teacherRoute[1] !== "submissions",
+      });
+    }
+  }
+
+  function assignmentFormHasUnsavedWork() {
+    const form = document.querySelector("#assignment-form");
+    if (!form) return false;
+    return Boolean(
+      form.dataset.dirty === "true" ||
+        String(form.elements?.note?.value || "").length ||
+        form.elements?.integrity?.checked ||
+        form.elements?.file?.files?.length,
+    );
+  }
+
+  function renderAfterBackgroundRefresh() {
+    if (document.querySelector('#announcement-form[data-dirty="true"]')) return false;
+    if (assignmentFormHasUnsavedWork()) return false;
+    render(false, true);
+    return true;
+  }
+
+  function render(shouldFocusMain = false, preserveScroll = false) {
+    if (document.body.classList.contains("drawer-open")) {
+      setDrawerOpen(false, { restoreFocus: false });
+    }
+    const previousScroll = preserveScroll ? window.scrollY : 0;
+    const authParts = routeParts();
+    if (authParts[0] === "reset-password") {
+      resetPasswordView();
+      if (shouldFocusMain) focusMain();
+      return;
+    }
+    if (!remoteSessionValidated) {
+      sessionCheckView();
+      if (shouldFocusMain) focusMain();
+      return;
+    }
+    if (!isSignedIn()) {
+      const authRoute = authParts[0];
+      if (authRoute === "register") registrationView();
+      else if (authRoute === "account-created") accountCreatedView();
+      else if (authRoute === "forgot-password") forgotPasswordView();
+      else
+        loginView({
+          portal:
+            workspaceCallbackFeedback ||
+            authRoute === "teacher" ||
+            (authRoute === "signin" && authParts[1] === "faculty")
+              ? "faculty"
+              : "student",
+        });
+      if (preserveScroll) {
+        window.requestAnimationFrame(() =>
+          window.scrollTo({ top: previousScroll, behavior: "instant" }),
+        );
+      }
+      if (shouldFocusMain) focusMain();
+      return;
+    }
+    let route = routeParts();
+    void ensureNotifications();
+    if (isTeacher()) {
+      renderTeacher(route);
+      window.requestAnimationFrame(() =>
+        window.scrollTo({
+          top: preserveScroll ? previousScroll : 0,
+          behavior: "instant",
+        }),
+      );
+      if (shouldFocusMain) focusMain();
+      return;
+    }
+    if (
+      route[0] === "teacher" ||
+      route[0] === "signin" ||
+      route[0] === "register" ||
+      route[0] === "forgot-password" ||
+      route[0] === "account-created"
+    ) {
+      replaceRoute("dashboard");
+      route = ["dashboard"];
+    }
+    document.title = `${pageTitle(route)} | Lake Forest Learning`;
+    let view;
+    if (route[0] === "dashboard") view = dashboardView();
+    else if (route[0] === "course-selection") view = courseSelectionView();
+    else if (route[0] === "courses") view = coursesView();
+    else if (route[0] === "calendar") view = calendarView(safeDecode(route[1] || ""));
+    else if (route[0] === "course") {
+      const course = findCourse(route[1]);
+      if (!course) {
+        view = notFoundView();
+      } else if (!isCourseEnrolled(course.id)) {
+        view = SELECTABLE_COURSE_IDS.includes(course.id)
+          ? courseAccessView(course)
+          : notFoundView();
+      } else if (route[2] === "module") {
+        const module = findPlatformModule(course, route[3]);
+        view = module ? studentModuleView(course, module) : notFoundView();
+      } else {
+        view = route.length === 2 ? courseView(course) : notFoundView();
+      }
+    } else if (route[0] === "guide" || route[0] === "syllabus") {
+      const course = findCourse(route[1]);
+      view =
+        course && SELECTABLE_COURSE_IDS.includes(course.id)
+          ? courseSyllabusView(course)
+          : notFoundView();
+    } else if (route[0] === "lesson") {
+      const lesson = findLesson(route[1]);
+      const module = platformModuleForLesson(lesson);
+      view = lesson
+        ? isCourseEnrolled(lesson.course.id)
+          ? module && !moduleIsUnlocked(lesson.course, module)
+            ? studentModuleView(lesson.course, module)
+            : lessonView(lesson)
+          : SELECTABLE_COURSE_IDS.includes(lesson.course.id)
+            ? courseAccessView(lesson.course)
+            : notFoundView()
+        : notFoundView();
+    } else if (route[0] === "assessments" || route[0] === "assignments") {
+      view = assignmentsView();
+    }
+    else if (route[0] === "assignment") {
+      const assignment = findAssignment(route[1]);
+      const course = assignment ? findCourse(assignment.courseId) : null;
+      const module = platformModuleForAssignment(assignment);
+      view = assignment
+        ? course && isCourseEnrolled(course.id)
+          ? module && !moduleIsUnlocked(course, module)
+            ? studentModuleView(course, module)
+            : assignmentView(assignment)
+          : course && SELECTABLE_COURSE_IDS.includes(course.id)
+            ? courseAccessView(course)
+            : notFoundView()
+        : notFoundView();
+    } else if (route[0] === "progress") view = progressView();
+    else if (route[0] === "announcements") view = announcementsView();
+    else if (route[0] === "notifications") {
+      view = notificationsView();
+    }
+    else if (route[0] === "support") view = supportView();
+    else if (route[0] === "security") view = securityView();
+    else view = notFoundView();
+    APP_ROOT.innerHTML = shell(view);
+    if (route[0] === "course") {
+      ensureStudentPlatformData(findCourse(route[1]));
+    } else if (route[0] === "lesson") {
+      const lesson = findLesson(route[1]);
+      ensureStudentPlatformData(lesson?.course);
+    } else if (route[0] === "assignment") {
+      const assignment = findAssignment(route[1]);
+      ensureStudentPlatformData(findCourse(assignment?.courseId));
+    } else if (
+      ["dashboard", "assessments", "assignments", "calendar", "progress"].includes(route[0])
+    ) {
+      studentCourses().forEach(ensureStudentPlatformData);
+    }
+    if (
+      ["course", "courses", "guide", "syllabus", "assessments", "assignments"].includes(route[0]) &&
+      !driveEndpointChecked &&
+      driveMaterialsReadReady()
+    ) {
+      void refreshDriveMaterials({ silent: route[0] === "course" });
+    }
+    if (
+      submissionsEndpointUrl() &&
+      submissionsEndpointCheckedFor !== submissionScopeKey() &&
+      !submissionsRequestInFlight
+    ) {
+      void refreshRemoteSubmissions({ silent: true });
+    }
+    window.requestAnimationFrame(() =>
+      window.scrollTo({
+        top: preserveScroll ? previousScroll : 0,
+        behavior: "instant",
+      }),
+    );
+    if (shouldFocusMain) focusMain();
+  }
+
+  function navigate(route) {
+    window.location.hash = `#/${route}`;
+  }
+
+  function setFormAlert(form, message = "", tone = "error") {
+    const alert = form?.querySelector("#assignment-form-alert, .form-alert");
+    if (!alert) return;
+    alert.textContent = message;
+    alert.className = `form-alert ${tone ? `is-${tone}` : ""}`;
+    alert.hidden = !message;
+    if (message) alert.focus?.();
+  }
+
+  function setGradingAlert(form, message = "") {
+    const alert = form?.querySelector("#grading-form-alert");
+    if (!alert) return;
+    alert.textContent = message;
+    alert.hidden = !message;
+    ["score", "feedback"].forEach((name) => {
+      const field = form.elements[name];
+      if (field) {
+        if (message) field.setAttribute("aria-invalid", "true");
+        else field.removeAttribute("aria-invalid");
+      }
+    });
+    if (message) alert.focus();
+  }
+
+  function showToast(
+    message,
+    {
+      tone = "info",
+      actionLabel = "",
+      action = "",
+      persistent = false,
+    } = {},
+  ) {
+    document.querySelector(".toast")?.remove();
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${tone}`;
+    toast.setAttribute("role", tone === "error" ? "alert" : "status");
+    toast.innerHTML = `
+      <span>${escapeHtml(message)}</span>
+      ${
+        actionLabel && action
+          ? `<button type="button" data-action="toast-action" data-toast-action="${escapeHtml(action)}">${escapeHtml(actionLabel)}</button>`
+          : ""
+      }
+      <button class="toast-close" type="button" data-action="dismiss-toast" aria-label="Dismiss notification">${icon("close", 15)}</button>
+    `;
+    document.body.append(toast);
+    window.clearTimeout(toastTimer);
+    if (!persistent && !(actionLabel && action)) {
+      toastTimer = window.setTimeout(
+        () => toast.remove(),
+        tone === "error" ? 8000 : 5000,
+      );
+    }
+  }
+
+  async function handleFormSubmit(event) {
+    if (event.target.id === "announcement-form") {
+      event.preventDefault();
+      const form = event.target;
+      const button = form.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      const values = new FormData(form);
+      const courseCodes = values.getAll("courseCode");
+      if (!courseCodes.length) {
+        setFormAlert(form, "Select at least one course.");
+        return;
+      }
+      const title = values.get("title").trim();
+      const body = values.get("body").trim();
+      if (!title || !body) {
+        setFormAlert(form, "Enter a title and a message.");
+        return;
+      }
+      const board = announcementBoard;
+      const fingerprint = JSON.stringify([courseCodes, title, body]);
+      if (form.dataset.fingerprint !== fingerprint) {
+        form.dataset.publicationId = window.crypto.randomUUID();
+        form.dataset.fingerprint = fingerprint;
+      }
+      setFormAlert(form);
+      form.dataset.dirty = "true";
+      const editableFields = form.querySelectorAll("input, textarea");
+      for (const field of editableFields) field.disabled = true;
+      button.disabled = true;
+      try {
+        const published = await requestPlatformJson(PLATFORM_API_CONFIG.announcementsEndpoint, {
+          method: "POST",
+          body: JSON.stringify({ publicationId: form.dataset.publicationId, courseCodes, title, body }),
+        });
+        if (published?.id !== form.dataset.publicationId) {
+          throw new Error("Publication could not be confirmed. Try again with the same message.");
+        }
+        if (announcementBoard === board) {
+          announcementBoard = null;
+          render(false, true);
+          showToast("Announcement published.");
+        }
+      } catch (error) {
+        if (announcementBoard === board) setFormAlert(form, error.message || "Publication failed. Try again.");
+      } finally {
+        for (const field of editableFields) field.disabled = false;
+        button.disabled = false;
+      }
+      return;
+    }
+    if (event.target.id === "submission-message-form") {
+      event.preventDefault();
+      const form = event.target;
+      const values = new FormData(form);
+      const body = String(values.get("body") || "").trim();
+      const submissionId = String(form.dataset.submission || "").trim();
+      const endpoint = submissionWorkflowEndpoint(submissionId, "messages");
+      const idempotencyKey =
+        form.dataset.idempotencyKey || requestIdFor("submission-message");
+      form.dataset.idempotencyKey = idempotencyKey;
+      setFormAlert(form);
+      if (!body) {
+        setFormAlert(form, "Write a message before sending.");
+        form.elements.body?.focus();
+        return;
+      }
+      if (!endpoint) {
+        setFormAlert(form, "The secure assignment conversation is unavailable.");
+        return;
+      }
+      const button = form.querySelector('[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Sending...";
+      }
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: JSON.stringify({ body }),
+        });
+        const source = platformPayloadData(payload, payload);
+        const rawMessage =
+          source?.message && typeof source.message === "object"
+            ? source.message
+            : source;
+        const record = remoteSubmissionRecordById(submissionId);
+        const message = normalizeSubmissionMessages(
+          [
+            {
+              ...(rawMessage && typeof rawMessage === "object"
+                ? rawMessage
+                : {}),
+              body:
+                (rawMessage && typeof rawMessage === "object"
+                  ? rawMessage.body
+                  : "") || body,
+              authorRole:
+                rawMessage?.authorRole || currentUser()?.role || "student",
+              authorName:
+                rawMessage?.authorName || currentUser()?.displayName || "",
+              createdAt: rawMessage?.createdAt || new Date().toISOString(),
+              attemptNumber:
+                rawMessage?.attemptNumber ||
+                record?.submission?.attemptNumber ||
+                null,
+            },
+          ],
+          record?.submission?.attemptNumber || null,
+        )[0];
+        appendSubmissionMessage(record?.submission, message);
+        delete form.dataset.idempotencyKey;
+        form.reset();
+        render(false, true);
+        showToast("Message sent in the assignment conversation.", {
+          tone: "success",
+        });
+        void refreshRemoteSubmissions({ silent: true });
+      } catch (error) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Send Message";
+        }
+        setFormAlert(
+          form,
+          error?.message || "The message could not be sent.",
+        );
+      }
+      return;
+    }
+
+    if (event.target.id === "revision-request-form") {
+      event.preventDefault();
+      const form = event.target;
+      const values = new FormData(form);
+      const messageBody = String(values.get("message") || "").trim();
+      const submissionId = String(form.dataset.submission || "").trim();
+      const endpoint = submissionWorkflowEndpoint(submissionId, "return");
+      const idempotencyKey =
+        form.dataset.idempotencyKey || requestIdFor("revision-request");
+      form.dataset.idempotencyKey = idempotencyKey;
+      setFormAlert(form);
+      if (messageBody.length < 3) {
+        setFormAlert(
+          form,
+          "Add a clear revision message before returning this work.",
+        );
+        form.elements.message?.focus();
+        return;
+      }
+      if (!endpoint) {
+        setFormAlert(form, "The revision workflow is not connected.");
+        return;
+      }
+      const button = form.querySelector('[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Returning...";
+      }
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: JSON.stringify({ message: messageBody }),
+        });
+        const source = platformPayloadData(payload, payload);
+        const record = remoteSubmissionRecordById(submissionId);
+        if (record) {
+          clearGradingDraft(record);
+          record.submission.workflowStatus = "revision_requested";
+          record.submission.status = "revision_requested";
+          record.submission.resubmissionAllowed = true;
+          const rawMessage =
+            source?.message && typeof source.message === "object"
+              ? source.message
+              : {};
+          const message = normalizeSubmissionMessages(
+            [
+              {
+                ...rawMessage,
+                body: rawMessage.body || messageBody,
+                authorRole:
+                  rawMessage.authorRole || currentUser()?.role || "teacher",
+                authorName:
+                  rawMessage.authorName || currentUser()?.displayName || "",
+                createdAt: rawMessage.createdAt || new Date().toISOString(),
+                attemptNumber:
+                  rawMessage.attemptNumber ||
+                  record.submission.attemptNumber ||
+                  null,
+              },
+            ],
+            record.submission.attemptNumber || null,
+          )[0];
+          appendSubmissionMessage(record.submission, message);
+        }
+        delete form.dataset.idempotencyKey;
+        form.reset();
+        render(false, true);
+        showToast("Revision requested. The student can submit a new version.", {
+          tone: "success",
+        });
+        void refreshRemoteSubmissions({ silent: true });
+      } catch (error) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Return for Revision";
+        }
+        setFormAlert(
+          form,
+          error?.message || "The revision request could not be sent.",
+        );
+      }
+      return;
+    }
+
+    if (event.target.id === "forgot-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const email = normalizeEmail(form.get("email"));
+      if (!isValidEmail(email)) {
+        forgotPasswordView({
+          error: "Enter the complete email address attached to your account.",
+          email,
+        });
+        document.querySelector("#recoveryEmail")?.focus();
+        return;
+      }
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Sending Secure Link…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordResetRequestEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({ email }),
+        });
+        forgotPasswordView({
+          email,
+          notice:
+            "If an active account matches that address, a one-time password reset link has been sent. Check your inbox and spam folder.",
+        });
+      } catch (error) {
+        forgotPasswordView({
+          email,
+          error:
+            error?.name === "AbortError"
+              ? "The recovery service did not respond. Please try again."
+              : error?.message ||
+                "Password recovery is temporarily unavailable. Please try again later.",
+        });
+        document.querySelector("#recoveryEmail")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.id === "reset-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const token = String(form.get("token") || "").trim();
+      const newPassword = String(form.get("newPassword") || "");
+      const confirmPassword = String(form.get("confirmPassword") || "");
+      if (!token) {
+        resetPasswordView({ error: "Request a new password reset link." });
+        return;
+      }
+      if (!passwordChecks(newPassword).every((rule) => rule.met)) {
+        resetPasswordView({
+          error: "Choose a new password that meets every requirement.",
+        });
+        document.querySelector("#newPassword")?.focus();
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        resetPasswordView({ error: "Enter the same new password twice." });
+        document.querySelector("#confirmPassword")?.focus();
+        return;
+      }
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Changing Password…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordResetEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({ token, newPassword, confirmPassword }),
+        });
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        remoteSessionValidated = true;
+        signInPrefill = "";
+        signInNotice =
+          "Your password has been changed. Sign in again with the new password.";
+        replaceRoute("signin/student");
+        loginView({ portal: "student" });
+      } catch (error) {
+        resetPasswordView({
+          error:
+            error?.name === "AbortError"
+              ? "The password reset service did not respond. Please try again."
+              : error?.message ||
+                "This reset link could not be used. Request a new link and try again.",
+        });
+        document.querySelector("#newPassword")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.id === "change-password-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const currentPassword = String(form.get("currentPassword") || "");
+      const newPassword = String(form.get("newPassword") || "");
+      const confirmPassword = String(form.get("confirmPassword") || "");
+      if (!currentPassword) {
+        setFormAlert(event.target, "Enter your current password.");
+        document.querySelector("#currentPassword")?.focus();
+        return;
+      }
+      if (
+        !passwordChecks(newPassword, currentUser()?.email || "").every(
+          (rule) => rule.met,
+        )
+      ) {
+        setFormAlert(
+          event.target,
+          "Choose a new password that meets every requirement.",
+        );
+        document.querySelector("#newPassword")?.focus();
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setFormAlert(event.target, "Enter the same new password twice.");
+        document.querySelector("#confirmPassword")?.focus();
+        return;
+      }
+      const facultySession = isTeacher();
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Updating Password…";
+      }
+      try {
+        await requestAuthEndpoint(AUTH_CONFIG.passwordChangeEndpoint, {
+          method: "POST",
+          skipSessionExpiry: true,
+          body: JSON.stringify({
+            currentPassword,
+            newPassword,
+            confirmPassword,
+          }),
+        });
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        remoteSessionValidated = true;
+        resetPlatformRuntime();
+        resetDriveMaterialsForSession();
+        state = initialStateForUser(null);
+        signInPrefill = "";
+        signInNotice =
+          "Your password has been updated and all sessions were signed out. Sign in again with the new password.";
+        replaceRoute(facultySession ? "signin/faculty" : "signin/student");
+        loginView({ portal: facultySession ? "faculty" : "student" });
+      } catch (error) {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Update Password";
+        }
+        setFormAlert(
+          event.target,
+          error?.name === "AbortError"
+            ? "The password service did not respond. Please try again."
+            : error?.message || "Your password could not be changed.",
+        );
+      }
+      return;
+    }
+
+    if (event.target.id === "login-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const email = normalizeEmail(form.get("email"));
+      const password = String(form.get("password") || "");
+      const portal = form.get("portal") === "faculty" ? "faculty" : "student";
+      let account = null;
+      let accepted = false;
+      let remoteLogin = false;
+      if (serverAuthReady()) {
+        const submitButton = event.target.querySelector('[type="submit"]');
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = "Signing In…";
+        }
+        try {
+          const payload = await requestAuthEndpoint(AUTH_CONFIG.loginEndpoint, {
+            method: "POST",
+            skipSessionExpiry: true,
+            body: JSON.stringify({ email, password, portal }),
+          });
+          account = authenticatedUserFrom(payload);
+          accepted = Boolean(
+            account &&
+              (portal === "faculty"
+                ? isTeacher(account)
+                : account.role === "student"),
+          );
+          remoteLogin = accepted;
+        } catch (error) {
+          loginView({
+            error:
+              error?.name === "AbortError"
+                ? "The sign-in service did not respond. Please try again."
+                : error?.message || "Secure sign-in is temporarily unavailable.",
+            email,
+            portal,
+          });
+          document.querySelector(email ? "#password" : "#email")?.focus();
+          return;
+        }
+      } else if (AUTH_CONFIG.allowDeviceAccounts && portal === "student") {
+        account = registeredAccount(email);
+        try {
+          accepted = Boolean(
+            account && (await verifyRegisteredPassword(account, password)),
+          );
+        } catch {
+          accepted = false;
+        }
+      }
+      if (!accepted || !account) {
+        if (serverAuthReady() && account) {
+          await closeWorkspaceSession();
+        }
+        loginView({
+          error:
+            !serverAuthReady() && !AUTH_CONFIG.allowDeviceAccounts
+              ? "Secure sign-in is not available until the school API is deployed."
+              : portal === "faculty"
+              ? "The faculty email or password is incorrect. Please try again."
+              : "The student email or password is incorrect. Please try again.",
+          email,
+          portal,
+        });
+        document.querySelector(email ? "#password" : "#email")?.focus();
+        return;
+      }
+      sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      workspaceCallbackFeedback = null;
+      startSession(account, { remote: remoteLogin });
+      state = loadState(currentUser());
+      let enrollmentRefreshError = "";
+      if (remoteLogin && account.role === "student") {
+        try {
+          await refreshRemoteEnrollments();
+        } catch (error) {
+          enrollmentRefreshError =
+            error?.message || "Your course selections could not be refreshed.";
+        }
+      }
+      signInNotice = "";
+      signInPrefill = "";
+      sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
+      window.location.hash = isTeacher()
+        ? "#/teacher/dashboard"
+        : "#/dashboard";
+      render(true);
+      showToast(
+        enrollmentRefreshError ||
+          `Welcome back, ${currentUser()?.firstName || "student"}.`,
+        { tone: enrollmentRefreshError ? "error" : "success" },
+      );
+      return;
+    }
+
+    if (event.target.id === "registration-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const values = {
+        firstName: String(form.get("firstName") || "").trim(),
+        lastName: String(form.get("lastName") || "").trim(),
+        email: normalizeEmail(form.get("email")),
+      };
+      const password = String(form.get("newPassword") || "");
+      const confirmation = String(form.get("confirmPassword") || "");
+      const errors = {};
+      if (!isValidName(values.firstName)) {
+        errors.firstName = "Enter a first name using 1–50 characters.";
+      }
+      if (!isValidName(values.lastName)) {
+        errors.lastName = "Enter a last name using 1–50 characters.";
+      }
+      if (!isValidEmail(values.email)) {
+        errors.email = "Enter a complete email address, such as name@example.com.";
+      } else if (values.email.endsWith("@lakeforestacademy.ca")) {
+        errors.email =
+          "School email accounts are issued by Lake Forest Academy. Sign in with your school credentials or use a personal address.";
+      } else if (
+        AUTH_CONFIG.allowDeviceAccounts &&
+        !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) &&
+        registeredAccount(values.email)
+      ) {
+        errors.email =
+          "We could not create an account with this email. Try signing in or use another address.";
+      }
+      if (!passwordChecks(password, values.email).every((rule) => rule.met)) {
+        errors.password = "Create a password that meets every requirement.";
+      }
+      if (!confirmation || confirmation !== password) {
+        errors.confirmPassword = "Enter the same password again.";
+      }
+      if (
+        AUTH_CONFIG.allowDeviceAccounts &&
+        !configuredAuthUrl(AUTH_CONFIG.registrationEndpoint) &&
+        form.get("deviceConsent") !== "yes"
+      ) {
+        errors.deviceConsent =
+          "Confirm that you understand this account is saved on this device.";
+      }
+      if (Object.keys(errors).length) {
+        registrationView(values, errors);
+        document.querySelector("#registration-errors")?.focus();
+        return;
+      }
+
+      const submitButton = event.target.querySelector('[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Creating Account…";
+      }
+      try {
+        const registrationEndpoint = configuredAuthUrl(
+          AUTH_CONFIG.registrationEndpoint,
+        );
+        let account;
+        let remoteRegistration = false;
+        if (registrationEndpoint) {
+          const payload = await requestAuthEndpoint(
+            registrationEndpoint.toString(),
+            {
+              method: "POST",
+              skipSessionExpiry: true,
+              body: JSON.stringify({
+                firstName: values.firstName,
+                lastName: values.lastName,
+                email: values.email,
+                password,
+              }),
+            },
+          );
+          account = authenticatedUserFrom(payload);
+          if (!account || account.role !== "student") {
+            throw new Error("The registration service returned an invalid account.");
+          }
+          remoteRegistration = true;
+        } else if (AUTH_CONFIG.allowDeviceAccounts) {
+          const salt = createPasswordSalt();
+          const passwordHash = await derivePasswordHash(password, salt);
+          account = {
+            firstName: values.firstName,
+            lastName: values.lastName,
+            displayName: `${values.firstName} ${values.lastName}`.trim(),
+            email: values.email,
+            role: "student",
+            passwordHash,
+            salt,
+            createdAt: new Date().toISOString(),
+          };
+          const accounts = loadAccounts();
+          accounts[values.email] = account;
+          saveAccounts(accounts);
+        } else {
+          throw new Error(
+            "Registration is not available until the secure school API is deployed.",
+          );
+        }
+        sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+        startSession(account, { remote: remoteRegistration });
+        state = loadState(currentUser());
+        let enrollmentSyncError = "";
+        if (remoteRegistration) {
+          try {
+            await persistRemoteEnrollments(state.enrolledCourseIds || []);
+          } catch (error) {
+            enrollmentSyncError =
+              error?.message || "Your empty course plan could not be saved.";
+          }
+        }
+        sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
+        signInPrefill = "";
+        signInNotice = "";
+        window.location.hash = "#/course-selection";
+        render(true);
+        showToast(
+          enrollmentSyncError ||
+            `Welcome, ${account.firstName}. Choose your courses to build your learning plan.`,
+          { tone: enrollmentSyncError ? "error" : "success" },
+        );
+      } catch (error) {
+        registrationView(values, {
+          form:
+            error?.name === "AbortError"
+              ? "The registration service did not respond. Please try again."
+              : error?.message ||
+                "We could not securely create this account. Please try again.",
+        });
+        document.querySelector("#registration-errors")?.focus();
+      }
+      return;
+    }
+
+    if (event.target.matches(".direct-grade-form")) {
+      event.preventDefault();
+      const form = event.target;
+      setFormAlert(form);
+      const values = new FormData(form);
+      const scoreText = String(values.get("score") || "").trim();
+      const score = Number(scoreText);
+      const feedback = String(values.get("feedback") || "").trim();
+      const maxScore = Number(form.dataset.maxScore || 100);
+      const courseCode = String(form.dataset.courseCode || "").trim();
+      const studentId = String(form.dataset.student || "").trim();
+      const itemId = String(form.dataset.item || "").trim();
+      const version = Number(form.dataset.version || 0);
+      const publish = event.submitter?.value === "publish";
+      if (
+        !courseCode ||
+        !studentId ||
+        !itemId ||
+        !scoreText ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > maxScore
+      ) {
+        setFormAlert(
+          form,
+          `Enter a whole-number score from 0 to ${maxScore}.`,
+        );
+        return;
+      }
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.teacherCoursesEndpoint,
+        `${encodeURIComponent(courseCode)}/students/${encodeURIComponent(studentId)}/grades/${encodeURIComponent(itemId)}`,
+      );
+      if (!endpoint) {
+        setFormAlert(form, "The secure gradebook service is not connected.");
+        return;
+      }
+      const buttons = [...form.querySelectorAll('[type="submit"]')];
+      buttons.forEach((button) => {
+        button.disabled = true;
+      });
+      try {
+        await requestPlatformJson(endpoint, {
+          method: "PUT",
+          headers: {
+            "If-Match": `"direct-grade-v${version}"`,
+            "Idempotency-Key": requestIdFor("direct-grade"),
+          },
+          body: JSON.stringify({ score, feedback, publish }),
+        });
+        delete platformRuntime.teacherGradebooks[courseCode];
+        platformRequests.delete(`teacher-gradebook:${courseCode}`);
+        const course = findCourse(form.dataset.course);
+        if (course) ensureTeacherPlatformData(course);
+        showToast(
+          publish
+            ? "The result was published to the student."
+            : "The gradebook draft was saved.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        setFormAlert(
+          form,
+          error?.message || "The gradebook result could not be saved.",
+        );
+      } finally {
+        buttons.forEach((button) => {
+          button.disabled = false;
+        });
+      }
+      return;
+    }
+
+    if (event.target.id === "unlock-override-form") {
+      event.preventDefault();
+      setFormAlert(event.target);
+      const values = new FormData(event.target);
+      const studentId = String(values.get("studentId") || "").trim();
+      const reason = String(values.get("reason") || "").trim();
+      const moduleId = String(event.target.dataset.moduleId || "").trim();
+      const course = findCourse(event.target.dataset.course);
+      if (!studentId || !moduleId || reason.length < 10) {
+        setFormAlert(
+          event.target,
+          "Choose a student and provide a documented reason of at least 10 characters.",
+        );
+        return;
+      }
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.teacherStudentsEndpoint,
+        `${encodeURIComponent(studentId)}/modules/${encodeURIComponent(moduleId)}/unlock-overrides`,
+      );
+      const button = event.target.querySelector('[type="submit"]');
+      if (button) button.disabled = true;
+      try {
+        await requestPlatformJson(endpoint, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        event.target.reset();
+        if (course) {
+          platformRequests.delete(`teacher-roster:${course.code}`);
+          invalidateTeacherProgress(course);
+          ensureTeacherPlatformData(course);
+        }
+        showToast("The documented module unlock override was created.", {
+          tone: "success",
+        });
+      } catch (error) {
+        setFormAlert(
+          event.target,
+          error?.message || "The unlock override could not be created.",
+        );
+      } finally {
+        if (button) button.disabled = false;
+      }
+      return;
+    }
+
+    if (event.target.id === "teacher-submission-filter-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const selectedCourse = String(form.get("course") || "all");
+      teacherSubmissionFilters = {
+        ...teacherSubmissionFilters,
+        course:
+          selectedCourse === "all" || findCourse(selectedCourse)
+            ? selectedCourse
+            : "all",
+        query: String(form.get("query") || "").trim().slice(0, 120),
+      };
+      const nextHash =
+        teacherSubmissionFilters.course === "all"
+          ? "#/teacher/submissions"
+          : `#/teacher/submissions/${teacherSubmissionFilters.course}`;
+      if (window.location.hash === nextHash) {
+        render(false, true);
+        document
+          .querySelector('#teacher-submission-filter-form input[name="query"]')
+          ?.focus();
+      } else {
+        window.location.hash = nextHash;
+      }
+      return;
+    }
+
+    if (event.target.id === "grading-form") {
+      event.preventDefault();
+      setGradingAlert(event.target);
+      const rows = readRubric(event.target);
+      const result = rubricResult(rows);
+      if (result.error) {
+        setGradingAlert(event.target, result.error);
+        return;
+      }
+      const scoreText = String(result.score ?? new FormData(event.target).get("score") ?? "");
+      const score = Number(scoreText);
+      const feedback = String(
+        new FormData(event.target).get("feedback") || "",
+      ).trim();
+      if (
+        !/^\d{1,3}$/.test(scoreText) ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 100
+      ) {
+        setGradingAlert(
+          event.target,
+          "Enter a whole-number score from 0 to 100.",
+        );
+        document.querySelector("#grade-score")?.focus();
+        return;
+      }
+      if (!feedback) {
+        setGradingAlert(
+          event.target,
+          "Add written feedback before publishing this grade.",
+        );
+        document.querySelector("#grade-feedback")?.focus();
+        return;
+      }
+      if ([...feedback].length > 10000) {
+        setGradingAlert(
+          event.target,
+          "Teacher feedback must be 10,000 characters or fewer.",
+        );
+        document.querySelector("#grade-feedback")?.focus();
+        return;
+      }
+      const studentKey = event.target.dataset.student || "";
+      const assignmentId = event.target.dataset.assignment || "";
+      const submissionId = event.target.dataset.submission || "";
+      const record = teacherSubmissionRecords().find(
+        (item) =>
+          item.assignment.id === assignmentId &&
+          studentRecordKey(item.student) === studentKey &&
+          scalarLabel(item.submission?.id) === scalarLabel(submissionId),
+      );
+      if (!record) {
+        setGradingAlert(
+          event.target,
+          "This submission is no longer available.",
+        );
+        return;
+      }
+      if (record.unmapped) {
+        setGradingAlert(
+          event.target,
+          "Confirm the course and assignment mapping before publishing this grade.",
+        );
+        return;
+      }
+      saveGradingDraft(record, { score: scoreText, feedback, rubric: rows });
+      const gradedAt = new Date().toISOString();
+      const { endpoint: gradingEndpoint, submissionId: targetSubmissionId } =
+        gradingRequestTarget(record, submissionId);
+      const submitButton = event.target.querySelector('button[type="submit"]');
+      if (submissionsEndpointUrl() && !gradingEndpoint) {
+        setGradingAlert(
+          event.target,
+          "The grading service must be configured before this grade can be saved.",
+        );
+        return;
+      }
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Publishing…";
+      }
+      try {
+        if (gradingEndpoint) {
+          const payload = await requestSubmissionEndpoint(gradingEndpoint, {
+            method: "PUT",
+            headers: {
+              "Idempotency-Key": requestIdFor("grade"),
+              "If-Match": record.submission.gradeEtag || '"grade-v0"',
+            },
+            body: JSON.stringify({
+              submissionId: targetSubmissionId,
+              ...(result.rubric ? { rubric: result.rubric } : {}),
+              score,
+              feedback,
+              publish: true,
+            }),
+          });
+          applyRemoteSubmissionGrade(record, payload, {
+            score,
+            feedback,
+            publish: true,
+            fallbackSubmissionId: submissionId,
+          });
+        } else {
+          const studentState = loadState(record.student);
+          const currentSubmission =
+            studentState.submissions?.[assignmentId] || record.submission;
+          studentState.submissions[assignmentId] = {
+            ...currentSubmission,
+            rubric: result.rubric ?? null,
+            score,
+            feedback,
+            status: "graded",
+            gradedAt,
+            updatedAt: gradedAt,
+          };
+          localStorage.setItem(
+            stateStorageKey(record.student),
+            JSON.stringify(studentState),
+          );
+        }
+        clearGradingDraft(record);
+        render(true);
+        showToast(
+          `Grade and feedback published to ${record.student.displayName}: ${score}%.`,
+          { tone: "success" },
+        );
+      } catch (error) {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Publish Grade & Feedback";
+        }
+        const detail =
+          error?.name === "AbortError"
+            ? "The grading request timed out."
+            : error?.message || "The grade could not be published.";
+        const message = `Publishing failed. Your device draft is still safe. ${detail}`;
+        setGradingAlert(event.target, message);
+        showToast(message, { tone: "error", persistent: true });
+      }
+      return;
+    }
+
+    if (event.target.id === "assignment-form") {
+      event.preventDefault();
+      event.target.dataset.dirty = "true";
+      const id = event.target.dataset.id;
+      setFormAlert(event.target);
+      const form = new FormData(event.target);
+      const file = form.get("file");
+      const assignment = findAssignment(id);
+      const existing = submissionForAssignment(id);
+      const remoteExisting = remoteSubmissionFor(id);
+      const deviceDraft = localDeviceDraftForAssignment(id);
+      const isResumingDeviceDraft = Boolean(
+        resumingDeviceDraftId === id && deviceDraft,
+      );
+      const remoteEndpoint = submissionUploadEnabled()
+        ? submissionsEndpointUrl()
+        : "";
+      const text = String(form.get("note") || "").trim();
+      const newFileName = file instanceof File && file.name ? file.name : "";
+      const fileName =
+        newFileName ||
+        (remoteEndpoint && isResumingDeviceDraft
+          ? ""
+          : existing?.fileName || "");
+      if (newFileName && !submissionFileIsSupported(file)) {
+        setFormAlert(
+          event.target,
+          `${file.name} is not a supported file type. Choose ${SUBMISSION_FILE_TYPE_LABEL}.`,
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
+      if (newFileName && file.size > MAX_SUBMISSION_BYTES) {
+        setFormAlert(
+          event.target,
+          `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
+      if (
+        (remoteExisting ||
+          ["file", "project"].includes(assignment?.submissionMode)) &&
+        !newFileName
+      ) {
+        setFormAlert(
+          event.target,
+          remoteExisting
+            ? "Choose a new file for this replacement attempt before continuing."
+            : "Choose a new file for this assignment before continuing.",
+        );
+        document.querySelector("#submission-file")?.focus();
+        return;
+      }
+      if (!text && !fileName) {
+        setFormAlert(
+          event.target,
+          "Add a submission note or choose a file before continuing.",
+        );
+        document.querySelector("#submission-note")?.focus();
+        return;
+      }
+      if (form.get("integrity") !== "confirmed") {
+        setFormAlert(
+          event.target,
+          "Confirm the academic integrity statement before continuing.",
+        );
+        document.querySelector("#submission-integrity")?.focus();
+        return;
+      }
+      const submittedAt = new Date().toISOString();
+      const receiptId = receiptIdFor(id, submittedAt);
+      if (remoteEndpoint) {
+        const course = assignment ? findCourse(assignment.courseId) : null;
+        const user = currentUser();
+        const unitNumber = Number(assignment?.unitNumber);
+        const attemptNumber = remoteExisting
+          ? Math.max(
+              Number(remoteExisting.attemptNumber || 0),
+              remoteExisting.history?.length || 0,
+            ) + 1
+          : 1;
+        const upload = new FormData();
+        upload.set("assignmentId", id);
+        upload.set("courseCode", course?.code || "");
+        if (
+          Number.isInteger(unitNumber) &&
+          unitNumber >= 1 &&
+          unitNumber <= 999
+        ) {
+          upload.set("unitNumber", String(unitNumber));
+        }
+        upload.set("assignmentTitle", assignment?.title || "");
+        upload.set("attemptNumber", String(attemptNumber));
+        upload.set("note", text);
+        upload.set("integrityConfirmed", "true");
+        if (remoteExisting?.id) {
+          upload.set("replacesSubmissionId", remoteExisting.id);
+        }
+        if (newFileName) upload.set("files", file, file.name);
+        const submitButton = event.target.querySelector(
+          'button[type="submit"]',
+        );
+        if (submitButton) {
+          submitButton.disabled = true;
+          submitButton.textContent = newFileName
+            ? "Uploading to Lotus Drive…"
+            : "Saving to School Record…";
+        }
+        try {
+          const payload = await requestSubmissionEndpoint(remoteEndpoint, {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": requestIdFor("submission"),
+            },
+            body: upload,
+          });
+          const extracted = normalizeRemoteSubmissions(payload, user);
+          const responseSource =
+            payload?.data?.submission ||
+            payload?.submission ||
+            payload?.data ||
+            payload;
+          const responseFile = Array.isArray(responseSource?.files)
+            ? responseSource.files[0]
+            : responseSource?.file;
+          const officialSubmissionId =
+            scalarLabel(
+              responseSource?.submissionId || responseSource?.id,
+            ) || receiptId;
+          const officialReceiptId =
+            scalarLabel(responseSource?.receiptId) || officialSubmissionId;
+          const officialFileReceiptId = scalarLabel(
+            responseSource?.driveFileId ||
+              responseSource?.fileId ||
+              responseFile?.id,
+          );
+          const responseHasOfficialHistory = Boolean(
+            (Array.isArray(responseSource?.history) &&
+              responseSource.history.length) ||
+              (Array.isArray(responseSource?.versions) &&
+                responseSource.versions.length),
+          );
+          const normalized =
+            extracted.records[0] ||
+            normalizeRemoteSubmission(responseSource, 0, user);
+          const fallbackRecord = normalizeRemoteSubmission(
+            {
+              submissionId: officialSubmissionId,
+              assignmentId: id,
+              courseId: course?.id || "",
+              courseCode: course?.code || "",
+              studentEmail: user?.email || "",
+              studentName: user?.displayName || "",
+              note: text,
+              fileName,
+              fileSize: newFileName ? file.size : 0,
+              fileType:
+                (newFileName ? file.type : "") ||
+                "application/octet-stream",
+              attemptNumber,
+              submittedAt,
+              receiptId: officialReceiptId,
+              driveFileId: officialFileReceiptId,
+              fileUrl:
+                responseSource?.fileUrl ||
+                responseSource?.webViewLink ||
+                responseSource?.openUrl ||
+                responseFile?.openUrl ||
+                "",
+              status: "submitted",
+              history: [
+                ...(remoteExisting?.history || []),
+                {
+                  attemptNumber,
+                  fileName,
+                  fileSize: newFileName
+                    ? file.size
+                    : 0,
+                  fileType:
+                    (newFileName ? file.type : "") ||
+                    "application/octet-stream",
+                  submittedAt,
+                  receiptId: officialReceiptId,
+                  fileReceiptId: officialFileReceiptId,
+                  fileUrl:
+                    responseSource?.fileUrl ||
+                    responseSource?.webViewLink ||
+                    responseSource?.openUrl ||
+                    responseFile?.openUrl ||
+                    "",
+                },
+              ],
+            },
+            0,
+            user,
+          );
+          const storedRecord = normalized
+            ? {
+                ...fallbackRecord,
+                ...normalized,
+                student: {
+                  ...fallbackRecord.student,
+                  ...normalized.student,
+                },
+                submission: {
+                  ...fallbackRecord.submission,
+                  ...normalized.submission,
+                },
+              }
+            : fallbackRecord;
+          const existingMessages = normalizeSubmissionMessages(
+            remoteExisting?.messages,
+            remoteExisting?.attemptNumber,
+          );
+          if (
+            !storedRecord.submission.messages?.length &&
+            existingMessages.length
+          ) {
+            storedRecord.submission.messages = existingMessages;
+          }
+          if (!responseHasOfficialHistory) {
+            storedRecord.submission.history =
+              fallbackRecord.submission.history;
+          }
+          storedRecord.submission.delivery = newFileName
+            ? "lotus"
+            : "central";
+          upsertRemoteSubmission(storedRecord);
+          remoteSubmissionsState.error = "";
+          remoteSubmissionsState.lastLoadedAt = new Date().toISOString();
+          submissionsEndpointCheckedFor = submissionScopeKey(user);
+          if (deviceDraft) {
+            delete state.submissions[id];
+            saveState();
+          }
+          replacingSubmissionId = null;
+          resumingDeviceDraftId = null;
+          render(true);
+          showToast(
+            `${newFileName ? "File uploaded to Lotus Drive" : "Submission saved to the school record"}. Receipt ${
+              storedRecord?.submission.receiptId ||
+              receiptId
+            }.`,
+          );
+        } catch (error) {
+          if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = newFileName
+              ? remoteExisting
+                ? "Submit New Version to Lotus Drive"
+                : "Upload to Lotus Drive"
+              : "Submit to School Record";
+          }
+          const message = safeUploadFailureMessage(error);
+          setFormAlert(event.target, message);
+          showToast(message, {
+            tone: "error",
+            persistent: true,
+          });
+        }
+        return;
+      }
+      let fileReceiptId = existing?.fileReceiptId || "";
+      let fileSize = existing?.fileSize || 0;
+      let fileType = existing?.fileType || "";
+      let fileStorageWarning = false;
+      if (newFileName) {
+        fileReceiptId = receiptId;
+        fileSize = file.size;
+        fileType = file.type || "application/octet-stream";
+        try {
+          await storeSubmissionFile({
+            receiptId,
+            studentEmail: currentUser()?.email || "",
+            assignmentId: id,
+            fileName,
+            fileSize,
+            fileType,
+            lastModified: file.lastModified,
+            blob: file,
+            createdAt: submittedAt,
+          });
+        } catch {
+          fileReceiptId = "";
+          fileStorageWarning = true;
+        }
+      }
+      const history = [
+        ...(existing?.history || []),
+        {
+          fileName,
+          submittedAt,
+          receiptId,
+          fileReceiptId,
+          fileSize,
+          fileType,
+        },
+      ];
+      state.submissions[id] = {
+        text,
+        fileName,
+        submittedAt,
+        receiptId,
+        fileReceiptId,
+        fileSize,
+        fileType,
+        delivery: "device",
+        status: "draft",
+        history,
+      };
+      replacingSubmissionId = null;
+      saveState();
+      render(true);
+      showToast(
+        fileStorageWarning
+          ? `Draft saved on this device. Receipt ${receiptId}. File metadata was saved, but the browser could not retain the file for download.`
+          : `Draft saved on this device. Receipt ${receiptId}.`,
+        { tone: fileStorageWarning ? "error" : "success" },
+      );
+    }
+  }
+
+  document.addEventListener("submit", async (event) => {
+    const authForm = Boolean(event.target.closest?.(".login-panel"));
+    if (authForm && (serviceRetryPending || authSubmissionPending)) {
+      event.preventDefault();
+      return;
+    }
+    if (authForm) authSubmissionPending = true;
+    try {
+      await handleFormSubmit(event);
+    } finally {
+      if (authForm) authSubmissionPending = false;
+    }
+  });
+
+  document.addEventListener("input", (event) => {
+    const composer = event.target.closest?.("#announcement-form");
+    if (composer) composer.dataset.dirty = "true";
+    const assignmentForm = event.target.closest?.("#assignment-form");
+    if (assignmentForm) assignmentForm.dataset.dirty = "true";
+    const interactionForm = event.target.closest(
+      "#submission-message-form, #revision-request-form",
+    );
+    if (interactionForm) delete interactionForm.dataset.idempotencyKey;
+    const gradingForm = event.target.closest("#grading-form");
+    if (gradingForm) {
+      if (event.target.closest(".rubric-row")) updateRubricEditor(gradingForm);
+      setGradingAlert(gradingForm);
+      const statusMessage = gradingForm.querySelector(".grading-status");
+      if (statusMessage) {
+        statusMessage.className = "grading-status is-draft";
+        statusMessage.textContent =
+          "Unsaved grading changes. Save a draft or publish when ready.";
+      }
+    }
+    if (!["newPassword", "registerEmail"].includes(event.target.id)) return;
+    updatePasswordRules();
+  });
+
+  function updatePasswordRules() {
+    const password = document.querySelector("#newPassword")?.value || "";
+    const email =
+      document.querySelector("#registerEmail")?.value ||
+      currentUser()?.email ||
+      "";
+    passwordChecks(password, email).forEach((rule) => {
+      const item = document.querySelector(
+        `[data-password-rule="${rule.id}"]`,
+      );
+      item?.classList.toggle("is-met", Boolean(password && rule.met));
+      item?.setAttribute(
+        "aria-label",
+        `${rule.label}: ${password && rule.met ? "met" : "not yet met"}`,
+      );
+    });
+  }
+
+  document.addEventListener("change", (event) => {
+    const assignmentForm = event.target.closest?.("#assignment-form");
+    if (assignmentForm) assignmentForm.dataset.dirty = "true";
+    if (event.target.id !== "submission-file") return;
+    const form = assignmentForm || event.target.closest("form");
+    const preview = form?.querySelector("#submission-file-preview");
+    const file = event.target.files?.[0];
+    setFormAlert(form);
+    if (!preview) return;
+    if (!file) {
+      preview.hidden = true;
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton && form.dataset.requiresFile !== "true") {
+        submitButton.textContent = "Submit to School Record";
+      }
+      return;
+    }
+    preview.hidden = false;
+    const supported = submissionFileIsSupported(file);
+    preview.classList.toggle(
+      "is-error",
+      !supported || file.size > MAX_SUBMISSION_BYTES,
+    );
+    const name = preview.querySelector("[data-file-name]");
+    const meta = preview.querySelector("[data-file-meta]");
+    if (name) name.textContent = file.name;
+    if (meta) {
+      meta.textContent = `${formatFileSize(file.size)} · ${file.type || "File"}`;
+    }
+    const submitButton = form?.querySelector('button[type="submit"]');
+    if (submitButton) {
+      submitButton.textContent =
+        form.dataset.replacement === "true"
+          ? "Submit New Version to Lotus Drive"
+          : "Upload to Lotus Drive";
+    }
+    if (!supported) {
+      setFormAlert(
+        form,
+        `${file.name} is not a supported file type. Choose ${SUBMISSION_FILE_TYPE_LABEL}.`,
+      );
+    } else if (file.size > MAX_SUBMISSION_BYTES) {
+      setFormAlert(
+        form,
+        `${file.name} is ${formatFileSize(file.size)}. Choose a file no larger than 25 MB.`,
+      );
+    }
+  });
+
+  document.addEventListener("click", async (event) => {
+    const skipLink = event.target.closest(".skip-link");
+    if (skipLink) {
+      event.preventDefault();
+      const main = document.querySelector("#main-content");
+      if (main) {
+        main.setAttribute("tabindex", "-1");
+        main.focus();
+      }
+      return;
+    }
+
+    if (event.target.closest(".sidebar-nav a")) {
+      const sidebar = document.querySelector("#sidebar");
+      const wasOpen = sidebar?.classList.contains("is-open");
+      setDrawerOpen(false, { restoreFocus: false });
+      if (wasOpen) focusMain();
+    }
+
+    const target = event.target.closest("[data-action], [data-route]");
+    if (!target) return;
+
+    if (target.dataset.route) {
+      navigate(target.dataset.route);
+      return;
+    }
+
+    const action = target.dataset.action;
+    if (action === "dismiss-toast") {
+      window.clearTimeout(toastTimer);
+      target.closest(".toast")?.remove();
+    } else if (action === "reload-announcements") {
+      announcementBoard = null;
+      render(false, true);
+    } else if (action === "refresh-notifications") {
+      target.disabled = true;
+      await ensureNotifications({ force: true });
+    } else if (action === "open-notification") {
+      event.preventDefault();
+      const id = String(target.dataset.id || "").trim();
+      const destination = notificationActionHref(target.getAttribute("href"));
+      try {
+        await markNotificationRead(id);
+      } catch (error) {
+        showToast(error?.message || "The notification could not be updated.", {
+          tone: "error",
+        });
+      }
+      window.location.hash = destination;
+    } else if (action === "mark-notification-read") {
+      const id = String(target.dataset.id || "").trim();
+      target.disabled = true;
+      try {
+        await markNotificationRead(id);
+        render(false, true);
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "The notification could not be updated.", {
+          tone: "error",
+        });
+      }
+    } else if (action === "mark-all-notifications-read") {
+      const endpoint = notificationEndpointFor();
+      if (!endpoint) {
+        showToast("The notification service is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      target.disabled = true;
+      try {
+        const payload = await requestPlatformJson(endpoint, {
+          method: "PATCH",
+          body: JSON.stringify({ readAll: true }),
+        });
+        const readAt = new Date().toISOString();
+        platformRuntime.notifications.forEach((item) => {
+          if (!item.readAt) item.readAt = readAt;
+        });
+        const unreadCount = Number(payload?.unreadCount);
+        platformRuntime.notificationsUnreadCount =
+          Number.isInteger(unreadCount) && unreadCount >= 0
+            ? unreadCount
+            : 0;
+        render(false, true);
+        showToast("All notifications marked as read.", { tone: "success" });
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "Notifications could not be updated.", {
+          tone: "error",
+        });
+      }
+    } else if (action === "refresh-student-workspace") {
+      target.disabled = true;
+      refreshStudentWorkspace();
+      showToast("Refreshing your official learning record.", {
+        tone: "success",
+      });
+    } else if (action === "toast-action") {
+      if (target.dataset.toastAction === "undo-enrollment" && lastEnrollmentChange) {
+        const currentCourseIds = [...enrolledCourseIdsFor()];
+        state.enrolledCourseIds = [...lastEnrollmentChange.enrolledCourseIds];
+        try {
+          await persistRemoteEnrollments(state.enrolledCourseIds);
+        } catch (error) {
+          state.enrolledCourseIds = currentCourseIds;
+          showToast(error?.message || "The course plan could not be restored.", {
+            tone: "error",
+          });
+          return;
+        }
+        saveState();
+        lastEnrollmentChange = null;
+        render(false, true);
+        showToast("Your previous course plan has been restored.", {
+          tone: "success",
+        });
+      }
+    } else if (["add-criterion", "remove-criterion", "use-assignment-rubric"].includes(action)) {
+      const form = target.closest("#grading-form");
+      const rows = form.querySelector(".rubric-rows");
+      if (action === "use-assignment-rubric" && !rows.children.length) {
+        const preset = assignmentRubricRows(findAssignment(form.dataset.assignment));
+        rows.insertAdjacentHTML("beforeend", preset.map(rubricRowMarkup).join(""));
+        rows.querySelector("[data-rubric-points]")?.focus();
+      } else if (action === "add-criterion" && rows.children.length < 12) {
+        rows.insertAdjacentHTML("beforeend", rubricRowMarkup());
+        rows.lastElementChild.querySelector("input").focus();
+      } else if (action === "remove-criterion") {
+        target.closest(".rubric-row").remove();
+        form.querySelector('[data-action="add-criterion"]').disabled = false;
+        form.querySelector('[data-action="add-criterion"]').focus();
+      }
+      updateRubricEditor(form);
+      form.elements.score.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (action === "focus-grading") {
+      const form = document.querySelector("#grading-form");
+      form?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.requestAnimationFrame(() => form?.elements.score?.focus());
+    } else if (action === "set-teacher-status") {
+      const status = [
+        "awaiting",
+        "draft",
+        "revision",
+        "graded",
+        "unmapped",
+        "all",
+      ].includes(
+        target.dataset.status,
+      )
+        ? target.dataset.status
+        : "awaiting";
+      teacherSubmissionFilters.status = status;
+      const route = routeParts();
+      if (route[1] === "submissions" && route[3]) {
+        window.location.hash = route[2]
+          ? `#/teacher/submissions/${route[2]}`
+          : "#/teacher/submissions";
+      } else {
+        render(false, true);
+        document
+          .querySelector(
+            `[data-action="set-teacher-status"][data-status="${status}"]`,
+          )
+          ?.focus();
+      }
+    } else if (action === "clear-teacher-filters") {
+      teacherSubmissionFilters = {
+        course: "all",
+        status: "awaiting",
+        query: "",
+      };
+      if (window.location.hash === "#/teacher/submissions") {
+        render(false, true);
+        document
+          .querySelector('#teacher-submission-filter-form input[name="query"]')
+          ?.focus();
+      } else {
+        window.location.hash = "#/teacher/submissions";
+      }
+    } else if (action === "refresh-submissions") {
+      if (!submissionsEndpointUrl()) {
+        showToast("Lotus Drive submission sync is not connected yet.", {
+          tone: "error",
+        });
+      } else {
+        void refreshRemoteSubmissions();
+      }
+    } else if (action === "refresh-teacher-progress") {
+      const course = findCourse(target.dataset.course);
+      const endpoint = course
+        ? teacherCourseEndpoint(course, "progress")
+        : "";
+      if (!course || !endpoint) {
+        showToast("The official progress service is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      const key = teacherProgressRequestKey(course);
+      target.disabled = true;
+      target.textContent = "Refreshing...";
+      invalidateTeacherProgress(course);
+      ensureTeacherPlatformData(course);
+      await platformRequests.get(key);
+      const error = platformRuntime.errors[key];
+      showToast(
+        error
+          ? `Official progress could not be refreshed. ${error}`
+          : "Official student progress was refreshed.",
+        { tone: error ? "error" : "success" },
+      );
+    } else if (action === "save-grade-draft") {
+      const form = target.closest("#grading-form");
+      const studentKey = form?.dataset.student || "";
+      const assignmentId = form?.dataset.assignment || "";
+      const formSubmissionId = scalarLabel(form?.dataset.submission);
+      const record = teacherSubmissionRecords().find(
+        (item) =>
+          item.assignment.id === assignmentId &&
+          studentRecordKey(item.student) === studentKey &&
+          scalarLabel(item.submission?.id) === formSubmissionId,
+      );
+      if (!form || !record) {
+        showToast("This submission is no longer available.", {
+          tone: "error",
+        });
+        return;
+      }
+      setGradingAlert(form);
+      const rows = readRubric(form);
+      const result = rubricResult(rows);
+      const scoreText = String(result.score ?? form.elements.score?.value ?? "").trim();
+      const score = Number(scoreText);
+      const feedback = String(form.elements.feedback?.value || "").trim();
+      const draft = saveGradingDraft(record, { score: scoreText, feedback, rubric: rows });
+      const statusMessage = form.querySelector(".grading-status");
+      if (statusMessage && draft) {
+        statusMessage.className = "grading-status is-draft";
+        statusMessage.textContent = `Draft saved on this device at ${formatDate(draft.savedAt, true)} · Not published to the student.`;
+      }
+      const { endpoint, submissionId } = gradingRequestTarget(
+        record,
+        form.dataset.submission || "",
+      );
+      if (result.error) {
+        setGradingAlert(form, "Draft saved on this device. " + result.error);
+        return;
+      }
+      if (!submissionsEndpointUrl() || !endpoint) {
+        showToast("Grading draft saved on this device.", {
+          tone: "success",
+        });
+        return;
+      }
+      if (
+        !/^\d{1,3}$/.test(scoreText) ||
+        !Number.isInteger(score) ||
+        score < 0 ||
+        score > 100
+      ) {
+        const message =
+          "Device draft saved. Enter a whole-number score from 0 to 100 before syncing it to the school record.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      if ([...feedback].length > 10000) {
+        const message =
+          "Device draft saved. Teacher feedback must be 10,000 characters or fewer before central sync.";
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error" });
+        return;
+      }
+      const originalLabel = target.textContent;
+      target.disabled = true;
+      target.textContent = "Saving...";
+      try {
+        const payload = await requestSubmissionEndpoint(endpoint, {
+          method: "PUT",
+          headers: {
+            "Idempotency-Key": requestIdFor("grade-draft"),
+            "If-Match": record.submission.gradeEtag || '"grade-v0"',
+          },
+          body: JSON.stringify({
+            submissionId,
+            ...(result.rubric ? { rubric: result.rubric } : {}),
+            score,
+            feedback,
+            publish: false,
+          }),
+        });
+        applyRemoteSubmissionGrade(record, payload, {
+          score,
+          feedback,
+          publish: false,
+          fallbackSubmissionId: submissionId,
+        });
+        clearGradingDraft(record);
+        render(false, true);
+        showToast(
+          "Grading draft saved to the school record. It is not visible to the student.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        target.textContent = originalLabel;
+        const detail =
+          error?.name === "AbortError"
+            ? "The grading request timed out."
+            : error?.message || "The central draft could not be saved.";
+        const message = `Central save failed. Your device draft is still safe. ${detail}`;
+        setGradingAlert(form, message);
+        showToast(message, { tone: "error", persistent: true });
+      }
+    } else if (action === "clear-submission-file") {
+      const form = target.closest("form");
+      if (form) form.dataset.dirty = "true";
+      const input = form?.querySelector("#submission-file");
+      if (input) input.value = "";
+      const preview = form?.querySelector("#submission-file-preview");
+      if (preview) preview.hidden = true;
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.textContent =
+          form.dataset.requiresFile === "true"
+            ? form.dataset.replacement === "true"
+              ? "Submit New Version to Lotus Drive"
+              : "Upload to Lotus Drive"
+            : "Submit to School Record";
+      }
+      setFormAlert(form);
+      input?.focus();
+    } else if (action === "retry-services") {
+      await retrySchoolServices(target);
+    } else if (action === "google-workspace-signin") {
+      if (serviceRetryPending) return;
+      const authorizationUrl = googleWorkspaceAuthUrl();
+      if (!authorizationUrl) {
+        showToast(
+          "Google Workspace sign-in is unavailable. Check the connection or use your assigned faculty credentials.",
+        );
+        document.querySelector(".auth-setup-note")?.setAttribute("role", "alert");
+        return;
+      }
+      const originalMarkup = target.innerHTML;
+      target.disabled = true;
+      target.setAttribute("aria-disabled", "true");
+      target.setAttribute("aria-busy", "true");
+      target.innerHTML =
+        '<span class="google-mark" aria-hidden="true">G</span> Opening Google&hellip;';
+      workspaceCallbackFeedback = null;
+      sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+      try {
+        window.location.assign(authorizationUrl);
+      } catch {
+        target.disabled = false;
+        target.setAttribute("aria-disabled", "false");
+        target.setAttribute("aria-busy", "false");
+        target.innerHTML = originalMarkup;
+        showToast("Google Workspace sign-in could not be opened. Please try again.", {
+          tone: "error",
+        });
+      }
+    } else if (action === "toggle-course-materials") {
+      const course = findCourse(target.dataset.course);
+      const context = target.dataset.context === "teacher" ? "teacher" : "student";
+      if (!course || (context === "teacher" && !isTeacher())) return;
+      const disclosureKey = `${context}:${course.id}`;
+      if (expandedCourseMaterials.has(disclosureKey)) {
+        expandedCourseMaterials.delete(disclosureKey);
+      } else {
+        expandedCourseMaterials.add(disclosureKey);
+      }
+      render(false, true);
+      window.requestAnimationFrame(() =>
+        document
+          .querySelector(
+            `[data-action="toggle-course-materials"][data-course="${course.id}"][data-context="${context}"]`,
+          )
+          ?.focus(),
+      );
+    } else if (action === "refresh-course-materials") {
+      await refreshDriveMaterials();
+    } else if (action === "sync-drive-materials") {
+      await syncDriveMaterials();
+    } else if (action === "download-submission") {
+      const receiptId = target.dataset.receipt || "";
+      target.disabled = true;
+      try {
+        const fileRecord = await getSubmissionFile(receiptId);
+        if (!fileRecord?.blob) {
+          showToast(
+            "The original file is not stored in this browser. Only its submission metadata is available.",
+          );
+          return;
+        }
+        const downloadUrl = URL.createObjectURL(fileRecord.blob);
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = fileRecord.fileName || "student-submission";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        showToast(`Downloading ${fileRecord.fileName || "student submission"}.`);
+      } catch {
+        showToast("This file could not be retrieved from local storage.");
+      } finally {
+        target.disabled = false;
+      }
+    } else if (action === "toggle-password") {
+      const input = document.querySelector(`#${target.dataset.target}`);
+      if (!input) return;
+      const willShow = input.type === "password";
+      input.type = willShow ? "text" : "password";
+      target.textContent = willShow ? "Hide" : "Show";
+      target.setAttribute("aria-pressed", String(willShow));
+      target.setAttribute(
+        "aria-label",
+        `${willShow ? "Hide" : "Show"} ${input.labels?.[0]?.textContent?.toLowerCase() || "password"}`,
+      );
+      input.focus();
+    } else if (action === "continue-to-signin") {
+      let account = null;
+      try {
+        account = JSON.parse(sessionStorage.getItem(REGISTERED_ACCOUNT_KEY));
+      } catch {
+        account = null;
+      }
+      signInPrefill = account?.email || "";
+      signInNotice =
+        "Account created. Sign in with your new personal email account.";
+      window.location.hash = "#/signin/student";
+      render(true);
+      document.querySelector("#password")?.focus();
+    } else if (action === "open-menu") {
+      setDrawerOpen(true);
+    } else if (action === "close-menu") {
+      setDrawerOpen(false);
+    } else if (action === "logout") {
+      const facultySession = isTeacher();
+      target.disabled = true;
+      if (configuredAuthUrl(AUTH_CONFIG.workspaceLogoutEndpoint)) {
+        sessionStorage.setItem(WORKSPACE_LOGOUT_SUPPRESS_KEY, "1");
+        const signedOut = await closeWorkspaceSession();
+        if (!signedOut) {
+          sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
+          target.disabled = false;
+          showToast(
+            "Secure sign-out could not be confirmed. Check your connection and try again.",
+            { tone: "error", persistent: true },
+          );
+          return;
+        }
+      }
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(CSRF_TOKEN_KEY);
+      remoteSessionValidated = true;
+      state = initialStateForUser(null);
+      remoteSubmissionsState = {
+        records: [],
+        error: "",
+        lastLoadedAt: "",
+      };
+      submissionsEndpointCheckedFor = "";
+      resetPlatformRuntime();
+      resetDriveMaterialsForSession();
+      signInNotice = facultySession
+        ? "You are signed out of Lake Forest Learning. Your Google account remains signed in to this browser."
+        : "You are signed out of Lake Forest Learning.";
+      signInPrefill = "";
+      window.location.hash = facultySession
+        ? "#/signin/faculty"
+        : "#/signin/student";
+      loginView({ portal: facultySession ? "faculty" : "student" });
+    } else if (action === "add-course-pair") {
+      const course = findCourse(target.dataset.course);
+      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      const prerequisiteIds = (course.prerequisiteCourseIds || []).filter((id) =>
+        SELECTABLE_COURSE_IDS.includes(id),
+      );
+      const previousCourseIds = [...enrolledCourseIdsFor()];
+      const addedIds = [...prerequisiteIds, course.id].filter(
+        (id) => !previousCourseIds.includes(id),
+      );
+      state.enrolledCourseIds = [
+        ...new Set([...previousCourseIds, ...prerequisiteIds, course.id]),
+      ];
+      state.guideChecks = state.guideChecks || {};
+      [...prerequisiteIds, course.id].forEach((id) => {
+        state.guideChecks[id] = state.guideChecks[id] || [];
+      });
+      try {
+        await persistRemoteEnrollments(state.enrolledCourseIds);
+      } catch (error) {
+        state.enrolledCourseIds = previousCourseIds;
+        showToast(error?.message || "These courses could not be added.", {
+          tone: "error",
+        });
+        return;
+      }
+      lastEnrollmentChange = {
+        enrolledCourseIds: previousCourseIds,
+        courseId: course.id,
+      };
+      saveState();
+      render(false, true);
+      document
+        .querySelector(
+          `[data-action="toggle-enrollment"][data-course="${course.id}"], .syllabus-action-card .button`,
+        )
+        ?.focus();
+      showToast(
+        `${addedIds.map((id) => findCourse(id)?.code || id).join(" and ")} added to your learning plan.`,
+        {
+          tone: "success",
+          actionLabel: "Undo",
+          action: "undo-enrollment",
+        },
+      );
+    } else if (action === "toggle-enrollment") {
+      const course = findCourse(target.dataset.course);
+      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      const selected = isCourseEnrolled(course.id);
+      const previousCourseIds = [...enrolledCourseIdsFor()];
+      if (selected) {
+        const dependent = studentCourses().find((candidate) =>
+          (candidate.prerequisiteCourseIds || []).includes(course.id),
+        );
+        if (dependent) {
+          showToast(
+            `${course.code} cannot be removed while ${dependent.code} is selected.`,
+            { tone: "error", persistent: true },
+          );
+          return;
+        }
+        if (courseHasAcademicRecord(course)) {
+          showToast(
+            "Contact Guidance to withdraw from a course with recorded academic work.",
+            { tone: "error", persistent: true },
+          );
+          return;
+        }
+        state.enrolledCourseIds = enrolledCourseIdsFor().filter(
+          (id) => id !== course.id,
+        );
+      } else {
+        const requirement = enrollmentRequirement(course);
+        if (!requirement.met) {
+          showToast(requirement.message, {
+            tone: "error",
+            persistent: true,
+          });
+          return;
+        }
+        state.enrolledCourseIds = [
+          ...new Set([...enrolledCourseIdsFor(), course.id]),
+        ];
+        state.guideChecks = state.guideChecks || {};
+        state.guideChecks[course.id] = state.guideChecks[course.id] || [];
+      }
+      try {
+        await persistRemoteEnrollments(state.enrolledCourseIds);
+      } catch (error) {
+        state.enrolledCourseIds = previousCourseIds;
+        showToast(error?.message || "Your course selection could not be saved.", {
+          tone: "error",
+        });
+        return;
+      }
+      lastEnrollmentChange = {
+        enrolledCourseIds: previousCourseIds,
+        courseId: course.id,
+      };
+      saveState();
+      render(false, true);
+      document
+        .querySelector(
+          `[data-action="toggle-enrollment"][data-course="${course.id}"], .syllabus-action-card .button`,
+        )
+        ?.focus();
+      showToast(
+        selected
+          ? `${course.code} removed from your plan.`
+          : `${course.code} added to your courses.`,
+        {
+          tone: "success",
+          actionLabel: "Undo",
+          action: "undo-enrollment",
+        },
+      );
+    } else if (action === "start-module") {
+      event.preventDefault();
+      const course = findCourse(target.dataset.course);
+      const module = course
+        ? findPlatformModule(course, target.dataset.module)
+        : null;
+      const moduleId = String(target.dataset.moduleId || "").trim();
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.moduleProgressEndpoint,
+        encodeURIComponent(moduleId),
+      );
+      if (
+        !course ||
+        !module ||
+        !moduleId ||
+        !endpoint ||
+        !officialProgressConnected(course)
+      ) {
+        showToast("Official module progress is not connected.", {
+          tone: "error",
+          persistent: true,
+        });
+        return;
+      }
+      if (moduleStatus(course, module).key !== "available") {
+        if (moduleIsUnlocked(course, module)) {
+          navigate(platformModuleRoute(course, module));
+        } else {
+          showToast("Complete the current module before starting this one.", {
+            tone: "error",
+          });
+        }
+        return;
+      }
+      target.disabled = true;
+      try {
+        const payload = await requestPlatformJson(endpoint, {
+          method: "PUT",
+          body: JSON.stringify({ status: "in_progress" }),
+        });
+        mergeStudentModuleProgress(
+          course,
+          module,
+          platformPayloadData(payload, { moduleId, status: "in_progress" }),
+        );
+        platformRequests.delete(`student-progress:${course.code}`);
+        navigate(platformModuleRoute(course, module));
+        showToast(
+          module.number === 0
+            ? "Course started. The next module remains locked until Orientation is complete."
+            : `Module ${module.number} is now in progress.`,
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "The module could not be started.", {
+          tone: "error",
+          persistent: true,
+        });
+      }
+    } else if (action === "set-module-complete") {
+      const course = findCourse(target.dataset.course);
+      const module = course
+        ? findPlatformModule(course, target.dataset.module)
+        : null;
+      const moduleId = String(target.dataset.moduleId || "").trim();
+      const activityId = String(target.dataset.activityId || "").trim();
+      const endpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.moduleProgressEndpoint,
+        encodeURIComponent(moduleId),
+      );
+      if (!course || !module || !moduleId || !endpoint) {
+        showToast("Official module progress is not connected.", {
+          tone: "error",
+        });
+        return;
+      }
+      const currentStatus = studentModuleProgress(course, module)?.status;
+      const nextStatus =
+        currentStatus === "completed" ? "in_progress" : "completed";
+      const activityEndpoint = platformEndpoint(
+        PLATFORM_API_CONFIG.activityProgressEndpoint,
+        encodeURIComponent(activityId),
+      );
+      if (nextStatus === "completed" && (!activityId || !activityEndpoint)) {
+        showToast(
+          "The required module activity is not connected, so official completion cannot be recorded.",
+          { tone: "error", persistent: true },
+        );
+        return;
+      }
+      target.disabled = true;
+      try {
+        if (nextStatus === "completed") {
+          await requestPlatformJson(activityEndpoint, {
+            method: "PUT",
+            body: JSON.stringify({
+              status: "completed",
+              evidence: { source: "student_module_completion" },
+            }),
+          });
+        }
+        await requestPlatformJson(endpoint, {
+          method: "PUT",
+          body: JSON.stringify({ status: nextStatus }),
+        });
+        platformRequests.delete(`student-progress:${course.code}`);
+        delete platformRuntime.studentProgress[course.code];
+        ensureStudentPlatformData(course);
+        showToast(
+          nextStatus === "completed"
+            ? "Module completion was saved to your official record."
+            : "The module was returned to in progress.",
+          { tone: "success" },
+        );
+      } catch (error) {
+        target.disabled = false;
+        showToast(error?.message || "Module progress could not be saved.", {
+          tone: "error",
+          persistent: true,
+        });
+      }
+    } else if (action === "toggle-lesson") {
+      const id = target.dataset.id;
+      if (state.completed.includes(id)) {
+        state.completed = state.completed.filter((item) => item !== id);
+      } else {
+        state.completed.push(id);
+      }
+      saveState();
+      render(false, true);
+      document.querySelector('[data-action="toggle-lesson"]')?.focus();
+      showToast(state.completed.includes(id) ? "Lesson marked complete." : "Lesson returned to in progress.");
+    } else if (action === "toggle-guide-step") {
+      const courseId = target.dataset.course;
+      const stepId = target.dataset.step;
+      const current = state.guideChecks[courseId] || [];
+      state.guideChecks[courseId] = current.includes(stepId)
+        ? current.filter((item) => item !== stepId)
+        : [...current, stepId];
+      saveState();
+      render(false, true);
+      document
+        .querySelector(
+          `[data-action="toggle-guide-step"][data-course="${courseId}"][data-step="${stepId}"]`,
+        )
+        ?.focus();
+      const guide = guideProgress(findCourse(courseId));
+      showToast(
+        guide.isComplete
+          ? "Course Guide complete. You are ready to begin."
+          : "Course Guide progress saved.",
+      );
+    } else if (action === "filter-assignment") {
+      assignmentFilter = target.dataset.filter || "all";
+      render(false, true);
+      document.querySelector(`[data-filter="${assignmentFilter}"]`)?.focus();
+    } else if (action === "replace-submission") {
+      const assignmentId = target.dataset.id;
+      const submission = submissionForAssignment(assignmentId);
+      const workflowStatus = normalizeSubmissionWorkflowStatus(
+        submission?.workflowStatus || submission?.status,
+        submission?.publishedAt,
+      );
+      if (
+        !submission ||
+        (workflowStatus !== "revision_requested" &&
+          submission.resubmissionAllowed !== true)
+      ) {
+        showToast(
+          "A new version can be submitted after your teacher requests a revision.",
+          { tone: "error" },
+        );
+        return;
+      }
+      resumingDeviceDraftId = null;
+      replacingSubmissionId = assignmentId;
+      render(false, true);
+      document.querySelector("#submission-note")?.focus();
+    } else if (action === "resume-device-draft") {
+      const assignmentId = target.dataset.id;
+      const draft = localDeviceDraftForAssignment(assignmentId);
+      const remoteSubmission = remoteSubmissionFor(assignmentId);
+      const workflowStatus = normalizeSubmissionWorkflowStatus(
+        remoteSubmission?.workflowStatus || remoteSubmission?.status,
+        remoteSubmission?.publishedAt,
+      );
+      const remoteAllowsRevision = Boolean(
+        remoteSubmission &&
+          (workflowStatus === "revision_requested" ||
+            remoteSubmission.resubmissionAllowed === true),
+      );
+      if (
+        !draft ||
+        !submissionUploadEnabled() ||
+        (remoteSubmission && !remoteAllowsRevision)
+      ) {
+        showToast(
+          "This saved draft cannot be submitted until the secure service is available and any required revision is authorized.",
+          { tone: "error" },
+        );
+        return;
+      }
+      resumingDeviceDraftId = assignmentId;
+      replacingSubmissionId = assignmentId;
+      render(false, true);
+      document.querySelector("#submission-note")?.focus();
+    } else if (action === "cancel-replacement") {
+      replacingSubmissionId = null;
+      resumingDeviceDraftId = null;
+      render(false, true);
+      document
+        .querySelector(
+          '[data-action="resume-device-draft"], [data-action="replace-submission"]',
+        )
+        ?.focus();
+    } else if (action === "mark-feedback-read") {
+      const assignmentId = target.dataset.id;
+      const notifications = unreadGradeNotificationsForAssignment(assignmentId);
+      if (notificationEndpointFor() && notifications.length) {
+        target.disabled = true;
+        try {
+          await Promise.all(
+            notifications.map((notification) =>
+              markNotificationRead(notification.id),
+            ),
+          );
+        } catch (error) {
+          target.disabled = false;
+          showToast(error?.message || "Feedback could not be marked as read.", {
+            tone: "error",
+          });
+          return;
+        }
+      } else if (!state.feedbackRead.includes(assignmentId)) {
+        state.feedbackRead.push(assignmentId);
+        saveState();
+      }
+      render(false, true);
+      document
+        .querySelector('[data-action="mark-feedback-read"]')
+        ?.focus();
+      showToast("Feedback marked as reviewed.");
+    } else if (action === "read-announcement") {
+      if (!state.read.includes(target.dataset.id)) state.read.push(target.dataset.id);
+      saveState();
+      render(true);
+    } else if (action === "read-all") {
+      state.read = ANNOUNCEMENTS.map((item) => item.id);
+      saveState();
+      render(true);
+      showToast("All announcements marked as read.");
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const sidebar = document.querySelector("#sidebar");
+    if (!sidebar?.classList.contains("is-open")) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      document.querySelector('[data-action="close-menu"]')?.click();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...sidebar.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled])',
+      ),
+    ].filter((element) => element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
+  drawerMedia.addEventListener("change", (event) => {
+    if (!event.matches) setDrawerOpen(false, { restoreFocus: false });
+  });
+  window.addEventListener("hashchange", () => {
+    announcementBoard = null;
+    render(true);
+  });
+  workspaceCallbackFeedback = consumeWorkspaceCallbackFeedback();
+  const sessionCheckWasPending = !remoteSessionValidated;
+  render();
+  restoreWorkspaceSession().then((restored) => {
+    if (!restored && !sessionCheckWasPending) return;
+    const callbackFeedback = workspaceCallbackFeedback;
+    if (restored) workspaceCallbackFeedback = null;
+    render(Boolean(restored || sessionCheckWasPending));
+    if (
+      restored &&
+      callbackFeedback?.status === "connected" &&
+      isTeacher()
+    ) {
+      showToast(callbackFeedback.message, { tone: "success" });
+    }
+  });
+})();
