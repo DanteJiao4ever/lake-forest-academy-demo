@@ -339,6 +339,7 @@ test(
         submissionId,
         score: 82,
         feedback: "CI draft feedback must remain private.",
+        rubric: [{ label: "Reasoning", points: 41, maximum: 50 }],
         publish: false,
         grader,
         expectedVersion: 0,
@@ -347,6 +348,8 @@ test(
       });
       assert.equal(draftGrade.score, 82);
       assert.equal(draftGrade.publishedAt, null);
+      const teacherDraftView = await repository.getSubmission(submissionId, "teacher");
+      assert.deepEqual(teacherDraftView.grade.rubric, [{ label: "Reasoning", points: 41, maximum: 50 }]);
 
       const studentDraftView = await repository.getSubmission(
         submissionId,
@@ -362,6 +365,7 @@ test(
         submissionId,
         score: 84,
         feedback: "CI published feedback.",
+        rubric: [{ label: "Reasoning", points: 42, maximum: 50 }],
         publish: true,
         grader,
         expectedVersion: 1,
@@ -375,10 +379,21 @@ test(
         "student",
       );
       assert.equal(studentPublishedView.grade.score, 84);
+      assert.deepEqual(studentPublishedView.grade.rubric, [{ label: "Reasoning", points: 42, maximum: 50 }]);
       assert.equal(
         studentPublishedView.grade.gradedByDisplayName,
         "CI Teacher",
       );
+
+      const percentageOnly = await repository.createGrade({
+        submissionId, score: 85, feedback: "Overall percentage.", publish: false,
+        grader, expectedVersion: 2, idempotencyKey: `ci-grade-percent-${suffix}`,
+        requestFingerprint: "e".repeat(64),
+      });
+      assert.equal(percentageOnly.rubric, null);
+      const studentAfterNewDraft = await repository.getSubmission(submissionId, "student");
+      assert.equal(studentAfterNewDraft.grade.score, 84);
+      assert.deepEqual(studentAfterNewDraft.grade.rubric, studentPublishedView.grade.rubric);
 
       const notificationId = randomUUID();
       await pool.query(
