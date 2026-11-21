@@ -10,6 +10,10 @@ const schoolContact = {
   mapHref: "https://www.google.com/maps/search/?api=1&query=North+York%2C+Toronto%2C+Ontario%2C+Canada",
 } as const;
 
+function emailHref(subject: string) {
+  return `mailto:${schoolContact.admissionsEmail}?subject=${encodeURIComponent(subject)}`;
+}
+
 const programs = [
   { slug: "science", code: "SCI", title: "Science", text: "Students learn to ask useful questions, plan careful investigations and explain what the evidence shows." },
   { slug: "mathematics", code: "MAT", title: "Mathematics", text: "Courses build from strong fundamentals to functions, calculus and data, with time to practise and revisit difficult ideas." },
@@ -216,7 +220,7 @@ const menuGroups = [
   {
     title: "Academics",
     description: "OSSD courses, English support and university planning.",
-    links: [["OSSD Pathway", "#academics"], ["Course Catalogue", "#courses"], ["Learning Support", "#guidance"]],
+    links: [["OSSD Pathway", "#academics"], ["Course Catalogue", "#courses"], ["Learning Support", "#guidance"], ["Learning Portal", "#learning"]],
   },
   {
     title: "Student Life",
@@ -367,6 +371,27 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
 }
 
 function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps) {
+  const [query, setQuery] = useState("");
+  const [grade, setGrade] = useState("");
+  const [subject, setSubject] = useState("");
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filtersActive = Boolean(terms.length || grade || subject);
+  const matchingGroups = courseGroups.flatMap((group) => {
+    if (subject && group.slug !== subject) return [];
+    const courses = group.courses.filter((course) =>
+      (!grade || course.grade === grade) &&
+      terms.every((term) => `${course.code} ${course.title}`.toLowerCase().includes(term)),
+    );
+    return courses.length ? [{ ...group, courses }] : [];
+  });
+  const resultCount = matchingGroups.reduce((total, group) => total + group.courses.length, 0);
+
+  function resetFilters() {
+    setQuery("");
+    setGrade("");
+    setSubject("");
+  }
+
   return (
     <>
       <section className="inner-hero course-catalogue-hero" id="top">
@@ -374,14 +399,14 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
           <p className="eyebrow light">2026-27 Course Guide</p>
           <h1>Explore Courses. <strong>Build Your Pathway.</strong></h1>
           <p>Begin with the courses a student has already completed, then look ahead to the prerequisites that keep future options open. This guide brings course content and sequencing into one place.</p>
-          <div className="hero-actions"><a className="button primary" href="#science">Explore Science <span aria-hidden="true">-&gt;</span></a><button className="button ghost" type="button" onClick={() => openAction("enquire")}>Ask About Courses</button></div>
+          <div className="hero-actions">
+            <a className="button primary" href="#course-finder">Browse course listings <span aria-hidden="true">-&gt;</span></a>
+            <a className="button ghost" href={`${routeHref("admissions")}#contact`}>Contact admissions</a>
+          </div>
         </div>
         <div className="inner-hero-media"><img src={assetUrl("science-lab.jpg")} alt="Students working through a science investigation in the laboratory" /></div>
       </section>
 
-      <nav className="page-subnav course-subnav" aria-label="Course subjects">
-        {programs.map((program) => <a href={`#${program.slug}`} key={program.slug}>{program.title}</a>)}
-      </nav>
 
       <section className="course-guide-intro section">
         <div className="course-guide-copy"><p className="eyebrow">Course Planning At A Glance</p><h2>See What A Course Covers - And What It Opens Next.</h2><p>Every course listing includes the ministry course code, grade, pathway, credit value and prerequisite. Course availability is reviewed each year and a student&apos;s final timetable is confirmed through guidance.</p></div>
@@ -392,15 +417,40 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
         </div>
       </section>
 
-      <section className="course-catalogue section" aria-label="Course catalogue by subject">
-        {courseGroups.map((group, groupIndex) => (
+      <section className={`course-catalogue section${filtersActive ? " is-filtered" : ""}`} aria-label="Course catalogue by subject">
+        <div className="course-finder" id="course-finder">
+          <h2>Find a course</h2>
+          <div className="course-finder-fields">
+            <label>Course name or code
+              <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. Chemistry or SCH4U" />
+            </label>
+            <label>Grade
+              <select value={grade} onChange={(event) => setGrade(event.target.value)}>
+                <option value="">All grades</option>
+                {[9, 10, 11, 12].map((level) => <option key={level}>Grade {level}</option>)}
+              </select>
+            </label>
+            <label>Subject
+              <select value={subject} onChange={(event) => setSubject(event.target.value)}>
+                <option value="">All subjects</option>
+                {courseGroups.map((group) => <option value={group.slug} key={group.slug}>{group.title}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="course-finder-summary">
+            <p role="status">{resultCount} {resultCount === 1 ? "course" : "courses"} found</p>
+            <button type="button" className="text-link" onClick={resetFilters} disabled={!filtersActive}>Clear filters</button>
+          </div>
+          {!resultCount && <p className="course-finder-empty">Try a different course code or clear your filters.</p>}
+        </div>
+        {matchingGroups.map((group) => (
           <section className="course-area" id={group.slug} key={group.slug}>
             <header className="course-area-heading">
-              <div className="course-area-index"><span>{String(groupIndex + 1).padStart(2, "0")}</span><strong>{group.code}</strong></div>
+              <div className="course-area-index"><strong>{group.code}</strong></div>
               <div><p className="eyebrow">{group.eyebrow}</p><h2>{group.title}</h2><p>{group.introduction}</p></div>
             </header>
 
-            {group.slug === "science" && (
+            {group.slug === "science" && !filtersActive && (
               <div className="science-map" aria-label="OSSD science course pathway">
                 <div className="science-map-heading"><span>Science Pathway</span><p>Complete the shared Grade 9 and Grade 10 foundation before moving into senior subject specializations.</p></div>
                 <div className="science-pathway">
@@ -423,7 +473,10 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
                 <article className="course-row" key={course.code}>
                   <div className="course-identity"><strong>{course.code}</strong><span>{course.grade}</span></div>
                   <div className="course-description"><p className="course-meta">{course.pathway} &middot; {course.credit}</p><h3>{course.title}</h3><p>{course.summary}</p></div>
-                  <div className="course-prerequisite"><span>Prerequisite</span><p>{course.prerequisite}</p></div>
+                  <div className="course-prerequisite">
+                    <span>Prerequisite</span><p>{course.prerequisite}</p>
+                    <a className="text-link" href={emailHref(`Course enquiry: ${course.code} — ${course.title}`)}>Email about {course.code}</a>
+                  </div>
                 </article>
               ))}
             </div>
@@ -457,13 +510,13 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
           <p className="eyebrow light">Admissions</p>
           <h1>Choosing a school is personal. <strong>The process can still be clear.</strong></h1>
           <p>Begin with a conversation, share recent school records and meet with us to discuss fit, support needs and a possible OSSD course pathway.</p>
-          <div className="hero-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Ask Admissions</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button></div>
+          <div className="hero-actions"><a className="button primary" href="#contact">Contact admissions</a><button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button></div>
         </div>
         <div className="inner-hero-media"><img src={assetUrl("admissions-welcome.jpg")} alt="A peer ambassador welcoming a prospective student on campus" /></div>
       </section>
 
       <nav className="page-subnav" aria-label="Admissions page">
-        <a href="#pathways">Applicant Pathways</a><a href="#steps">How To Apply</a><a href="#requirements">What To Prepare</a><a href="#faq">FAQ</a>
+        <a href="#pathways">Applicant Pathways</a><a href="#steps">How To Apply</a><a href="#requirements">What To Prepare</a><a href="#faq">FAQ</a><a href="#contact">Contact</a>
       </nav>
 
       <section className="pathways section" id="pathways">
@@ -494,9 +547,17 @@ function AdmissionsPage({ assetUrl, routeHref, openAction, openFaq, setOpenFaq }
         </div>
       </section>
 
-      <section className="page-next section admissions-next">
-        <div><p className="eyebrow light">Your next step</p><h2>Take the next step that feels useful.</h2><p>Ask a question, arrange a visit or review the academic program before deciding whether to begin an application.</p></div>
-        <div className="page-next-actions"><button className="button primary" type="button" onClick={() => openAction("enquire")}>Enquire</button><button className="button ghost" type="button" onClick={() => openAction("tour")}>Book a Tour</button><a className="text-link light-link" href={routeHref("academics")}>Review academics <span aria-hidden="true">-&gt;</span></a></div>
+      <section className="page-next section admissions-next" id="contact" aria-labelledby="admissions-contact-heading">
+        <div>
+          <p className="eyebrow light">Admissions office</p>
+          <h2 id="admissions-contact-heading">Contact admissions</h2>
+          <p>Email us with the student&apos;s current grade, intended entry term and any courses you want to discuss. Campus visits are available by appointment.</p>
+        </div>
+        <div className="page-next-actions">
+          <a className="button primary admissions-email" href={emailHref("Admissions enquiry")}>{schoolContact.admissionsEmail}</a>
+          <button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button>
+          <a className="text-link light-link" href={routeHref("academics")}>Review academics <span aria-hidden="true">-&gt;</span></a>
+        </div>
       </section>
     </>
   );
@@ -531,6 +592,12 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
   const actionDialogRef = useRef<HTMLElement>(null);
   const lastActionTriggerRef = useRef<HTMLElement | null>(null);
   const [{ page, base }] = useState(() => getRouteContext(initialPage));
+
+  useEffect(() => {
+    // On a direct link the browser can look for the fragment before React renders it.
+    const target = document.getElementById(window.location.hash.slice(1));
+    target?.scrollIntoView({ behavior: "instant" });
+  }, []);
 
   useEffect(() => {
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -609,10 +676,10 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
   const routeHref = (destination: InnerPageKind) => `${base}${destination}/`;
   const homeHref = (hash = "") => `${base}${hash}`;
   const assetUrl = (filename: string) => `${base}images/${filename}`;
-  const emailHref = (subject: string) => `mailto:${schoolContact.admissionsEmail}?subject=${encodeURIComponent(subject)}`;
 
   function resolveHref(href: string) {
     if (href === "#courses") return routeHref("courses");
+    if (href === "#learning") return homeHref("#online-learning");
     if (["#academics", "#programs", "#guidance"].includes(href)) {
       return `${routeHref("academics")}${href === "#academics" ? "" : href}`;
     }
@@ -674,6 +741,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
         </nav>
 
         <div className="header-tools">
+          <a className="header-learning" href={resolveHref("#learning")}>Online Learning</a>
           <button ref={searchButtonRef} className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
             <span className="search-symbol" aria-hidden="true" />
             <span className="tool-label">Search</span>
@@ -724,7 +792,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
             <label className="search-field"><span>Search Lake Forest Academy</span><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Try OSSD, student life or admissions" /></label>
             <div className="search-results" aria-live="polite">
               {searchResults.length ? searchResults.map((item) => (
-                <a href={resolveHref(item.href)} key={item.title} onClick={closeSearch}>
+                <a href={resolveHref(item.href)} key={item.title} onClick={() => setSearchOpen(false)}>
                   <small>{item.area}</small><strong>{item.title}</strong><span>{item.text}</span>
                 </a>
               )) : <p className="empty-state">No matching pages yet. Try a broader search.</p>}
@@ -750,17 +818,36 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
           <h1><span>Find your footing.</span><span>Discover your strengths.</span><strong>Choose what comes next.</strong></h1>
           <p className="hero-lead">High school brings big decisions. At Lake Forest Academy, students receive the academic challenge, steady guidance and room to grow they need to make those decisions well.</p>
           <div className="hero-actions">
-            <a className="button primary" href={routeHref("academics")}>Explore academics <span aria-hidden="true">-&gt;</span></a>
+            <a className="button primary" href={routeHref("courses")}>Browse the course catalogue <span aria-hidden="true">-&gt;</span></a>
             <button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button>
           </div>
         </div>
       </section>
 
-      <section className="quick-links" aria-label="Family quick links">
-        <a href="#history"><small>Discover our foundations</small>Our Story</a>
-        <a href={`${routeHref("admissions")}#requirements`}><small>Plan your pathway</small>Entry Requirements</a>
-        <a href={`${routeHref("admissions")}#faq`}><small>Common questions</small>Admissions FAQ</a>
-        <button type="button" onClick={() => openAction("tour")}><small>See the community</small>Visit LFA</button>
+      <section className="family-paths section" aria-label="Explore Lake Forest Academy">
+        <a href={`${routeHref("courses")}#course-finder`}>
+          <img src={assetUrl("science-lab.jpg")} alt="" loading="lazy" />
+          <div><h2>Find a course</h2><p>Search by grade, subject or course code.</p><span aria-hidden="true">→</span></div>
+        </a>
+        <a href={`${routeHref("admissions")}#steps`}>
+          <img src={assetUrl("admissions-welcome.jpg")} alt="" loading="lazy" />
+          <div><h2>Plan your application</h2><p>See the steps, what to prepare and how to arrange a visit.</p><span aria-hidden="true">→</span></div>
+        </a>
+        <a href={resolveHref("#learning")}>
+          <img src={assetUrl("library-study.jpg")} alt="" loading="lazy" />
+          <div><h2>LFA Online Learning</h2><p>Find the sign-in for students or teachers.</p><span aria-hidden="true">→</span></div>
+        </a>
+      </section>
+
+      <section className="online-learning section" id="online-learning" aria-labelledby="online-learning-heading">
+        <div>
+          <h2 id="online-learning-heading">LFA Online Learning</h2>
+          <p>Open your Lake Forest Academy courses, assignments and announcements.</p>
+        </div>
+        <div className="online-learning-actions">
+          <a className="button primary" href={`${base}learning/#/signin/student`}>Student sign-in</a>
+          <a className="button ghost" href={`${base}learning/#/signin/faculty`}>Teacher sign-in</a>
+        </div>
       </section>
 
       <section className="intro section" id="about">
@@ -962,7 +1049,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
             <p className="eyebrow">{activeCopy.eyebrow}</p><h2 id="action-title">{activeCopy.title}</h2><p>{activeCopy.text}</p>
             <div className="action-contact-options">
               <a className="button primary" href={emailHref(activeCopy.subject)}>{activeCopy.button}</a>
-              <a className="text-link" href={`${routeHref("admissions")}#contact`} onClick={closeAction}>View all contact details <span aria-hidden="true">-&gt;</span></a>
+              <a className="text-link" href={`${routeHref("admissions")}#contact`} onClick={() => setActiveAction(null)}>View all contact details <span aria-hidden="true">-&gt;</span></a>
               <p>Campus visits are confirmed by appointment. Contact admissions before sending transcripts or other personal records.</p>
             </div>
           </section>
