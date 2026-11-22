@@ -161,11 +161,14 @@ test("phone faculty and student review screens support anchored requests, eviden
     );
     const [teacher, student] = pages;
     const passage = teacher.getByRole("textbox", { name: /Select words from version 1/ });
+    await teacher.bringToFront();
     await passage.focus();
-    await passage.press("ControlOrMeta+Home");
+    await passage.press("ControlOrMeta+a");
+    await passage.press("ArrowLeft");
     await passage.press("Shift+ArrowRight");
     await passage.press("Shift+ArrowRight");
     await passage.press("Shift+ArrowRight");
+    await teacher.locator("blockquote").getByText("Two", { exact: true }).waitFor();
     await teacher.getByRole("textbox", { name: "Revision request" }).fill("Identify what stayed fixed.");
     await teacher.getByRole("button", { name: "Request revision of passage" }).click();
     await teacher.getByRole("heading", { name: "Thread 1" }).waitFor();

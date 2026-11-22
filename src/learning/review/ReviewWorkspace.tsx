@@ -238,6 +238,11 @@ function EvidencePanel({ work }: { work: Work }) {
 }
 
 function TextAnchor({ version, select }: { version: Version; select: (a: Anchor | null) => void }) {
+  function captureSelection(el: HTMLTextAreaElement) {
+    const part = el.value.slice(el.selectionStart, el.selectionEnd);
+    const exact = part.trim();
+    select(exact ? { version: version.version, start: el.selectionStart + part.indexOf(exact), exact } : null);
+  }
   return (
     <label>
       Select words from version {version.version} to anchor a comment or question
@@ -245,14 +250,8 @@ function TextAnchor({ version, select }: { version: Version; select: (a: Anchor 
         readOnly
         rows={5}
         value={version.text}
-        onSelect={(e) => {
-          const el = e.currentTarget,
-            part = el.value.slice(el.selectionStart, el.selectionEnd),
-            exact = part.trim();
-          select(
-            exact ? { version: version.version, start: el.selectionStart + part.indexOf(exact), exact } : null,
-          );
-        }}
+        onSelect={(event) => captureSelection(event.currentTarget)}
+        onKeyUp={(event) => captureSelection(event.currentTarget)}
       />
     </label>
   );

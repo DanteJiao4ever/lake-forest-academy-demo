@@ -91,7 +91,9 @@ jobs:
           npx --no-install playwright-core install --with-deps chromium
       - name: Test browser workspaces with PostgreSQL
         working-directory: .
-        run: npm run test:browser
+        run: |
+          npx --no-install vite build
+          npm run test:browser
         env:
           INTERACTIVE_TEST_RUNTIME_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
           INTERACTIVE_TEST_OWNER_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
