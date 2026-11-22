@@ -407,7 +407,7 @@ export class FakeRepository {
       gradebook_items: 44, assessment_components: 38,
       valid_unlock_policies: 72, final_evaluation_assignments: 8,
       unit_assignments: 30,
-      invalid_course_hours: 0, invalid_course_weights: 0,
+      invalid_course_hours: 0, invalid_course_weights: 0, valid_split_final_weights: 4,
     };
   }
 

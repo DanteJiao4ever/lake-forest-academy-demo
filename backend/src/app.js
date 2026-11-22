@@ -15,6 +15,11 @@ import { validateUploadedFile } from "./lib/file-validation.js";
 import { submissionGradeSchema } from "./lib/submission-grade.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { listTeachingPacks, openTeachingPack, teachingPacksReady } from "./services/teaching-packs.js";
+import { registerClassInsights } from "./services/class-insights.js";
+import { registerReviewWorkflow } from "./services/review-workflow.js";
+import { registerIntegrityEvidence } from "./services/integrity-evidence.js";
+import { registerTextSeminars } from "./services/text-seminars.js";
+import { registerInteractiveLessons } from "./services/interactive-lessons.js";
 import { MaterialSyncService } from "./services/material-sync.js";
 import { UnavailablePasswordResetMailer } from "./mail/password-reset-mailer.js";
 import { UnavailableGoogleWorkspaceOidc } from "./auth/google-workspace-oidc.js";
@@ -524,6 +529,7 @@ export async function createApp({
   });
 
   app.setErrorHandler((error, request, reply) => {
+    if (error?.constraint === "course_integrity_gate") error = new ApiError(409,"MODULE_ZERO_REQUIRED","Complete the Module 0 integrity requirement before starting Unit 1.");
     if (error?.code === "FST_REQ_FILE_TOO_LARGE" || error?.statusCode === 413) {
       error = new ApiError(413, "UPLOAD_TOO_LARGE", "The upload exceeds the configured size limit.");
     }
@@ -632,6 +638,9 @@ export async function createApp({
     const allowed = await repository.listAccessibleCourseCodes(request.auth.user);
     if (!allowed.includes(courseCode)) {
       throw new ApiError(403, "COURSE_ACCESS_DENIED", "You do not have access to this course.");
+    }
+    if (request.auth.user.role === "student" && repository.integrityAllows && !await repository.integrityAllows(request.auth.user.id,courseCode)) {
+      throw new ApiError(409,"MODULE_ZERO_REQUIRED","Complete the Module 0 integrity requirement to open the full coursebook.");
     }
     const file = await openTeachingPack(config.teachingPacksRoot, courseCode, kind);
     if (!file) throw new ApiError(404, "MATERIAL_NOT_FOUND", "The material was not found.");
@@ -986,6 +995,7 @@ export async function createApp({
       gradebook_items: 44,
       assessment_components: 38,
       valid_unlock_policies: 72,
+      valid_split_final_weights: 4,
       final_evaluation_assignments: 8,
       unit_assignments: 30,
     };
@@ -1198,7 +1208,7 @@ export async function createApp({
   const loginSchema = z.object({
     email: emailSchema,
     password: z.string().min(1).max(128),
-    portal: z.enum(["student", "faculty"]).default("student"),
+    portal: z.enum(["student", "faculty", "observer"]).default("student"),
   });
 
   app.post(
@@ -1211,6 +1221,7 @@ export async function createApp({
       const portalValid =
         user &&
         ((input.portal === "student" && user.role === "student") ||
+          (input.portal === "observer" && user.role === "observer") ||
           (input.portal === "faculty" && ["teacher", "teacher_admin"].includes(user.role)));
       if (!user || user.status !== "active" || !passwordValid || !portalValid) {
         await repository.recordAudit?.({
@@ -1528,6 +1539,12 @@ export async function createApp({
     courseCatalog,
   );
 
+  registerClassInsights(app, { repository, requireRoles, requireCsrf });
+  registerReviewWorkflow(app, { repository, requireRoles, requireCsrf, drive, config });
+  registerIntegrityEvidence(app,{ repository,requireRoles,requireCsrf,requireCourseAccess });
+  registerTextSeminars(app, { repository, requireRoles, requireCsrf });
+  registerInteractiveLessons(app, { repository, requireRoles, requireCsrf });
+
   app.get(
     "/v1/announcements",
     { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
@@ -1571,6 +1588,7 @@ export async function createApp({
       await requireCourseAccess(request.auth.user, courseCode);
       return {
         data: await repository.listCourseModules(courseCode, {
+          userId: request.auth.user.id,
           includeStaff: request.auth.user.role !== "student",
         }),
       };

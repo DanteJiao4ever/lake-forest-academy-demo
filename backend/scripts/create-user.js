@@ -26,8 +26,8 @@ const email = parse(emailSchema, args.email, "INVALID_EMAIL");
 const firstName = parse(nameSchema, args.first, "INVALID_FIRST_NAME");
 const lastName = parse(nameSchema, args.last, "INVALID_LAST_NAME");
 const role = args.role || "teacher";
-if (!["student", "teacher", "teacher_admin"].includes(role)) {
-  throw new Error("--role must be student, teacher or teacher_admin");
+if (!["student", "teacher", "teacher_admin", "observer"].includes(role)) {
+  throw new Error("--role must be student, teacher, teacher_admin or observer");
 }
 const password = process.env.LFA_USER_PASSWORD || "";
 if (!password) throw new Error("Set LFA_USER_PASSWORD through a secure environment injection before running this command.");

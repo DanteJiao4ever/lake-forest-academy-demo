@@ -81,4 +81,7 @@ jobs:
       - run: pnpm test
         env:
           RUNTIME_DATABASE_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
+          INTERACTIVE_TEST_RUNTIME_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
+          INTERACTIVE_TEST_OWNER_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
+          SECTION_SETUP_DATABASE_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
       - run: docker build --tag lfa-learning-api:${GITHUB_SHA} .

@@ -7,3 +7,5 @@ node_modules
 test
 coverage
 *.log
+src/lessons/authored/
+src/lessons/compiled/

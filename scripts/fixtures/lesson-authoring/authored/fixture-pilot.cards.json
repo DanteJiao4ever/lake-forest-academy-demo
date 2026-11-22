@@ -1,0 +1,153 @@
+[
+  {
+    "id": "first-check",
+    "type": "ConceptCheck",
+    "title": "Shape choices",
+    "prompt": "Fixture exercise: Shape choices.",
+    "ktca": [
+      "K"
+    ],
+    "required": true,
+    "mode": "single",
+    "options": [
+      {
+        "id": "circle",
+        "label": "Circle"
+      },
+      {
+        "id": "square",
+        "label": "Square"
+      },
+      {
+        "id": "triangle",
+        "label": "Triangle"
+      }
+    ],
+    "private": {
+      "correct": [
+        "circle"
+      ],
+      "feedback": {
+        "square": {
+          "name": "square category",
+          "hint": "square diagnostic."
+        },
+        "triangle": {
+          "name": "triangle category",
+          "hint": "triangle diagnostic."
+        }
+      },
+      "success": "Fixture selection saved."
+    }
+  },
+  {
+    "id": "second-check",
+    "type": "ConceptCheck",
+    "title": "Shape choices",
+    "prompt": "Fixture exercise: Shape choices.",
+    "ktca": [
+      "K"
+    ],
+    "required": true,
+    "mode": "multiple",
+    "options": [
+      {
+        "id": "circle",
+        "label": "Circle"
+      },
+      {
+        "id": "oval",
+        "label": "Oval"
+      },
+      {
+        "id": "square",
+        "label": "Square"
+      },
+      {
+        "id": "triangle",
+        "label": "Triangle"
+      }
+    ],
+    "private": {
+      "correct": [
+        "circle",
+        "oval"
+      ],
+      "feedback": {
+        "square": {
+          "name": "square category",
+          "hint": "square diagnostic."
+        },
+        "triangle": {
+          "name": "triangle category",
+          "hint": "triangle diagnostic."
+        }
+      },
+      "success": "Fixture selection saved.",
+      "missingHint": "Review the shape list."
+    }
+  },
+  {
+    "id": "own-writing",
+    "type": "PostFirstPrompt",
+    "title": "Describe a pattern",
+    "prompt": "Fixture exercise: Describe a pattern.",
+    "ktca": [
+      "K"
+    ],
+    "required": true,
+    "minWords": 8,
+    "private": {
+      "peers": [
+        {
+          "id": "peer-a",
+          "label": "Example A",
+          "text": "Synthetic peer shape description."
+        },
+        {
+          "id": "peer-b",
+          "label": "Example B",
+          "text": "Another synthetic description."
+        }
+      ],
+      "teacherModel": "Synthetic teacher explanation of the pattern."
+    }
+  },
+  {
+    "id": "finish-writing",
+    "type": "SynthesisGate",
+    "title": "Write a description",
+    "prompt": "Fixture exercise: Write a description.",
+    "ktca": [
+      "K"
+    ],
+    "required": true,
+    "minWords": 12,
+    "skills": [
+      {
+        "id": "responsibility",
+        "label": "Responsibility"
+      },
+      {
+        "id": "organization",
+        "label": "Organization"
+      },
+      {
+        "id": "independent-work",
+        "label": "Independent Work"
+      },
+      {
+        "id": "collaboration",
+        "label": "Collaboration"
+      },
+      {
+        "id": "initiative",
+        "label": "Initiative"
+      },
+      {
+        "id": "self-regulation",
+        "label": "Self Regulation"
+      }
+    ]
+  }
+]

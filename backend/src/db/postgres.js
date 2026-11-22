@@ -1013,7 +1013,20 @@ export class PostgresRepository {
                WHERE course_code = ANY($1::text[]) AND status = 'published'
                GROUP BY course_code
               HAVING sum(weight_percent) <> 100
-            ) invalid_weights) AS invalid_course_weights`,
+                 OR sum(CASE WHEN category = 'coursework' THEN weight_percent ELSE 0 END) <> 65
+                 OR sum(CASE WHEN category = 'final_evaluation' THEN weight_percent ELSE 0 END) <> 25
+                 OR sum(CASE WHEN category = 'participation' THEN weight_percent ELSE 0 END) <> 10
+            ) invalid_weights) AS invalid_course_weights,
+          (SELECT count(*)::int
+             FROM (VALUES ('ICS4U', 'm11-written-exam', 15), ('ICS4U', 'm11-culminating', 10),
+                          ('BBB4M', 'm11-written-exam', 15), ('BBB4M', 'm11-culminating', 10))
+               AS policy(course_code, component_key, weight)
+             JOIN gradebook_items g USING (course_code, component_key)
+             JOIN assignments a ON a.id = g.assignment_id AND a.course_code = g.course_code
+             JOIN assessment_components c ON c.gradebook_item_id = g.id AND c.module_activity_id = g.module_activity_id
+            WHERE g.category = 'final_evaluation' AND g.status = 'published' AND a.status = 'active'
+              AND g.weight_percent = policy.weight AND a.weight_percent = policy.weight
+              AND c.weight_percent = policy.weight) AS valid_split_final_weights`,
       [PLATFORM_COURSE_CODES],
     );
     return result.rows[0];
@@ -1091,7 +1104,7 @@ export class PostgresRepository {
             ))
           GROUP BY m.course_code
        )
-       SELECT c.code, c.title, c.status,
+       SELECT c.code, c.title, c.status, classroom_rollout_enabled(c.code,$3) AS classroom_enabled,
               COALESCE(module_stats.module_count, 0)::int AS module_count,
               COALESCE(module_stats.planned_hours, 0)::numeric AS planned_hours,
               COALESCE(material_stats.material_count, 0)::int AS material_count,
@@ -1101,12 +1114,13 @@ export class PostgresRepository {
          LEFT JOIN material_stats ON material_stats.course_code = c.code
         WHERE c.code = ANY($1::text[]) AND c.status = 'active'
         ORDER BY c.code`,
-      [allowed, user.role !== "student"],
+      [allowed, user.role !== "student", user.id],
     );
     return result.rows.map((row) => ({
       code: row.code,
       title: row.title,
       status: row.status,
+      classroomEnabled: row.classroom_enabled,
       moduleCount: Number(row.module_count),
       plannedHours: Number(row.planned_hours),
       materials: {
@@ -1160,7 +1174,7 @@ export class PostgresRepository {
       : null;
   }
 
-  async listCourseModules(courseCode, { includeStaff = false } = {}) {
+  async listCourseModules(courseCode, { includeStaff = false, userId = null } = {}) {
     const modulesResult = await this.pool.query(
       `SELECT * FROM course_modules
         WHERE course_code = $1 AND status = 'published'
@@ -1172,11 +1186,13 @@ export class PostgresRepository {
     const [lessonsResult, resourcesResult, activitiesResult, componentsResult] =
       await Promise.all([
         this.pool.query(
-          `SELECT id, module_id, position, title
-             FROM module_lessons
-            WHERE module_id = ANY($1::text[]) AND status = 'published'
-            ORDER BY module_id, position`,
-          [moduleIds],
+          `SELECT l.id, l.module_id, l.position, l.title, b.lesson_id AS interactive_lesson_id
+             FROM module_lessons l
+             LEFT JOIN interactive_lesson_bindings b ON b.native_lesson_id = l.id AND b.course_code = $2
+               AND classroom_rollout_enabled($2,$3)
+            WHERE l.module_id = ANY($1::text[]) AND l.status = 'published'
+            ORDER BY l.module_id, l.position`,
+          [moduleIds, courseCode, userId],
         ),
         this.pool.query(
           `SELECT r.id, r.module_id, r.position, r.title, r.provider,
@@ -1216,7 +1232,10 @@ export class PostgresRepository {
     const lessons = new Map();
     for (const row of lessonsResult.rows) {
       if (!lessons.has(row.module_id)) lessons.set(row.module_id, []);
-      lessons.get(row.module_id).push({ id: row.id, position: row.position, title: row.title });
+      lessons.get(row.module_id).push({
+        id: row.id, position: row.position, title: row.title,
+        ...(row.interactive_lesson_id ? { interactiveLessonId: row.interactive_lesson_id } : {}),
+      });
     }
     const resources = new Map();
     for (const row of resourcesResult.rows) {
@@ -1337,9 +1356,14 @@ export class PostgresRepository {
     }));
   }
 
+  async integrityAllows(userId, courseCode) {
+    const {rows} = await this.pool.query("SELECT integrity_allows($1,$2) AS allowed", [userId,courseCode]);
+    return rows[0].allowed;
+  }
+
   async listStudentProgress(studentUserId, courseCode) {
     const result = await this.pool.query(
-      `SELECT cm.id, cm.module_number, p.status AS recorded_status,
+      `SELECT cm.id, cm.module_number, (cm.module_number > 0 AND NOT integrity_allows($1,cm.course_code)) AS integrity_locked, p.status AS recorded_status,
               p.started_at, p.completed_at,
               previous_module.id AS previous_module_id, previous.status AS previous_status,
               override.id AS override_id, override.reason AS override_reason,
@@ -1369,7 +1393,7 @@ export class PostgresRepository {
       )
         ? row.recorded_status
         : null;
-      const status = recordedStatus ||
+      const status = row.integrity_locked ? "locked" : recordedStatus ||
         (isEntryModule(row) || row.override_id || row.previous_status === "completed"
           ? "available"
           : "locked");
@@ -1377,6 +1401,7 @@ export class PostgresRepository {
         courseCode,
         moduleId: row.id,
         moduleNumber: row.module_number,
+        ...(row.integrity_locked ? { integrityRequired: true } : {}),
         status,
         startedAt: row.started_at,
         completedAt: row.completed_at,
@@ -2468,6 +2493,11 @@ export class PostgresRepository {
             "Only faculty can return work for revision.",
           );
         }
+        const textReview = await client.query(`SELECT 1 FROM review_works WHERE submission_id=$1 AND classroom_rollout_enabled(course_code,$2)
+           AND test_section=in_course_test_section(course_code,$2)`, [input.submissionId,input.author.id]);
+        if (textReview.rowCount) {
+          throw new ApiError(409, "TEXT_REVIEW_ACTIVE", "Use the submission’s text review to request another revision.");
+        }
         if (submission.status !== "submitted") {
           throw new ApiError(
             409,
@@ -2712,6 +2742,16 @@ export class PostgresRepository {
           "SUBMISSION_RETURNED",
           "Grade the student's replacement attempt after returned work is resubmitted.",
         );
+      }
+      if (input.publish) {
+        const review = await client.query(
+          `SELECT 1 FROM review_works WHERE submission_id=$1 AND released_at IS NULL AND classroom_rollout_enabled(course_code,$2)
+             AND test_section=in_course_test_section(course_code,$2)`,
+          [input.submissionId,input.grader.id],
+        );
+        if (review.rowCount) {
+          throw new ApiError(409, "REVIEW_REQUIRED", "Complete and release this submission’s text review before publishing its grade.");
+        }
       }
       const locked = await client.query(
         `SELECT * FROM submission_grades
