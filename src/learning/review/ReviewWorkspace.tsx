@@ -252,6 +252,7 @@ function TextAnchor({ version, select }: { version: Version; select: (a: Anchor 
         value={version.text}
         onSelect={(event) => captureSelection(event.currentTarget)}
         onKeyUp={(event) => captureSelection(event.currentTarget)}
+        onPointerUp={(event) => captureSelection(event.currentTarget)}
       />
     </label>
   );

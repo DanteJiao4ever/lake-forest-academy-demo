@@ -162,13 +162,18 @@ test("phone faculty and student review screens support anchored requests, eviden
     const [teacher, student] = pages;
     const passage = teacher.getByRole("textbox", { name: /Select words from version 1/ });
     await teacher.bringToFront();
-    await passage.focus();
-    await passage.press("ControlOrMeta+a");
-    await passage.press("ArrowLeft");
-    await passage.press("Shift+ArrowRight");
-    await passage.press("Shift+ArrowRight");
-    await passage.press("Shift+ArrowRight");
-    await teacher.locator("blockquote").getByText("Two", { exact: true }).waitFor();
+    // Double-click the first rendered word, as a reviewer selecting a passage would.
+    const firstWord = await passage.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        x: element.clientLeft + parseFloat(style.paddingLeft) + parseFloat(style.fontSize) / 2,
+        y: element.clientTop + parseFloat(style.paddingTop) + parseFloat(style.fontSize) / 2,
+      };
+    });
+    await passage.dblclick({ position: firstWord });
+    const selection = await passage.evaluate((el) => el.value.slice(el.selectionStart, el.selectionEnd).trim());
+    assert.equal(selection, "Two", "the reviewer must select the intended word in the native text control");
+    await teacher.getByRole("blockquote").filter({ hasText: /^Two$/ }).waitFor();
     await teacher.getByRole("textbox", { name: "Revision request" }).fill("Identify what stayed fixed.");
     await teacher.getByRole("button", { name: "Request revision of passage" }).click();
     await teacher.getByRole("heading", { name: "Thread 1" }).waitFor();
