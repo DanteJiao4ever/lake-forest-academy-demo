@@ -94,7 +94,8 @@ export class UnavailablePasswordResetMailer {
 }
 
 export class GmailPasswordResetMailer {
-  constructor({ client, auth, fromEmail, fromName }) {
+  constructor({ client, auth, fromEmail, fromName, oauthClientId = null }) {
+    this.oauthClientId = oauthClientId;
     this.client = client;
     this.auth = auth;
     this.fromEmail = fromEmail;
@@ -107,13 +108,22 @@ export class GmailPasswordResetMailer {
 
   async ready() {
     try {
-      await this.auth.getAccessToken();
-      const profile = await this.client.users.getProfile({ userId: "me" });
-      if (
-        String(profile?.data?.emailAddress || "").toLowerCase() !==
-        this.fromEmail.toLowerCase()
-      ) {
-        throw new Error("The delegated Gmail profile does not match the sender.");
+      const access = await this.auth.getAccessToken();
+      let mailbox;
+      if (this.oauthClientId) {
+        const info = await this.auth.getTokenInfo(access.token);
+        const verified = info.email_verified ?? info.verified_email;
+        if (info.aud !== this.oauthClientId || String(verified) !== "true" ||
+            !info.scopes.includes(gmailSendScope)) {
+          throw new Error("The sender grant could not be verified.");
+        }
+        mailbox = info.email;
+      } else {
+        const profile = await this.client.users.getProfile({ userId: "me" });
+        mailbox = profile.data.emailAddress;
+      }
+      if (String(mailbox || "").toLowerCase() !== this.fromEmail.toLowerCase()) {
+        throw new Error("The Gmail account does not match the configured sender.");
       }
       return true;
     } catch {
@@ -126,6 +136,7 @@ export class GmailPasswordResetMailer {
   }
 
   async sendPasswordReset(message) {
+    if (this.oauthClientId) await this.ready();
     const raw = base64url(
       resetMessage({
         ...message,
@@ -148,7 +159,7 @@ export class GmailPasswordResetMailer {
   }
 }
 
-async function serviceAccountCredentials(config) {
+async function mailCredentials(config) {
   const encoded =
     config.gmailCredentialsBase64 || config.googleCredentialsBase64;
   const credentialPath =
@@ -176,7 +187,20 @@ export async function createPasswordResetMailer(config) {
   if (config.passwordResetMailProvider !== "gmail_api") {
     return new UnavailablePasswordResetMailer();
   }
-  const credentials = await serviceAccountCredentials(config);
+  const credentials = await mailCredentials(config);
+  if (credentials?.type === "authorized_user" &&
+      (config.gmailCredentialsBase64 || config.gmailCredentialsPath)) {
+    if (!credentials.client_id || !credentials.client_secret || !credentials.refresh_token) {
+      return new UnavailablePasswordResetMailer("The Gmail mailbox grant is incomplete.");
+    }
+    const auth = new google.auth.OAuth2(credentials.client_id, credentials.client_secret);
+    auth.setCredentials({ refresh_token: credentials.refresh_token });
+    return new GmailPasswordResetMailer({
+      auth, client: google.gmail({ version: "v1", auth }),
+      oauthClientId: credentials.client_id,
+      fromEmail: config.passwordResetFromEmail, fromName: config.passwordResetFromName,
+    });
+  }
   if (!credentials?.client_email || !credentials?.private_key) {
     return new UnavailablePasswordResetMailer(
       "Gmail API password reset delivery requires delegated service-account credentials.",

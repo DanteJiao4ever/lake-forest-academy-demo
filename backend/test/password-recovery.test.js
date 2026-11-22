@@ -5,6 +5,7 @@ import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { sha256 } from "../src/lib/crypto.js";
 import {
+  createPasswordResetMailer,
   GmailPasswordResetMailer,
   UnavailablePasswordResetMailer,
 } from "../src/mail/password-reset-mailer.js";
@@ -438,4 +439,31 @@ test("Gmail configuration requires the sender and delegated mailbox to match", (
       }),
     /must match GMAIL_IMPERSONATED_USER/,
   );
+});
+
+test("a single-mailbox OAuth grant sends only as the verified account with gmail.send", async () => {
+  const sender = "sender@example.invalid";
+  const clientId = "fixture.apps.googleusercontent.com";
+  const credentials = { type: "authorized_user", client_id: clientId, client_secret: "test",
+    refresh_token: "fixture-token" };
+  const mailer = await createPasswordResetMailer({
+    passwordResetMailProvider: "gmail_api", passwordResetFromEmail: sender, passwordResetFromName: "LFA",
+    gmailCredentialsBase64: Buffer.from(JSON.stringify(credentials)).toString("base64"),
+  });
+  assert.equal(mailer.isConfigured(), true);
+  const info = { aud: clientId, email: sender, email_verified: "true",
+    scopes: ["https://www.googleapis.com/auth/gmail.send"] };
+  mailer.auth.getAccessToken = async () => ({ token: "fixture-access" });
+  mailer.auth.getTokenInfo = async () => info;
+  let sends = 0;
+  mailer.client.users.messages.send = async () => { sends++; };
+  const message = { to: "student@example.invalid", resetUrl: "https://example.invalid/reset", expiresInMinutes: 30 };
+  assert.equal(await mailer.ready(), true);
+  await mailer.sendPasswordReset(message);
+  for (const invalid of [{ email: "other@example.invalid" }, { aud: "other" },
+    { email_verified: false }, { scopes: [] }]) {
+    mailer.auth.getTokenInfo = async () => ({ ...info, ...invalid });
+    await assert.rejects(mailer.sendPasswordReset(message), { code: "PASSWORD_RESET_EMAIL_UNAVAILABLE" });
+  }
+  assert.equal(sends, 1);
 });
