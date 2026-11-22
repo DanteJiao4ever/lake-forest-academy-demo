@@ -606,8 +606,8 @@ export async function createApp({
     }
   }
 
-  async function requireCourseAccess(user, courseCode) {
-    if (!(await repository.canAccessCourse(user, courseCode))) {
+  async function requireCourseAccess(user, courseCode, studentUserId = null) {
+    if (!(await repository.canAccessCourse(user, courseCode, studentUserId))) {
       throw new ApiError(403, "COURSE_ACCESS_DENIED", "You do not have access to this course.");
     }
   }
@@ -1477,7 +1477,11 @@ export async function createApp({
     { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
     async (request) => {
       const courses = await repository.listAccessibleCourseCodes(request.auth.user);
-      return { data: await repository.listCourseAnnouncements(courses), courseCodes: courses };
+      const [data, testCourseCodes] = await Promise.all([
+        repository.listCourseAnnouncements(courses, request.auth.user.id),
+        repository.listTestSections(courses, request.auth.user.id),
+      ]);
+      return { data, courseCodes: courses, testCourseCodes };
     },
   );
 
@@ -1723,7 +1727,7 @@ export async function createApp({
       if (query.courseCode) await requireCourseAccess(request.auth.user, query.courseCode);
       const rosters = await Promise.all(
         courseCodes.map(async (courseCode) =>
-          (await repository.listCourseRoster(courseCode)).map((student) => ({ courseCode, ...student }))),
+          (await repository.listCourseRoster(courseCode, request.auth.user.id)).map((student) => ({ courseCode, ...student }))),
       );
       return { data: rosters.flat() };
     },
@@ -1735,7 +1739,7 @@ export async function createApp({
     async (request) => {
       const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
       await requireCourseAccess(request.auth.user, courseCode);
-      return { data: await repository.listCourseRoster(courseCode) };
+      return { data: await repository.listCourseRoster(courseCode, request.auth.user.id) };
     },
   );
 
@@ -1745,7 +1749,7 @@ export async function createApp({
     async (request) => {
       const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
       await requireCourseAccess(request.auth.user, courseCode);
-      return { data: await repository.listCourseProgress(courseCode) };
+      return { data: await repository.listCourseProgress(courseCode, request.auth.user.id) };
     },
   );
 
@@ -1755,7 +1759,7 @@ export async function createApp({
     async (request) => {
       const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
       await requireCourseAccess(request.auth.user, courseCode);
-      return { data: await repository.listCourseGradebook(courseCode) };
+      return { data: await repository.listCourseGradebook(courseCode, request.auth.user.id) };
     },
   );
 
@@ -2413,7 +2417,7 @@ export async function createApp({
           );
         }
       } else {
-        await requireCourseAccess(request.auth.user, submission.courseCode);
+        await requireCourseAccess(request.auth.user, submission.courseCode, submission.studentUserId);
       }
       const key = idempotencyKey(request);
       const message = await repository.createSubmissionMessage({
@@ -2474,7 +2478,7 @@ export async function createApp({
       if (!submission) {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "The submission was not found.");
       }
-      await requireCourseAccess(request.auth.user, submission.courseCode);
+      await requireCourseAccess(request.auth.user, submission.courseCode, submission.studentUserId);
       const key = idempotencyKey(request);
       const message = await repository.createSubmissionMessage({
         submissionId,
@@ -2513,7 +2517,7 @@ export async function createApp({
       const file = await repository.getSubmissionFile(params.submissionId, params.fileId);
       if (!file) throw new ApiError(404, "FILE_NOT_FOUND", "The submitted file was not found.");
       const owns = request.auth.user.role === "student" && file.student_user_id === request.auth.user.id;
-      const teaches = request.auth.user.role !== "student" && (await repository.canAccessCourse(request.auth.user, file.course_code));
+      const teaches = request.auth.user.role !== "student" && (await repository.canAccessCourse(request.auth.user, file.course_code, file.student_user_id));
       if (!owns && !teaches) throw new ApiError(403, "FILE_ACCESS_DENIED", "You cannot open this file.");
       const opened = await drive.openFile(file.drive_file_id);
       await repository.recordAudit?.({
@@ -2551,7 +2555,7 @@ export async function createApp({
       }
       const submission = await repository.getSubmission(submissionId, request.auth.user.role);
       if (!submission) throw new ApiError(404, "SUBMISSION_NOT_FOUND", "The submission was not found.");
-      if (!(await repository.canAccessCourse(request.auth.user, submission.courseCode))) {
+      if (!(await repository.canAccessCourse(request.auth.user, submission.courseCode, submission.studentUserId))) {
         throw new ApiError(403, "COURSE_ACCESS_DENIED", "You are not assigned to this course.");
       }
       const match = String(request.headers["if-match"] || "").match(/^"grade-v(\d+)"$/);

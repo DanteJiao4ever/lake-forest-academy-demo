@@ -14,7 +14,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "course-workspace-v4";
+  const SCRIPT_VERSION = "course-sections-v1";
   let pendingServiceCheck = null;
   let lastFileConfig = {};
 

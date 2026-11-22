@@ -488,9 +488,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=course-workspace-v4",
-    "./platform-sequences.js?v=course-workspace-v4",
-    "./app.js?v=course-workspace-v4",
+    "./course-catalog.js?v=course-sections-v1",
+    "./platform-sequences.js?v=course-sections-v1",
+    "./app.js?v=course-sections-v1",
   ]);
 });
 
@@ -1448,7 +1448,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "course-workspace-v4";/,
+    /const SCRIPT_VERSION = "course-sections-v1";/,
   );
 });
 

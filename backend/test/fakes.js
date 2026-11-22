@@ -386,6 +386,10 @@ export class FakeRepository {
     return codes;
   }
 
+  async listTestSections() {
+    return [];
+  }
+
   async canAccessCourse(user, courseCode) {
     if (user.role === "teacher_admin") return true;
     const courses = user.role === "student"
