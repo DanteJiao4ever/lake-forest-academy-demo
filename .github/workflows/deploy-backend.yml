@@ -87,6 +87,7 @@ jobs:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
       REPOSITORY: ${{ vars.GCP_ARTIFACT_REGISTRY_REPOSITORY }}
+      TEACHING_PACKS_DIGEST: ${{ vars.LFA_TEACHING_PACKS_DIGEST }}
       SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
       MIGRATION_JOB: ${{ vars.GCP_MIGRATION_JOB }}
       SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
@@ -121,6 +122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$TEACHING_PACKS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Missing or invalid private teaching-packs digest." >&2; exit 1; }
           for name in PROJECT_ID REGION REPOSITORY SERVICE MIGRATION_JOB SQL_INSTANCE RUNTIME_SA MIGRATION_SA DB_RUNTIME_SECRET DB_MIGRATION_SECRET CSRF_SECRET CURRICULUM_DRIVE_ROOT_ID SUBMISSION_TARGET_ROOT_ID CLAMAV_HOST VPC_NETWORK VPC_SUBNET WIF_PROVIDER DEPLOY_SA; do
             test -n "${!name:-}" || { echo "Missing production variable: ${name}" >&2; exit 1; }
           done
@@ -213,6 +215,8 @@ jobs:
         with:
           context: backend
           push: true
+          build-args: |
+            TEACHING_PACKS_IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/teaching-packs@${{ env.TEACHING_PACKS_DIGEST }}
           tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/learning-api:${{ github.sha }}
       - name: Deploy and run migrations
         uses: google-github-actions/deploy-cloudrun@v3
@@ -260,6 +264,7 @@ jobs:
             INSTANCE_UNIX_SOCKET=/cloudsql/${{ env.SQL_INSTANCE }}
             ALLOWED_ORIGINS=https://lakeforestacademy.ca\,https://www.lakeforestacademy.ca
             COOKIE_NAME=__Host-lfa_session
+            LFA_TEACHING_PACKS_ROOT=/opt/lfa/teaching
             COOKIE_SECURE=true
             CURRICULUM_DRIVE_ROOT_ID=${{ env.CURRICULUM_DRIVE_ROOT_ID }}
             CLAMAV_HOST=${{ env.CLAMAV_HOST }}
@@ -342,6 +347,7 @@ jobs:
             fi
           }
           probe "/health/ready" "core-ready"
+          probe "/health/teaching-packs-ready" "teaching-packs-ready"
           probe "/health/catalog-ready" "catalog-ready"
           probe "/health/drive-catalog-ready" "drive-catalog-ready"
           probe "/health/upload-ready" "upload-ready"
@@ -366,6 +372,11 @@ jobs:
           set -euo pipefail
           public_url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
           test -n "$public_url"
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
+            "$public_url/health/teaching-packs-ready" \
+            | jq -e '.status == "ready"' >/dev/null
           curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 10 --max-time 30 \

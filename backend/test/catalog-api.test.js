@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { createApp } from "../src/app.js";
@@ -18,6 +21,8 @@ describe("database-driven course catalog API", () => {
   let app;
   let repository;
   let drive;
+
+  let packRoot;
 
   beforeEach(async () => {
     const config = loadConfig({
@@ -40,7 +45,11 @@ describe("database-driven course catalog API", () => {
     });
   });
 
-  afterEach(async () => app.close());
+  afterEach(async () => {
+    await app.close();
+    if (packRoot) await rm(packRoot, { recursive: true, force: true });
+    packRoot = null;
+  });
 
   async function registerStudent(email = "student@example.invalid") {
     const response = await app.inject({
@@ -81,6 +90,97 @@ describe("database-driven course catalog API", () => {
     });
     return { user, cookie: cookieFrom(response), csrf: response.json().csrfToken };
   }
+
+  test("serves only published teaching files for the current course grant and role", async () => {
+    packRoot = await mkdtemp(path.join(tmpdir(), "lfa-course-packs-"));
+    await app.close();
+    app = await createApp({
+      config: loadConfig({
+        NODE_ENV: "test", DATABASE_URL: "postgresql://test.invalid/lfa",
+        ALLOWED_ORIGINS: origin, COOKIE_SECURE: "false", BCRYPT_COST: "10",
+        LFA_TEACHING_PACKS_ROOT: packRoot,
+      }), repository, drive, scanner: new FakeScanner(),
+    });
+    const studentPdf = Buffer.from("%PDF-1.7\nstudent fixture\n%%EOF");
+    const facultyPdf = Buffer.from("%PDF-1.7\nprivate marking fixture\n%%EOF");
+    const reader = '<!doctype html><h1 id="u1-l2">Student worked example</h1>';
+    for (const [dir, extension, bytes] of [
+      ["Student/PDF", "pdf", studentPdf],
+      ["Faculty/PDF", "pdf", facultyPdf],
+      ["PrivateWeb/Student", "html", reader],
+    ]) {
+      await mkdir(path.join(packRoot, dir), { recursive: true });
+      for (const code of ["MHF4U", "TAS1O", "MCV4U", "BBB4M", "ICS4U", "SPH4U", "SCH4U"]) {
+        await writeFile(path.join(packRoot, dir, code + "." + extension), bytes);
+      }
+    }
+    const student = await registerStudent();
+    const teacher = await addFaculty("teacher");
+    const admin = await addFaculty("teacher_admin");
+    const get = (url, user) => app.inject({ method: "GET", url, headers: user ? { origin, cookie: user.cookie } : { origin } });
+    const base = "/v1/courses/MHF4U";
+    const catalog = await get("/v1/courses", student);
+    assert.equal((await get("/health/teaching-packs-ready")).statusCode, 200);
+    const studentPacks = catalog.json().data[0].materials.teachingPacks;
+    assert.deepEqual(studentPacks.map((p) => p.kind), ["reader", "student"]);
+    assert.doesNotMatch(catalog.body, /faculty|marking|TAS1O/);
+    assert.equal(catalog.body.includes(packRoot), false);
+    const materials = await get(base + "/materials", student);
+    assert.deepEqual(materials.json().teachingPacks, studentPacks);
+    assert.equal((await get(base + "/materials?category=Lessons", student)).json().teachingPacks, undefined);
+    const teacherCatalog = await get("/v1/teacher/courses", teacher);
+    assert.deepEqual(teacherCatalog.json().data[0].materials.teachingPacks.map((p) => p.kind), ["student", "faculty"]);
+    assert.equal((await get(base + "/teaching-reader", teacher)).statusCode, 403);
+
+    const opened = await get(studentPacks.find((p) => p.kind === "student").openUrl, student);
+    assert.equal(opened.statusCode, 200, opened.body);
+    assert.deepEqual(opened.rawPayload, studentPdf);
+    assert.equal(opened.headers["content-type"], "application/pdf");
+    assert.equal(opened.headers["cache-control"], "private, no-store");
+    const read = await get(base + "/teaching-reader", student);
+    assert.equal(read.body, reader);
+    assert.match(read.headers["content-type"], /^text\/html; charset=utf-8$/);
+    assert.equal(read.headers["cache-control"], "private, no-store");
+    assert.equal(read.headers["content-security-policy"], "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    assert.equal((await get(base + "/teaching-packs/faculty", student)).statusCode, 403);
+    assert.deepEqual((await get(base + "/teaching-packs/faculty", teacher)).rawPayload, facultyPdf);
+    assert.deepEqual((await get(base + "/teaching-packs/faculty", admin)).rawPayload, facultyPdf);
+    for (const suffix of ["/teaching-packs/student", "/teaching-packs/faculty", "/teaching-reader"]) {
+      assert.equal((await get(base + suffix)).statusCode, 401);
+      assert.equal((await get("/v1/courses/TAS1O" + suffix, teacher)).statusCode, 403);
+      assert.equal((await get("/v1/courses/TAS1O" + suffix, admin)).statusCode, 403);
+      assert.equal((await get("/v1/courses/TAS1O" + suffix, student)).statusCode, 403);
+    }
+    await rm(path.join(packRoot, "Student/PDF/MHF4U.pdf"));
+    assert.equal((await get("/health/teaching-packs-ready")).statusCode, 503);
+    assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
+    await symlink(path.join(packRoot, "Faculty/PDF/MHF4U.pdf"), path.join(packRoot, "Student/PDF/MHF4U.pdf"));
+    assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
+    assert.deepEqual((await get("/v1/courses", student)).json().data[0].materials.teachingPacks.map((p) => p.kind), ["reader"]);
+    await repository.replaceEnrollments(student.user.id, []);
+    assert.equal((await get(base + "/teaching-reader", student)).statusCode, 403);
+  });
+
+  test("preserves institutional grants through public selection and excludes archived courses", async () => {
+    repository.courseCatalog.set("TAS1O", { code: "TAS1O", title: "Technology", status: "active" });
+    repository.courseCatalog.set("TAS2O", { code: "TAS2O", title: "Unpublished", status: "archived" });
+    const student = await registerStudent();
+    const teacher = await addFaculty("teacher", ["TAS1O", "TAS2O"]);
+    await repository.replaceEnrollments(student.user.id, ["MHF4U", "TAS1O", "TAS2O"]);
+    const update = (codes) => app.inject({ method: "PUT", url: "/v1/me/enrollments",
+      headers: { cookie: student.cookie, origin, "x-csrf-token": student.csrf }, payload: { courseCodes: codes } });
+    assert.equal((await update(["TAS1O"])).statusCode, 422);
+    assert.equal((await update(["SCH4U"])).statusCode, 200);
+    assert.deepEqual((await repository.listEnrollments(student.user.id)).sort(), ["SCH4U", "TAS1O"]);
+    for (const user of [student, teacher]) {
+      const get = (url) => app.inject({ method: "GET", url, headers: { cookie: user.cookie } });
+      const listing = (await get("/v1/courses")).json().data.map((row) => row.code);
+      assert.ok(listing.includes("TAS1O"));
+      assert.ok(!listing.includes("TAS2O"));
+      assert.equal((await get("/v1/courses/TAS1O/modules")).statusCode, 200);
+      assert.equal((await get("/v1/courses/TAS2O/modules")).statusCode, 403);
+    }
+  });
 
   test("reports the exact catalog acceptance counts", async () => {
     const response = await app.inject({ method: "GET", url: "/health/catalog-ready" });

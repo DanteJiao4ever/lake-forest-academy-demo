@@ -14,6 +14,7 @@ import { assignmentIdSchema, courseCodeSchema, emailSchema, nameSchema, parse, u
 import { validateUploadedFile } from "./lib/file-validation.js";
 import { submissionGradeSchema } from "./lib/submission-grade.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
+import { listTeachingPacks, openTeachingPack, teachingPacksReady } from "./services/teaching-packs.js";
 import { MaterialSyncService } from "./services/material-sync.js";
 import { UnavailablePasswordResetMailer } from "./mail/password-reset-mailer.js";
 import { UnavailableGoogleWorkspaceOidc } from "./auth/google-workspace-oidc.js";
@@ -612,6 +613,43 @@ export async function createApp({
     }
   }
 
+  async function courseCatalog(request, reply) {
+    const user = request.auth.user;
+    const courses = await repository.listCoursesForUser(user);
+    reply.header("Cache-Control", "private, no-store");
+    if (!config.teachingPacksRoot) return { data: courses };
+    const data = await Promise.all(courses.map(async (course) => {
+      const teachingPacks = await listTeachingPacks(config.teachingPacksRoot, course.code, user.role);
+      return teachingPacks.length
+        ? { ...course, materials: { ...course.materials, teachingPacks } }
+        : course;
+    }));
+    return { data };
+  }
+
+  async function sendTeachingPack(request, reply, kind) {
+    const courseCode = parse(courseCodeSchema, request.params.courseCode, "INVALID_COURSE_CODE");
+    const allowed = await repository.listAccessibleCourseCodes(request.auth.user);
+    if (!allowed.includes(courseCode)) {
+      throw new ApiError(403, "COURSE_ACCESS_DENIED", "You do not have access to this course.");
+    }
+    const file = await openTeachingPack(config.teachingPacksRoot, courseCode, kind);
+    if (!file) throw new ApiError(404, "MATERIAL_NOT_FOUND", "The material was not found.");
+    reply.header("Cache-Control", "private, no-store");
+    if (kind === "reader") {
+      reply.type("text/html; charset=utf-8");
+      reply.header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    } else {
+      reply.type("application/pdf");
+      reply.header("Content-Disposition", `inline; filename="${courseCode}-${kind}.pdf"`);
+    }
+    if (request.method === "HEAD") {
+      await file.close();
+      return reply.send();
+    }
+    return reply.send(file.createReadStream());
+  }
+
   async function materialPage(request, forcedCourseCode = null) {
     const query = parse(
       materialFilterSchema,
@@ -639,7 +677,19 @@ export async function createApp({
       includeStaff: request.auth.user.role !== "student",
     });
     const hasMore = records.length > query.limit;
+    const courseCode = forcedCourseCode || query.courseCode;
+    let teachingPacks = [];
+    if (config.teachingPacksRoot && courseCode && offset === 0 &&
+        !query.category && !query.moduleId && query.moduleNumber == null && query.unitNumber == null) {
+      const published = forcedCourseCode
+        ? await repository.listAccessibleCourseCodes(request.auth.user)
+        : allowedCourseCodes;
+      if (published.includes(courseCode)) {
+        teachingPacks = await listTeachingPacks(config.teachingPacksRoot, courseCode, request.auth.user.role);
+      }
+    }
     return {
+      ...(teachingPacks.length ? { teachingPacks } : {}),
       data: records.slice(0, query.limit).map(materialResponse),
       page: {
         nextCursor: nextCursor(offset, query.limit, hasMore),
@@ -912,6 +962,12 @@ export async function createApp({
   });
   app.get("/health/password-reset-ready", async () => {
     await resetMailer.ready();
+    return { status: "ready" };
+  });
+  app.get("/health/teaching-packs-ready", async () => {
+    if (!await teachingPacksReady(config.teachingPacksRoot, launchCourseCodes)) {
+      throw new ApiError(503, "TEACHING_PACKS_NOT_READY", "Course teaching materials are unavailable.");
+    }
     return { status: "ready" };
   });
   app.get("/health/account-security-ready", async () => {
@@ -1461,7 +1517,7 @@ export async function createApp({
         "INVALID_ENROLLMENTS",
       );
       const unique = [...new Set(input.courseCodes)];
-      const saved = await repository.replaceEnrollments(request.auth.user.id, unique);
+      const saved = await repository.replaceEnrollments(request.auth.user.id, unique, launchCourseCodes);
       return { data: saved };
     },
   );
@@ -1469,7 +1525,7 @@ export async function createApp({
   app.get(
     "/v1/courses",
     { preHandler: [requireRoles("student", "teacher", "teacher_admin")] },
-    async (request) => ({ data: await repository.listCoursesForUser(request.auth.user) }),
+    courseCatalog,
   );
 
   app.get(
@@ -1520,6 +1576,16 @@ export async function createApp({
       };
     },
   );
+
+  for (const [suffix, kind, roles] of [
+    ["teaching-reader", "reader", ["student"]],
+    ["teaching-packs/student", "student", ["student", "teacher", "teacher_admin"]],
+    ["teaching-packs/faculty", "faculty", ["teacher", "teacher_admin"]],
+  ]) {
+    app.get(`/v1/courses/:courseCode/${suffix}`, {
+      preHandler: [requireRoles(...roles)],
+    }, (request, reply) => sendTeachingPack(request, reply, kind));
+  }
 
   app.get(
     "/v1/courses/:courseCode/materials",
@@ -1709,7 +1775,7 @@ export async function createApp({
   app.get(
     "/v1/teacher/courses",
     { preHandler: [requireRoles("teacher", "teacher_admin")] },
-    async (request) => ({ data: await repository.listCoursesForUser(request.auth.user) }),
+    courseCatalog,
   );
 
   app.get(

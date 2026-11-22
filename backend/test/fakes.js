@@ -378,11 +378,12 @@ export class FakeRepository {
   }
 
   async listEnrollments(userId) {
-    return this.enrollments.get(userId) || [];
+    return (this.enrollments.get(userId) || []).filter((code) => this.courseCatalog.get(code)?.status === "active");
   }
 
-  async replaceEnrollments(userId, codes) {
-    this.enrollments.set(userId, [...codes]);
+  async replaceEnrollments(userId, codes, editableCodes = null) {
+    const retained = editableCodes ? (this.enrollments.get(userId) || []).filter((code) => !editableCodes.includes(code)) : [];
+    this.enrollments.set(userId, [...new Set([...retained, ...codes])]);
     return codes;
   }
 
@@ -391,18 +392,13 @@ export class FakeRepository {
   }
 
   async canAccessCourse(user, courseCode) {
-    if (user.role === "teacher_admin") return true;
-    const courses = user.role === "student"
-      ? this.enrollments.get(user.id) || []
-      : this.teacherCourses.get(user.id) || [];
-    return courses.includes(courseCode);
+    return (await this.listAccessibleCourseCodes(user)).includes(courseCode);
   }
 
   async listAccessibleCourseCodes(user) {
-    if (user.role === "teacher_admin") return ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
-    return user.role === "student"
-      ? this.enrollments.get(user.id) || []
-      : this.teacherCourses.get(user.id) || [];
+    if (user.role === "student") return this.listEnrollments(user.id);
+    const courseCodes = user.role === "teacher_admin" ? [...this.courseCatalog.keys()] : this.teacherCourses.get(user.id) || [];
+    return courseCodes.filter((code) => this.courseCatalog.get(code)?.status === "active");
   }
 
   async catalogReady() {
@@ -538,7 +534,7 @@ export class FakeRepository {
         courseCode,
         moduleId: module.id,
         moduleNumber: module.moduleNumber,
-        status: recordedStatus || (module.moduleNumber === 0 || previous?.status === "completed" || override ? "available" : "locked"),
+        status: recordedStatus || ((module.moduleNumber === 0 || (module.moduleNumber === 1 && index === 0)) || previous?.status === "completed" || override ? "available" : "locked"),
         startedAt: saved?.startedAt || null,
         completedAt: saved?.completedAt || null,
         override: override ? { active: true, reason: override.reason, expiresAt: override.expiresAt } : null,
