@@ -180,6 +180,13 @@ the readiness check verifies its Gmail profile before the frontend exposes email
 recovery. The public link is set with `PASSWORD_RESET_URL`. A missing or invalid
 mail configuration fails closed and never returns or emails an existing password.
 
+For a single sending mailbox, the dedicated Gmail secret can instead contain a
+base64-encoded Google OAuth `authorized_user` object with `client_id`,
+`client_secret` and `refresh_token`. Obtain offline consent for `gmail.send`
+and `userinfo.email` from the configured sender using the school's OAuth client.
+Use an internal or production OAuth consent configuration for a durable grant.
+The API checks the verified sender, OAuth client and send scope before delivery.
+
 ## Lotus Drive mapping
 
 The curriculum source's configured root name is
