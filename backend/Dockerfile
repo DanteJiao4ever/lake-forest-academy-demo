@@ -1,3 +1,9 @@
+ARG TEACHING_PACKS_IMAGE=empty-teaching-packs
+FROM node:24-alpine AS empty-teaching-packs
+RUN mkdir -p /books /private-migrations
+
+FROM ${TEACHING_PACKS_IMAGE} AS teaching-packs
+
 FROM node:24-alpine AS dependencies
 
 WORKDIR /app
@@ -18,6 +24,8 @@ WORKDIR /app
 COPY --from=dependencies --chown=lfa:lfa /app/node_modules ./node_modules
 COPY --chown=lfa:lfa package.json ./package.json
 COPY --chown=lfa:lfa migrations ./migrations
+COPY --from=teaching-packs /private-migrations/ ./migrations/
+COPY --from=teaching-packs /books/ /opt/lfa/teaching/
 COPY --chown=lfa:lfa scripts ./scripts
 COPY --chown=lfa:lfa src ./src
 

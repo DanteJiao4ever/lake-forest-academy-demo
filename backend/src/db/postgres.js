@@ -303,6 +303,11 @@ const historyLateral = `
   ) history ON true
 `;
 
+// The launch courses start with orientation 0. Unit-based published courses can start at 1.
+function isEntryModule(row) {
+  return row.module_number === 0 || (row.module_number === 1 && row.previous_module_id == null);
+}
+
 export class PostgresRepository {
   constructor(pool) {
     this.pool = pool;
@@ -812,7 +817,7 @@ export class PostgresRepository {
     }
   }
 
-  async replaceEnrollments(studentUserId, courseCodes) {
+  async replaceEnrollments(studentUserId, courseCodes, editableCodes = null) {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -824,8 +829,9 @@ export class PostgresRepository {
         throw new ApiError(422, "UNKNOWN_COURSE", "One or more selected courses are unavailable.");
       }
       await client.query(
-        "UPDATE course_enrollments SET status = 'dropped', updated_at = now() WHERE student_user_id = $1",
-        [studentUserId],
+        `UPDATE course_enrollments SET status = 'dropped', updated_at = now()
+          WHERE student_user_id = $1 AND ($2::text[] IS NULL OR course_code = ANY($2))`,
+        [studentUserId, editableCodes],
       );
       for (const code of courseCodes) {
         await client.query(
@@ -848,8 +854,8 @@ export class PostgresRepository {
 
   async listEnrollments(studentUserId) {
     const result = await this.pool.query(
-      `SELECT course_code FROM course_enrollments
-       WHERE student_user_id = $1 AND status = 'active' ORDER BY course_code`,
+      `SELECT e.course_code FROM course_enrollments e JOIN courses c ON c.code = e.course_code
+       WHERE e.student_user_id = $1 AND e.status = 'active' AND c.status = 'active' ORDER BY e.course_code`,
       [studentUserId],
     );
     return result.rows.map((row) => row.course_code);
@@ -863,18 +869,22 @@ export class PostgresRepository {
       );
       if (!scope.rows[0].matches) return false;
     }
-    if (user.role === "teacher_admin") return true;
+    if (user.role === "teacher_admin") {
+      const result = await this.pool.query("SELECT 1 FROM courses WHERE code = $1 AND status = 'active'", [courseCode]);
+      return result.rowCount > 0;
+    }
     if (user.role === "student") {
       const result = await this.pool.query(
-        `SELECT 1 FROM course_enrollments
-         WHERE student_user_id = $1 AND course_code = $2 AND status = 'active'`,
+        `SELECT 1 FROM course_enrollments e JOIN courses c ON c.code = e.course_code
+         WHERE e.student_user_id = $1 AND e.course_code = $2 AND e.status = 'active' AND c.status = 'active'`,
         [user.id, courseCode],
       );
       return result.rowCount > 0;
     }
     if (user.role === "teacher") {
       const result = await this.pool.query(
-        "SELECT 1 FROM teacher_course_access WHERE teacher_user_id = $1 AND course_code = $2",
+        `SELECT 1 FROM teacher_course_access t JOIN courses c ON c.code = t.course_code
+          WHERE t.teacher_user_id = $1 AND t.course_code = $2 AND c.status = 'active'`,
         [user.id, courseCode],
       );
       return result.rowCount > 0;
@@ -941,8 +951,8 @@ export class PostgresRepository {
     }
     if (user.role === "student") return this.listEnrollments(user.id);
     const result = await this.pool.query(
-      `SELECT course_code FROM teacher_course_access
-       WHERE teacher_user_id = $1 ORDER BY course_code`,
+      `SELECT t.course_code FROM teacher_course_access t JOIN courses c ON c.code = t.course_code
+       WHERE t.teacher_user_id = $1 AND c.status = 'active' ORDER BY t.course_code`,
       [user.id],
     );
     return result.rows.map((row) => row.course_code);
@@ -1297,7 +1307,7 @@ export class PostgresRepository {
       `SELECT a.*, cm.module_number
        FROM assignments a
          JOIN course_modules cm ON cm.id = a.module_id
-        WHERE a.course_code = $1 AND ($2::boolean OR a.status = 'active')
+        WHERE a.course_code = $1 AND ($2::boolean OR (a.status = 'active' AND cm.status = 'published'))
         ORDER BY COALESCE(cm.module_number, a.unit_number), a.id`,
       [courseCode, includeInactive],
     );
@@ -1331,7 +1341,7 @@ export class PostgresRepository {
     const result = await this.pool.query(
       `SELECT cm.id, cm.module_number, p.status AS recorded_status,
               p.started_at, p.completed_at,
-              previous.status AS previous_status,
+              previous_module.id AS previous_module_id, previous.status AS previous_status,
               override.id AS override_id, override.reason AS override_reason,
               override.expires_at AS override_expires_at
          FROM course_modules cm
@@ -1360,7 +1370,7 @@ export class PostgresRepository {
         ? row.recorded_status
         : null;
       const status = recordedStatus ||
-        (row.module_number === 0 || row.override_id || row.previous_status === "completed"
+        (isEntryModule(row) || row.override_id || row.previous_status === "completed"
           ? "available"
           : "locked");
       return {
@@ -1392,7 +1402,7 @@ export class PostgresRepository {
       const available = await client.query(
         `SELECT cm.id, cm.course_code, cm.module_number, cm.unlock_criteria,
                 current.status AS current_status,
-                previous.status AS previous_status,
+                previous_module.id AS previous_module_id, previous.status AS previous_status,
                 required_activity.id AS required_activity_id,
                 activity_completion.status AS activity_completion_status,
                 activity_completion.evidence AS activity_completion_evidence,
@@ -1421,7 +1431,7 @@ export class PostgresRepository {
       );
       const module = available.rows[0];
       if (!module) throw new ApiError(404, "MODULE_NOT_FOUND", "The course module was not found.");
-      const canStart = module.module_number === 0 || module.overridden ||
+      const canStart = isEntryModule(module) || module.overridden ||
         module.previous_status === "completed" ||
         ["in_progress", "completed"].includes(module.current_status);
       if (!canStart) throw new ApiError(409, "MODULE_LOCKED", "Complete the previous module or ask your teacher for an override.");
@@ -1634,7 +1644,7 @@ export class PostgresRepository {
               cm.id AS module_id, cm.module_number,
               progress.status AS recorded_status,
               progress.started_at, progress.completed_at,
-              previous_progress.status AS previous_status,
+              previous_module.id AS previous_module_id, previous_progress.status AS previous_status,
               override.id AS override_id,
               override.reason AS override_reason,
               override.expires_at AS override_expires_at
@@ -1692,7 +1702,7 @@ export class PostgresRepository {
         ? row.recorded_status
         : null;
       const status = recordedStatus ||
-        (row.module_number === 0 || row.override_id || row.previous_status === "completed"
+        (isEntryModule(row) || row.override_id || row.previous_status === "completed"
           ? "available"
           : "locked");
       student.modules.push({

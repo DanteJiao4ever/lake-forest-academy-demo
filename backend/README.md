@@ -2,11 +2,17 @@
 
 This service is the private backend for the static Lake Forest Learning site.
 It keeps identity, enrollment, submissions, grade history and authorization in
-PostgreSQL and uses a school-controlled Google Drive only as private file
+PostgreSQL and uses a school-controlled Google Drive for private file
 storage. Browser code never receives a database credential, Google credential,
 Drive file ID or access token.
 
+## Optional teaching packs
+
+Set `LFA_TEACHING_PACKS_ROOT` to a private read-only directory outside the static website. Publish each course under its existing code using `Student/PDF/CODE.pdf`, `Faculty/PDF/CODE.pdf` and optionally `PrivateWeb/Student/CODE.html`. The student-only HTML reader uses self-contained material, inline styles, data images and lesson anchors such as `u1-l2`. The authenticated course catalogue returns only available files for the current course access and role. Enrolments and Drive synchronization are managed separately.
+
 ## Local setup
+
+The production API build imports the private `teaching-packs` image from the school's Artifact Registry at the immutable digest in the GitHub production configuration `LFA_TEACHING_PACKS_DIGEST`. The image supplies the six authorized coursebooks at `/opt/lfa/teaching` and the immutable `015_hidden_teaching_drafts_v1.sql` catalog migration. Preserve prior private migrations in subsequent releases. Public development and CI builds use empty content directories. The release probes `/health/teaching-packs-ready` before and after the traffic switch.
 
 1. Copy `.env.example` to `.env` and set `DATABASE_URL`.
 2. Create an empty PostgreSQL 14+ database.
