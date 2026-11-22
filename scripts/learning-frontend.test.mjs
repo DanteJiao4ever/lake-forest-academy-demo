@@ -488,9 +488,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=course-sections-v1",
-    "./platform-sequences.js?v=course-sections-v1",
-    "./app.js?v=course-sections-v1",
+    "./course-catalog.js?v=course-packs-v2",
+    "./platform-sequences.js?v=course-packs-v2",
+    "./app.js?v=course-packs-v2",
   ]);
 });
 
@@ -1448,7 +1448,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "course-sections-v1";/,
+    /const SCRIPT_VERSION = "course-packs-v2";/,
   );
 });
 
@@ -4526,5 +4526,130 @@ test("students can identify their MCV4U section on an empty announcement board",
       async fetch() { return jsonResponse({ courseCodes: ["MCV4U"], testCourseCodes, data: [] }); },
     });
     assert.ok(html.includes("MCV4U · " + label));
+  }
+});
+
+test("course workspaces and lesson screens open the authorized packs independently of Drive", async () => {
+  const root = "https://api.example.test/v1/courses";
+  const prefix = "/v1/courses/SCH4U";
+  const options = {
+    platformApiConfig: { ...studentPlatformApiConfig, coursesEndpoint: root },
+    beforeApp(window) {
+      window.LFA_DRIVE_CATALOG_STATUS = { state: "unavailable", message: "Drive index unavailable" };
+    },
+    fetch: async (request) => {
+      const { pathname } = new URL(String(request));
+      if (pathname === "/v1/courses") {
+        return jsonResponse({ data: [{ code: "SCH4U", materials: { count: 0, teachingPacks: [
+          { kind: "reader", title: "Online course reader", openUrl: prefix + "/teaching-reader" },
+          { kind: "student", title: "Student coursebook (PDF)", openUrl: prefix + "/teaching-packs/student" },
+          { kind: "faculty", title: "Faculty teaching and marking guide (PDF)", openUrl: prefix + "/teaching-packs/faculty" },
+        ] } }] });
+      }
+      if (pathname === "/v1/me/progress") return jsonResponse({ data: [{ moduleNumber: 1, status: "available" }] });
+      return jsonResponse({ data: [] });
+    },
+    settleTurns: 16,
+  };
+  const student = { email: "student@lakeforestacademy.ca", role: "student" };
+  const teacher = { email: "james.whitmore@lakeforestacademy.ca", role: "teacher" };
+  const studentCourse = await renderPortal("#/course/sch4u", student, options);
+  assert.match(studentCourse, /https:\/\/api\.example\.test\/v1\/courses\/SCH4U\/teaching-packs\/student/);
+  assert.match(studentCourse, /Online course reader/);
+  assert.doesNotMatch(studentCourse, /teaching-packs\/faculty|Faculty teaching and marking guide/);
+  const lesson = await renderPortal("#/lesson/SCH4U-U1-L2", student, options);
+  assert.match(lesson, /https:\/\/api\.example\.test\/v1\/courses\/SCH4U\/teaching-reader#u1-l2/);
+  const faculty = await renderPortal("#/teacher/materials", teacher, options);
+  assert.match(faculty, /teaching-packs\/faculty/);
+  const unpublished = await renderPortal("#/lesson/SCH4U-U1-L2", student, {
+    ...options,
+    fetch: async (request) => new URL(String(request)).pathname === "/v1/courses"
+      ? jsonResponse({ data: [{ code: "SCH4U", materials: { count: 0 } }] })
+      : options.fetch(request),
+  });
+  assert.doesNotMatch(unpublished, /Read this lesson|teaching-reader/);
+});
+
+test("an institutionally assigned course uses published native modules, lessons, assignments and roster", async () => {
+  const code = "ENG4U";
+  const moduleId = "eng4u-cb01";
+  const assignmentId = moduleId + "-assignment";
+  const student = { email: "assigned@example.test", role: "student" };
+  const teacher = { email: "assigned.teacher@example.test", role: "teacher" };
+  const course = { code, title: "Technology & design", status: "active", moduleCount: 1, plannedHours: 18 };
+  const module = {
+    id: moduleId, courseCode: code, moduleNumber: 1, unitNumber: 1,
+    title: "Prototype and measure", estimatedCreditHours: 18, learningFocus: ["Measure a prototype", "Compare two models"],
+    coreReadingOrder: ["Unit one individual reading", "Unit two individual reading"], lessons: [
+      { id: "ENG4U-U1-L1", position: 1, title: "Measure a prototype" },
+      { id: "ENG4U-U1-L2", position: 2, title: "Compare two models" },
+    ], activity: { id: moduleId + "-activity", title: "Station check", sequence: [] },
+  };
+  const assignment = {
+    id: assignmentId, courseCode: code, moduleId, moduleNumber: 1, unitNumber: 1,
+    title: "Prototype evidence", instructions: "Submit the measurement record.", weightPercent: null,
+    rubric: [], submissionMode: "text_or_file", status: "active",
+  };
+  const memberOptions = {
+    platformApiConfig: { ...studentPlatformApiConfig, teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses" },
+    settleTurns: 14,
+    async fetch(request) {
+      const { pathname } = new URL(String(request));
+      if (pathname === "/v1/courses") return jsonResponse({ data: [
+        course, { ...course, code: "TAS2O", title: "Hidden archive", status: "archived" },
+        { ...course, code: "TEJ3M", title: "Only draft modules", moduleCount: 0 },
+      ] });
+      if (pathname === "/v1/courses/ENG4U/modules") return jsonResponse({ data: [module] });
+      if (pathname === "/v1/courses/ENG4U/assignments") return jsonResponse({ data: [
+        assignment, { ...assignment, id: moduleId + "-archived", title: "Hidden task", status: "archived" },
+      ] });
+      if (pathname === "/v1/me/progress") return jsonResponse({ data: [{ moduleId, moduleNumber: 1, status: "available" }] });
+      if (pathname.endsWith("/roster")) return jsonResponse({ data: [{ displayName: "Authorized Learner", completedModules: 0, totalModules: 1 }] });
+      if (pathname === "/v1/teacher/courses/ENG4U/progress") return jsonResponse({ data: { courseCode: code, students: [] } });
+      return jsonResponse({ data: [] });
+    },
+  };
+  for (const [route, expected] of [
+    ["courses", "Technology &amp; design"], ["course/eng4u", "1-Module Learning Path"],
+    ["course/eng4u/module/" + moduleId, '#/lesson/ENG4U-U1-L1'],
+    ["lesson/ENG4U-U1-L1", "Unit one individual reading"],
+    ["assignment/" + assignmentId, "Submit the measurement record."],
+    ["assessments", "Prototype evidence"],
+  ]) {
+    const html = await renderPortal("#/" + route, student, memberOptions);
+    assert.ok(html.includes(expected), route + " did not render " + expected);
+    assert.doesNotMatch(html, /Hidden archive|Only draft modules|Hidden task|undefined/);
+    if (route === "lesson/ENG4U-U1-L1") assert.doesNotMatch(html, /Unit two individual reading/);
+    if (route.startsWith("assignment/")) assert.match(html, /Weight pending/);
+  }
+  const selector = await renderPortal("#/course-selection", student, memberOptions);
+  assert.doesNotMatch(selector, /Technology &amp; design|data-course="eng4u"/);
+  assert.match(selector, /0 of 6 selected/);
+  const faculty = await renderPortal("#/teacher/course/eng4u", teacher, memberOptions);
+  assert.match(faculty, /Authorized Learner/);
+  assert.match(faculty, /#\/teacher\/course\/eng4u\/module\/eng4u-cb01/);
+  assert.doesNotMatch(faculty, /Hidden task|Hidden archive/);
+  const marking = await renderPortal("#/teacher/submission/assigned%40example.test/" + assignmentId, teacher, {
+    ...memberOptions,
+    submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions", gradingEndpoint: "https://api.example.test/v1/grades" },
+    async fetch(url) {
+      if (new URL(String(url)).pathname !== "/v1/submissions") return memberOptions.fetch(url);
+      return jsonResponse({ data: [{
+        id: "11111111-1111-4111-8111-111111111111", courseCode: code, moduleId,
+        assignmentId, assignmentTitle: assignment.title, status: "submitted",
+        submittedAt: "2026-10-01T12:00:00Z", student: { id: "stu-1", email: student.email, displayName: "Authorized Learner" },
+      }], page: { nextCursor: null, limit: 100 } });
+    },
+  });
+  assert.match(marking, /id="grading-form"/);
+  assert.match(marking, /Prototype evidence/);
+  assert.doesNotMatch(marking, /not matched to the local assignment catalogue/);
+  for (const user of [student, teacher]) {
+    const requests = [];
+    const html = await renderPortal(user === student ? "#/lesson/ENG4U-U1-L1" : "#/teacher/course/eng4u", user, {
+      ...memberOptions, async fetch(url) { requests.push(String(url)); return jsonResponse({ data: [] }); },
+    });
+    assert.doesNotMatch(html, /Technology &amp; design|Prototype and measure|Unit one individual reading/);
+    assert.ok(!requests.some((url) => url.includes("/ENG4U/")));
   }
 });
