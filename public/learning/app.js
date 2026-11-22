@@ -9411,7 +9411,10 @@
       <h2>${escapeHtml(item.title)}</h2><p class="course-announcement-body">${escapeHtml(item.body)}</p>
       <div class="announcement-meta"><span>${escapeHtml(item.authorName)}</span><span>${formatDate(item.publishedAt, true)}</span></div>
       </div></article>`).join("");
-    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || '<p class="empty-state compact">No announcements for your courses yet.</p>'}</section>`;
+    const emptyState = board.courses.includes("MCV4U")
+      ? `No announcements for your courses yet. Your class: ${courseLabel("MCV4U")}.`
+      : "No announcements for your courses yet.";
+    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || `<p class="empty-state compact">${escapeHtml(emptyState)}</p>`}</section>`;
   }
 
   function notFoundView() {

@@ -4518,3 +4518,13 @@ test("teacher direct-entry forms exclude submission work and preserve a prior pu
   assert.doesNotMatch(html, /data-item="coursework"/);
   assert.match(html, /<td>3<\/td><td>45%<\/td><td>87%<\/td>/);
 });
+
+test("students can identify their MCV4U section on an empty announcement board", async () => {
+  for (const [testCourseCodes, label] of [[[], "Regular section"], [["MCV4U"], "Test section"]]) {
+    const html = await renderPortal("#/announcements", { role: "student", email: "student@example.test" }, {
+      platformApiConfig: { announcementsEndpoint: "https://api.example.test/v1/announcements" },
+      async fetch() { return jsonResponse({ courseCodes: ["MCV4U"], testCourseCodes, data: [] }); },
+    });
+    assert.ok(html.includes("MCV4U · " + label));
+  }
+});
