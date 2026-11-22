@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/SocraticReveal.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "SocraticReveal"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "minWords": {},
+    "mode": {},
+    "private": {}
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "mode": {
+          "const": "tap"
+        },
+        "minWords": {
+          "const": 0
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "teacherReasoning": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "teacherReasoning"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "mode",
+        "minWords",
+        "private"
+      ]
+    },
+    {
+      "properties": {
+        "mode": {
+          "const": "predict"
+        },
+        "minWords": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 500
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "teacherReasoning": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "teacherReasoning"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "mode",
+        "minWords",
+        "private"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+@font-face {
+  font-family: "Newsreader";
+  src: url("./fonts/newsreader.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("./fonts/source-serif-4.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: Inter;
+  src: url("./fonts/inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  --lfa-forest: #1B4332;
+  --lfa-paper: #FAF9F6;
+  --lfa-sidebar: #F3F2EE;
+  --lfa-blue: #2B5B84;
+  --lfa-amber: #B45309;
+  --lfa-ink: #1F2933;
+  --lfa-border: #E5E7EB;
+  --lfa-divider: #D9E2EC;
+  --lfa-card: #fff;
+  --lfa-heading: "Newsreader", Georgia, serif;
+  --lfa-humanities: "Source Serif 4", Georgia, serif;
+  --lfa-ui: Inter, system-ui, sans-serif;
+  --lfa-mono: "JetBrains Mono", monospace;
+  --lfa-reading-width: 68ch;
+}
+[data-lfa-theme="dark"] {
+  color-scheme: dark;
+  --lfa-paper: #192622;
+  --lfa-sidebar: #25332e;
+  --lfa-card: #26332e;
+  --lfa-ink: #f1eee6;
+  --lfa-divider: #52675c;
+  --lfa-border: #485a51;
+  --lfa-blue: #a4d3f7;
+  --lfa-amber: #ffc98b;
+}
+.lfa-prose { max-width: var(--lfa-reading-width); font: 400 1rem/1.65 var(--lfa-ui); }
+.lfa-prose[data-discipline="humanities"] { font: 400 1.0625rem/1.72 var(--lfa-humanities); }
+.lfa-prose :is(pre, code) { font-family: var(--lfa-mono); }

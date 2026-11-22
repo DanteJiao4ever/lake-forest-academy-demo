@@ -5,20 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Lake Forest Academy learning platform with separate student and faculty access, OSSD courses, secure assignment workflows, feedback and notifications."
+      content="Lake Forest Academy learning platform for students and faculty, OSSD courses, secure assignment workflows, feedback and notifications."
     />
     <meta name="theme-color" content="#061d18" />
     <title>Lake Forest Learning</title>
-    <link rel="preconnect" href="https://unpkg.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/@ongov/ontario-design-system-global-styles@9.0.0/dist/misc/ontario-design-system-fonts.css"
-    />
-    <link rel="stylesheet" href="./styles.css?v=course-sections-v1" />
-    <script src="./bootstrap.js?v=course-packs-v2" defer></script>
+    <link rel="stylesheet" href="../design/tokens.css" />
+    <link rel="stylesheet" href="../design/reading-sample.css" />
+    <script type="module" src="./assets/reading-sample.js"></script>
+    <link rel="stylesheet" href="./styles.css?v=portal-workbench-v1" />
+    <script src="./bootstrap.js?v=portal-workbench-v1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
+    <template id="public-reading-view">
+      <main id="main-content" class="portal-sample" tabindex="-1">
+        <nav aria-label="Reading sample navigation"><a href="../">Lake Forest Academy</a><a href="#/dashboard">Learning portal</a></nav>
+        <lfa-reading-sample></lfa-reading-sample>
+      </main>
+    </template>
     <div id="app">
       <main class="bootstrap-state" id="main-content" aria-live="polite">
         <img

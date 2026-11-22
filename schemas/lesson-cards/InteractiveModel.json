@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/InteractiveModel.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "InteractiveModel"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "question": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "base": {
+      "type": "number"
+    },
+    "slope": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "enum": [
+              "price",
+              "shift"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "initial": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "min",
+          "max",
+          "step",
+          "initial"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt",
+    "question",
+    "base",
+    "slope",
+    "parameters"
+  ],
+  "additionalProperties": false
+}

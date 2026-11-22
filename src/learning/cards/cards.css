@@ -1,0 +1,258 @@
+.lesson-card {
+  box-sizing: border-box;
+  min-width: 0;
+  margin-block: 1.75rem;
+  padding: clamp(1rem, 3vw, 1.65rem);
+  border: 1px solid var(--lfa-divider);
+  border-radius: 12px;
+  background: var(--lfa-card);
+  color: var(--lfa-ink);
+  font: 400 1rem/1.55 var(--lfa-ui);
+  overflow-wrap: anywhere;
+}
+.lesson-card *,
+.lesson-card *::before {
+  box-sizing: border-box;
+}
+.lesson-card .lc-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5em;
+  font: 600 0.75rem/1.5 var(--lfa-ui);
+  color: var(--lfa-blue);
+}
+.lesson-card h3 {
+  margin: 0.5rem 0;
+  color: inherit;
+  font: 600 clamp(1.4rem, 3vw, 1.75rem) / 1.16 var(--lfa-heading);
+}
+.lesson-card h4,
+.lesson-card h5 {
+  margin: 0 0 0.4rem;
+  color: inherit;
+  font: 650 1rem/1.4 var(--lfa-ui);
+}
+.lesson-card p {
+  margin: 0.35rem 0 0.8rem;
+}
+.lesson-card .lc-prompt {
+  margin-block: 0.5rem 1.05rem;
+}
+.lesson-card form,
+.lesson-card fieldset,
+.lc-synthesis {
+  display: grid;
+  justify-items: start;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.lesson-card fieldset {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  margin: 0.15rem 0 0.35rem;
+  gap: 0.3rem;
+}
+.lesson-card legend,
+.lc-label {
+  padding: 0;
+  font-weight: 630;
+  margin-bottom: 0.4rem;
+}
+.lesson-card label {
+  display: grid;
+  gap: 0.3rem;
+  width: 100%;
+  font-weight: 550;
+}
+.lesson-card label.lc-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  width: fit-content;
+  min-height: 2.3rem;
+  padding-block: 0.35rem;
+  font-weight: 430;
+  cursor: pointer;
+}
+.lesson-card .lc-choice input {
+  flex: 0 0 1.05rem;
+  align-self: baseline;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  accent-color: var(--lfa-blue);
+}
+.lesson-card :is(textarea, select, input:not([type="checkbox"], [type="radio"], [type="range"])),
+.lesson-card .ProseMirror {
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--lfa-divider);
+  border-radius: 0.35rem;
+  background: var(--lfa-paper);
+  color: var(--lfa-ink);
+  font: inherit;
+  font-weight: 400;
+}
+.lesson-card input[type="number"] {
+  max-width: 12rem;
+}
+.lesson-card select {
+  max-width: 100%;
+}
+.lesson-card textarea {
+  resize: vertical;
+}
+.lesson-card button {
+  border: 1px solid currentColor;
+  border-radius: 0.35rem;
+  padding: 0.48rem 0.78rem;
+  background: none;
+  color: var(--lfa-blue);
+  font: 600 0.9rem/1.35 var(--lfa-ui);
+  text-align: start;
+  cursor: pointer;
+}
+.lesson-card button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+.lesson-card :is(button, input, select, textarea, summary, [contenteditable]):focus-visible {
+  outline: 3px solid var(--lfa-blue);
+  outline-offset: 2px;
+}
+.lesson-card button:not(:disabled):hover {
+  background: var(--lfa-sidebar);
+}
+.lesson-card .lc-meta,
+.lc-draft-status {
+  font: 400 0.83rem/1.5 var(--lfa-ui);
+  color: var(--lfa-ink);
+}
+.lesson-card .lc-feedback,
+.lesson-card .lc-reading-note,
+.lesson-card .lc-error {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.85rem;
+  background: var(--lfa-sidebar);
+  border-inline-start: 3px solid var(--lfa-blue);
+}
+.lesson-card [role="alert"],
+.lesson-card .lc-error {
+  border-color: var(--lfa-amber);
+}
+.lesson-card .lc-reading-note p {
+  margin: 0 0 0.3rem;
+}
+.lesson-card blockquote {
+  margin: 0.5rem 0;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  border-inline-start: 2px solid var(--lfa-divider);
+}
+.lc-discussion,
+.lc-discussion .lc-peer {
+  margin-top: 1.2rem;
+}
+.lesson-card .lc-annotations,
+.lesson-card .lc-steps {
+  margin: 0.6rem 0;
+  padding-inline-start: 1.3rem;
+}
+.lesson-card .lc-cite {
+  padding: 0.1rem 0.25rem;
+  font: inherit;
+  font-size: 0.85em;
+  vertical-align: super;
+}
+.lc-step-answer {
+  display: block;
+  font-family: var(--lfa-mono);
+}
+.lesson-card .lc-chart {
+  width: min(100%, 28rem);
+  margin: 0 auto;
+  color: var(--lfa-ink);
+}
+.lc-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.lc-chart text {
+  font: 12px var(--lfa-ui);
+  fill: currentColor;
+}
+.lc-chart figcaption {
+  font: 0.78rem/1.45 var(--lfa-ui);
+  margin: 0.3rem 0 1rem;
+}
+.lc-slider input {
+  width: 100%;
+  min-height: 2rem;
+  margin: 0;
+  accent-color: var(--lfa-blue);
+}
+.lc-slider span {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+.lesson-card .lc-cases {
+  width: 100%;
+  padding: 0;
+  margin: 0.2rem 0;
+  list-style: none;
+}
+.lc-cases li {
+  margin-block-end: 0.65rem;
+  padding: 0.6rem;
+  border: 1px solid var(--lfa-divider);
+  border-radius: 0.4rem;
+}
+.lc-drag-handle {
+  display: inline-block;
+  margin-bottom: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--lfa-blue);
+}
+.lc-drag-handle[draggable="true"] {
+  cursor: grab;
+}
+.lc-buckets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(8.5rem, 100%), 1fr));
+  gap: 0.5rem;
+  width: 100%;
+}
+.lc-buckets section {
+  border: 1px dashed var(--lfa-blue);
+  border-radius: 0.4rem;
+  padding: 0.65rem;
+}
+.lc-buckets [data-over="true"] {
+  outline: 2px solid var(--lfa-blue);
+  background: var(--lfa-sidebar);
+}
+.lc-editor,
+.lc-citations,
+.lc-draft-status {
+  width: 100%;
+  min-width: 0;
+}
+.lc-editor .ProseMirror {
+  min-height: 8rem;
+  padding: 0.7rem;
+  overflow-wrap: anywhere;
+}
+.lc-citations {
+  display: grid;
+  justify-items: start;
+  gap: 0.45rem;
+}
+.lesson-card summary {
+  min-height: 2.25rem;
+  padding-block: 0.4rem;
+  color: var(--lfa-blue);
+  cursor: pointer;
+}

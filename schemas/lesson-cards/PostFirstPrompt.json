@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/PostFirstPrompt.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "PostFirstPrompt"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "minWords": {
+      "$ref": "common.json#/definitions/minWords"
+    },
+    "private": {
+      "type": "object",
+      "properties": {
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "label": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "text": {
+                "type": "string",
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "teacherModel": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "peers",
+        "teacherModel"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt",
+    "minWords",
+    "private"
+  ],
+  "additionalProperties": false
+}

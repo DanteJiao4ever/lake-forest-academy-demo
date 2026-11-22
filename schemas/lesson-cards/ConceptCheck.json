@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/ConceptCheck.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "ConceptCheck"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "mode": {},
+    "options": {},
+    "private": {},
+    "unit": {}
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "mode": {
+          "const": "single"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/choice"
+          },
+          "minItems": 2,
+          "maxItems": 16
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "correct": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/definitions/id"
+              },
+              "minItems": 1,
+              "maxItems": 1,
+              "uniqueItems": true
+            },
+            "feedback": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/definitions/diagnosis"
+              }
+            },
+            "success": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "correct",
+            "feedback",
+            "success"
+          ],
+          "additionalProperties": false
+        },
+        "unit": false
+      },
+      "required": [
+        "mode",
+        "options",
+        "private"
+      ]
+    },
+    {
+      "properties": {
+        "mode": {
+          "const": "multiple"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/choice"
+          },
+          "minItems": 2,
+          "maxItems": 16
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "correct": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/definitions/id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "feedback": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/definitions/diagnosis"
+              }
+            },
+            "success": {
+              "$ref": "common.json#/definitions/text"
+            },
+            "missingHint": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "correct",
+            "feedback",
+            "success",
+            "missingHint"
+          ],
+          "additionalProperties": false
+        },
+        "unit": false
+      },
+      "required": [
+        "mode",
+        "options",
+        "private"
+      ]
+    },
+    {
+      "properties": {
+        "mode": {
+          "const": "numeric"
+        },
+        "unit": {
+          "$ref": "common.json#/definitions/text"
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number"
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "number"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "hint": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "required": [
+                  "value",
+                  "name",
+                  "hint"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            },
+            "fallback": {
+              "$ref": "common.json#/definitions/diagnosis"
+            },
+            "success": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "value",
+            "errors",
+            "fallback",
+            "success"
+          ],
+          "additionalProperties": false
+        },
+        "options": false
+      },
+      "required": [
+        "mode",
+        "unit",
+        "private"
+      ]
+    }
+  ]
+}

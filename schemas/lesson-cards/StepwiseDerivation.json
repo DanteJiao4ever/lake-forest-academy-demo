@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/StepwiseDerivation.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "StepwiseDerivation"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "lines": {},
+    "mode": {},
+    "private": {},
+    "reasons": {},
+    "steps": {}
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "mode": {
+          "const": "fill"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "prompt": {
+                "type": "string",
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "id",
+              "prompt"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 16
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "answers": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "feedback": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/definitions/text"
+              }
+            }
+          },
+          "required": [
+            "answers",
+            "feedback"
+          ],
+          "additionalProperties": false
+        },
+        "lines": false,
+        "reasons": false
+      },
+      "required": [
+        "mode",
+        "steps",
+        "private"
+      ]
+    },
+    {
+      "properties": {
+        "mode": {
+          "const": "fallacy"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/line"
+          },
+          "minItems": 2,
+          "maxItems": 16
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/definitions/choice"
+          },
+          "minItems": 2,
+          "maxItems": 16
+        },
+        "private": {
+          "type": "object",
+          "properties": {
+            "lineId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "reasonId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "lineHint": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "reasonFeedback": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/definitions/text"
+              }
+            },
+            "success": {
+              "$ref": "common.json#/definitions/text"
+            }
+          },
+          "required": [
+            "lineId",
+            "reasonId",
+            "lineHint",
+            "reasonFeedback",
+            "success"
+          ],
+          "additionalProperties": false
+        },
+        "steps": false
+      },
+      "required": [
+        "mode",
+        "lines",
+        "reasons",
+        "private"
+      ]
+    }
+  ]
+}
