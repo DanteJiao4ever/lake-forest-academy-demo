@@ -782,7 +782,7 @@
         id: String(lesson?.id || lesson?.key || `${moduleKey}-L${index + 1}`),
         key: String(lesson?.key || lesson?.id || `${moduleKey}-L${index + 1}`),
         title: String(lesson?.title || `Lesson ${index + 1}`),
-        order: Number(lesson?.order || index + 1),
+        order: Number(lesson?.order || lesson?.position || index + 1),
       })),
     };
   }
@@ -801,7 +801,11 @@
     course.plannedHours = Number(platformCourse.hours || course.plannedHours || 110);
     course.description = platformCourse.description || course.description;
     course.overview = platformCourse.description || course.overview;
-    course.lessons = modules.flatMap((module) =>
+    course.lessons = lessonsFromModules(modules);
+  });
+
+  function lessonsFromModules(modules, useIndividualReading = false) {
+    return modules.flatMap((module) =>
       module.lessons.map((lesson) => ({
         id: lesson.id,
         unit: `Module ${String(module.number).padStart(2, "0")}`,
@@ -813,12 +817,12 @@
           module.learningFocus[0] ||
           `Complete the assigned reading and practice for ${module.title}.`,
         objectives: [...module.learningFocus],
-        content: [...module.readingSteps],
+        content: useIndividualReading ? String(module.readingSteps[lesson.order - 1] || "").split(/\n\s*\n/).filter(Boolean) : [...module.readingSteps],
         platformModuleKey: module.key,
         platformModuleNumber: module.number,
       })),
     );
-  });
+  }
 
   const ASSIGNMENTS = [
     {
@@ -1127,6 +1131,62 @@
     },
   );
 
+  // Legacy sample subjects can share codes with real courses. Retain only the
+  // public selector's course and assessment records as the browser's baseline.
+  COURSES.splice(0, COURSES.length, ...COURSES.filter((course) => SELECTABLE_COURSE_IDS.includes(course.id)));
+  ASSIGNMENTS.splice(0, ASSIGNMENTS.length, ...ASSIGNMENTS.filter((task) => SELECTABLE_COURSE_IDS.includes(task.courseId)));
+  const publicCourseCount = COURSES.length;
+  const publicAssignmentCount = ASSIGNMENTS.length;
+
+  // Only the authenticated catalogue can introduce a course outside the public selector.
+  function mergeAssignedCourses(rows) {
+    const previous = new Map(COURSES.splice(publicCourseCount).map((course) => [course.code, course]));
+    const assigned = new Set();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const code = String(row?.code || "");
+      if (!/^[A-Z0-9][A-Z0-9_-]{1,23}$/.test(code) || row.status !== "active" ||
+          !(Number(row.moduleCount) > 0) || !row.title || COURSES.some((course) => course.code === code)) continue;
+      const course = previous.get(code) || {
+        id: code.toLowerCase(), code, institutional: true, lessons: [], platformModules: [], evaluation: [],
+        subject: "OSSD", gradeType: "OSSD", image: "../images/library-study.jpg", mode: "Online",
+      };
+      course.title = String(row.title);
+      course.plannedHours = Number(row.plannedHours) || 0;
+      course.moduleCount = Number(row.moduleCount);
+      COURSES.push(course);
+      assigned.add(course.id);
+    }
+    for (const course of previous.values()) {
+      if (assigned.has(course.id)) continue;
+      for (const key of platformRequests.keys()) {
+        if (key.endsWith(":" + course.code)) platformRequests.delete(key);
+      }
+      for (const bucket of ["modules", "assignments", "studentProgress", "studentGrades",
+        "teacherRosters", "teacherProgress", "teacherGradebooks"]) delete platformRuntime[bucket][course.code];
+    }
+    for (let i = ASSIGNMENTS.length - 1; i >= publicAssignmentCount; i -= 1) {
+      if (!assigned.has(ASSIGNMENTS[i].courseId)) ASSIGNMENTS.splice(i, 1);
+    }
+  }
+
+  function setCourseModules(course, rows) {
+    if (course.institutional && findCourse(course.id) !== course) return;
+    const records = Array.isArray(rows) ? rows : [];
+    platformRuntime.modules[course.code] = records;
+    if (!course.institutional) return;
+    course.platformModules = records.filter((row) =>
+      row?.courseCode === course.code && /^[a-z0-9_-]+$/i.test(row.id) &&
+      Number.isInteger(row.moduleNumber) && (!row.status || row.status === "published")
+    ).map((row) => normalizePlatformModule({
+      ...row, key: row.id,
+      lessons: (row.lessons || []).filter((lesson) =>
+        lesson.id?.startsWith(course.code + "-") && /^[A-Z0-9_-]+$/i.test(lesson.id) &&
+        (!lesson.status || lesson.status === "published")
+      ),
+    }, course.code)).sort((a, b) => a.number - b.number);
+    course.lessons = lessonsFromModules(course.platformModules, true);
+  }
+
   const LEGACY_DEMO_ANNOUNCEMENTS = [
     {
       id: "ann-1",
@@ -1387,8 +1447,10 @@
   let signInPrefill = "";
   let workspaceCallbackFeedback = null;
   let driveMaterialsState = loadDriveMaterialsCache();
+  let teachingPacksByCourse = new Map();
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
+  let courseCatalogChecked = false;
   let driveSessionGeneration = 0;
   let platformSessionGeneration = 0;
   const expandedCourseMaterials = new Set();
@@ -1426,6 +1488,7 @@
 
   function resetPlatformRuntime() {
     platformSessionGeneration += 1;
+    mergeAssignedCourses([]);
     announcementBoard = null;
     platformRuntime.modules = {};
     platformRuntime.assignments = {};
@@ -1951,14 +2014,14 @@
             ]
           : [...initialState.enrolledCourseIds],
         completed: Array.isArray(saved.completed)
-          ? [...new Set(saved.completed.filter((id) => lessonIds.has(id)))]
+          ? [...new Set(saved.completed.filter((id) => lessonIds.has(id) || /^[A-Z0-9_-]+-U[1-9]\d*-L[1-9]\d*$/.test(id)))]
           : [...initialState.completed],
         guideChecks,
         read: Array.isArray(saved.read)
           ? [...new Set(saved.read.filter((id) => announcementIds.has(id)))]
           : [...initialState.read],
         feedbackRead: Array.isArray(saved.feedbackRead)
-          ? [...new Set(saved.feedbackRead.filter((id) => feedbackIds.has(id)))]
+          ? [...new Set(saved.feedbackRead.filter((id) => feedbackIds.has(id) || /^[a-z0-9_-]+-cb\d+-(?:capstone-)?assignment$/.test(id)))]
           : [...initialState.feedbackRead],
         submissions,
       };
@@ -2169,7 +2232,7 @@
           );
           const supportedCourse =
             matchedCourse &&
-            SELECTABLE_COURSE_IDS.includes(matchedCourse.id)
+            (SELECTABLE_COURSE_IDS.includes(matchedCourse.id) || matchedCourse.institutional)
               ? matchedCourse
               : null;
           const assignment = matchedAssignment
@@ -3590,20 +3653,38 @@
   }
 
   function mergeRemoteAssignments(course, records) {
-    if (!Array.isArray(records)) return;
+    if (!Array.isArray(records) || course.institutional && findCourse(course.id) !== course) return;
+    if (course.institutional) {
+      for (let i = ASSIGNMENTS.length - 1; i >= publicAssignmentCount; i -= 1) {
+        if (ASSIGNMENTS[i].courseId === course.id) ASSIGNMENTS.splice(i, 1);
+      }
+    }
     platformRuntime.assignments[course.code] = records;
     records.forEach((record) => {
       const id = String(record?.id || "").trim().toLowerCase();
       if (!id) return;
-      const assignment = ASSIGNMENTS.find((item) => item.id === id);
+      let assignment = ASSIGNMENTS.find((item) => item.id === id);
+      if (course.institutional) {
+        if (record.courseCode !== course.code || record.status !== "active" ||
+            !id.startsWith(course.id + "-") || !/^[a-z0-9_-]+$/.test(id)) return;
+        const module = findPlatformModule(course, record.moduleId);
+        if (!module || (assignment && assignment.courseId !== course.id)) return;
+        if (!assignment) {
+          assignment = { id, courseId: course.id, rubric: [], points: 100 };
+          ASSIGNMENTS.push(assignment);
+        }
+        assignment.title = String(record.title || "");
+        assignment.unitTitle = module.title;
+        assignment.moduleKey = module.key;
+        assignment.teacherRecorded = record.submissionMode === "none";
+      }
       if (!assignment) return;
       assignment.instructions = record.instructions || assignment.instructions;
       assignment.rubric = Array.isArray(record.rubric) && record.rubric.length
         ? record.rubric
         : assignment.rubric;
-      assignment.weightPercent = Number(
-        record.weightPercent ?? assignment.weightPercent,
-      );
+      assignment.weightPercent = course.institutional && record.weightPercent == null
+        ? null : Number(record.weightPercent ?? assignment.weightPercent);
       assignment.submissionMode =
         record.submissionMode || assignment.submissionMode;
       assignment.status = record.status || assignment.status;
@@ -3668,7 +3749,7 @@
             : error?.message || "Course data could not be loaded.";
       })
       .finally(() => {
-        if (!platformSessionMatches(requestGeneration, requestScopeKey)) return;
+        if (!platformSessionMatches(requestGeneration, requestScopeKey) || platformRequests.get(key) !== request) return;
         platformRequests.set(key, Promise.resolve());
         renderAfterBackgroundRefresh();
       });
@@ -3682,7 +3763,7 @@
   }
 
   function ensureStudentPlatformData(course) {
-    if (!course?.platformModules?.length) return;
+    if (!course || (!course.institutional && !course.platformModules?.length)) return;
     const endpoint = studentProgressEndpoint(course);
     const modulesEndpoint = courseModulesEndpoint(course);
     if (!endpoint || !modulesEndpoint) return;
@@ -3709,9 +3790,7 @@
         ? records
         : [];
       const modules = platformPayloadData(modulesPayload, []);
-      platformRuntime.modules[course.code] = Array.isArray(modules)
-        ? modules
-        : [];
+      setCourseModules(course, modules);
       mergeRemoteAssignments(
         course,
         platformPayloadData(assignmentsPayload, []),
@@ -3725,7 +3804,7 @@
   }
 
   function ensureTeacherPlatformData(course) {
-    if (!course?.platformModules?.length) return;
+    if (!course || (!course.institutional && !course.platformModules?.length)) return;
     const rosterEndpoint = teacherCourseEndpoint(course, "roster");
     const progressEndpoint = teacherCourseEndpoint(course, "progress");
     const gradebookEndpoint = teacherCourseEndpoint(course, "gradebook");
@@ -3741,9 +3820,7 @@
             ),
           ]);
           const records = platformPayloadData(payload, []);
-          platformRuntime.modules[course.code] = Array.isArray(records)
-            ? records
-            : [];
+          setCourseModules(course, records);
           mergeRemoteAssignments(
             course,
             platformPayloadData(assignmentsPayload, []),
@@ -4012,6 +4089,7 @@
         method: "PUT",
         body,
       });
+      resetDriveMaterialsForSession();
       return true;
     } finally {
       enrollmentSaveInFlight = false;
@@ -4256,6 +4334,8 @@
 
   function resetDriveMaterialsForSession() {
     driveSessionGeneration += 1;
+    teachingPacksByCourse = new Map();
+    courseCatalogChecked = false;
     driveRequestInFlight = false;
     driveEndpointChecked = false;
     driveMaterialsState = loadDriveMaterialsCache();
@@ -4328,6 +4408,37 @@
     );
   }
 
+  function teachingPackCatalog(payload) {
+    const result = new Map();
+    for (const course of Array.isArray(payload?.data) ? payload.data : []) {
+      if (!Array.isArray(course?.materials?.teachingPacks)) continue;
+      const packs = course.materials.teachingPacks
+        .filter((pack) => pack && (
+          pack.kind === "student" || pack.kind === (isTeacher() ? "faculty" : "reader")
+        ))
+        .map((pack) => ({ kind: pack.kind, name: scalarLabel(pack.title), url: safeProtectedResourceUrl(pack.openUrl) }))
+        .filter((pack) => pack.name && pack.url);
+      if (packs.length) result.set(course.code, packs);
+    }
+    return result;
+  }
+
+  function teachingPackList(packs) {
+    return packs?.length
+      ? `<ul class="drive-material-list">${packs.map((pack) => driveMaterialItem({
+          ...pack, mimeType: pack.kind === "reader" ? "text/html" : "application/pdf",
+        })).join("")}</ul>`
+      : "";
+  }
+
+  function lessonReaderLink(lesson) {
+    const reader = teachingPacksByCourse.get(lesson.course.code)?.find((pack) => pack.kind === "reader");
+    const position = /-U(\d+)-L(\d+)$/i.exec(lesson.id);
+    if (!reader || !position) return "";
+    const href = reader.url + "#u" + position[1] + "-l" + position[2];
+    return `<a class="button button-primary" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Read this lesson ${icon("book", 15)}</a>`;
+  }
+
   function latestDriveTimestamp(values) {
     return values
       .filter((value) => value && !Number.isNaN(new Date(value).getTime()))
@@ -4361,20 +4472,20 @@
     return { records, lastSyncedAt };
   }
 
-  async function refreshDriveMaterials({ silent = false } = {}) {
+  async function refreshDriveMaterials({ silent = false, catalogOnly = false } = {}) {
     const catalogEndpoint = configuredDriveUrl(
       PLATFORM_API_CONFIG.coursesEndpoint,
     );
     if (
       driveRequestInFlight ||
-      !driveMaterialsReadReady() ||
       !catalogEndpoint
     ) {
       return false;
     }
     const requestGeneration = driveSessionGeneration;
     driveRequestInFlight = true;
-    driveEndpointChecked = true;
+    courseCatalogChecked = true;
+    if (!catalogOnly) driveEndpointChecked = true;
     driveMaterialsState.error = "";
     if (!silent) render(false, true);
     try {
@@ -4382,6 +4493,11 @@
       let pageResults = [];
       if (catalogEndpoint) {
         const catalogPayload = await requestDriveJson(catalogEndpoint);
+        if (requestGeneration !== driveSessionGeneration) return false;
+        mergeAssignedCourses(catalogPayload?.data);
+        teachingPacksByCourse = teachingPackCatalog(catalogPayload);
+        renderAfterBackgroundRefresh();
+        if (catalogOnly || !driveMaterialsReadReady()) return true;
         courseMetadata = normalizeCourseMaterialsCatalog(catalogPayload);
         const targets = Object.entries(courseMetadata)
           .filter(([, metadata]) => metadata.href)
@@ -4431,22 +4547,7 @@
     } finally {
       if (requestGeneration === driveSessionGeneration) {
         driveRequestInFlight = false;
-        const route = routeParts();
-        if (
-            (isTeacher() &&
-              ["course", "courses", "materials"].includes(route[1])) ||
-            (!isTeacher() &&
-              [
-                "course",
-                "courses",
-                "guide",
-                "syllabus",
-                "assessments",
-                "assignments",
-              ].includes(route[0]))
-          ) {
-          render(false, true);
-        }
+        renderAfterBackgroundRefresh();
       }
     }
   }
@@ -4762,6 +4863,12 @@
     return COURSES.find((course) => course.id === id);
   }
 
+  function institutionalCourseForItem(id) {
+    return COURSES.slice(publicCourseCount).find((course) =>
+      String(id || "").toLowerCase().startsWith(course.id + "-"),
+    );
+  }
+
   function findLesson(id) {
     return allLessons().find((lesson) => lesson.id === id);
   }
@@ -4915,6 +5022,10 @@
     return !module || moduleIsUnlocked(lesson.course, module);
   }
 
+  function assignmentWeightLabel(assignment) {
+    return assignment.weightPercent == null ? "Weight pending" : `${Number(assignment.weightPercent)}%`;
+  }
+
   function assignmentIsUnlocked(assignment) {
     const course = findCourse(assignment?.courseId);
     const module = platformModuleForAssignment(assignment);
@@ -4962,6 +5073,10 @@
     return SELECTABLE_COURSE_IDS.map(findCourse).filter(Boolean);
   }
 
+  function facultyCourses() {
+    return [...catalogCourses(), ...COURSES.slice(publicCourseCount)];
+  }
+
   function enrolledCourseIdsFor(userState = state) {
     return Array.isArray(userState?.enrolledCourseIds)
       ? userState.enrolledCourseIds.filter((id) =>
@@ -4971,16 +5086,17 @@
   }
 
   function isCourseEnrolled(courseId, userState = state) {
-    return enrolledCourseIdsFor(userState).includes(courseId);
+    return enrolledCourseIdsFor(userState).includes(courseId) ||
+      (userState === state && !isTeacher() && Boolean(findCourse(courseId)?.institutional));
   }
 
   function studentCourses() {
     const enrolledIds = new Set(enrolledCourseIdsFor());
-    return catalogCourses().filter((course) => enrolledIds.has(course.id));
+    return [...catalogCourses().filter((course) => enrolledIds.has(course.id)), ...COURSES.slice(publicCourseCount)];
   }
 
   function studentAssignments() {
-    const enrolledIds = new Set(enrolledCourseIdsFor());
+    const enrolledIds = new Set(studentCourses().map((course) => course.id));
     return ASSIGNMENTS.filter((assignment) =>
       enrolledIds.has(assignment.courseId),
     );
@@ -5055,8 +5171,8 @@
     );
   }
 
-  function selectedCreditCount() {
-    return studentCourses().reduce((total, course) => {
+  function selectedCreditCount(courses) {
+    return courses.reduce((total, course) => {
       const match = String(course.credit || "").match(/\d+(?:\.\d+)?/);
       return total + (match ? Number(match[0]) : 1);
     }, 0);
@@ -5189,7 +5305,8 @@
             gradedWeight: weight,
           };
     }
-    if (findCourse(courseId)?.platformModules?.length) return null;
+    const course = findCourse(courseId);
+    if (course?.institutional || course?.platformModules?.length) return null;
     if (!hasSeededAcademicRecord(user)) return null;
     return GRADES.find((grade) => grade.courseId === courseId);
   }
@@ -5739,10 +5856,10 @@
                 <span>Quick Course Access</span>
               </summary>
               <div>
-                ${catalogCourses().map((course) => {
+                ${facultyCourses().map((course) => {
                   const active =
                     route[1] === "course" && route[2] === course.id;
-                  return `<a class="faculty-course-link ${active ? "is-active" : ""}" href="#/teacher/course/${course.id}" ${active ? 'aria-current="page"' : ""}><strong>${course.code}</strong><span>${course.title}</span></a>`;
+                  return `<a class="faculty-course-link ${active ? "is-active" : ""}" href="#/teacher/course/${course.id}" ${active ? 'aria-current="page"' : ""}><strong>${course.code}</strong><span>${escapeHtml(course.title)}</span></a>`;
                 }).join("")}
               </div>
             </details>
@@ -5941,7 +6058,7 @@
 
   function driveMaterialItem(record) {
     const mimeType = String(record.mimeType || "").toLowerCase();
-    const fileKind = mimeType.includes("pdf")
+    const fileKind = mimeType === "text/html" ? "HTML" : mimeType.includes("pdf")
       ? "PDF"
       : mimeType.includes("spreadsheet") || mimeType.includes("sheet")
         ? "XLS"
@@ -6028,12 +6145,19 @@
 
   function courseDriveMaterialCount(course, records = courseDriveMaterials(course)) {
     const metadata = driveMaterialsState.courseMetadata?.[course?.code] || {};
-    return Math.max(records.length, Number(metadata.count) || 0);
+    return Math.max(records.length, Number(metadata.count) || 0) + (teachingPacksByCourse.get(course?.code)?.length || 0);
   }
 
   function courseMaterialsBody(course, noun = "Materials") {
+    const packs = teachingPacksByCourse.get(course.code);
+    const driveBody = driveCourseMaterialsBody(course, noun, Boolean(packs?.length));
+    return teachingPackList(packs) + driveBody;
+  }
+
+  function driveCourseMaterialsBody(course, noun, hasTeachingPacks) {
     const records = courseDriveMaterials(course);
     if (!driveMaterialsReadReady()) {
+      if (hasTeachingPacks) return "";
       const checking = DRIVE_CATALOG_STATUS.state === "checking";
       return `<div class="course-materials-status ${checking ? "is-loading" : "is-error"}" role="status">${icon(checking ? "clock" : "file", 18)}<span><strong>${checking ? `Checking ${noun.toLowerCase()}` : `${noun} temporarily unavailable`}</strong><small>${escapeHtml(driveCatalogUnavailableMessage())}</small></span></div>`;
     }
@@ -6047,6 +6171,7 @@
       return `<div class="course-materials-status is-loading" role="status">${icon("clock", 18)}<span><strong>Connecting ${noun.toLowerCase()}</strong><small>Waiting for the secure course index.</small></span></div>`;
     }
     if (!records.length) {
+      if (hasTeachingPacks) return "";
       return `<div class="course-materials-status" role="status">${icon("file", 18)}<span><strong>No ${noun.toLowerCase()} published yet</strong><small>New course files will appear here after the approved Drive source is synced.</small></span></div>`;
     }
     return driveUnitTree(records);
@@ -6060,7 +6185,7 @@
     const expanded = expandedCourseMaterials.has(disclosureKey);
     const panelId = `${context}-${course.id}-materials`;
     const noun = context === "teacher" ? "Resources" : "Materials";
-    if (!driveMaterialsReadReady()) {
+    if (!driveMaterialsReadReady() && !teachingPacksByCourse.has(course.code)) {
       return {
         count: 0,
         expanded: false,
@@ -6234,12 +6359,15 @@
       <section class="teacher-section">
         <div class="section-heading">
           <div><p class="eyebrow">Synced Index</p><h2>Course Materials</h2></div>
-          <span class="badge">${plural(driveMaterialsState.records.length, "material")}</span>
+          <span class="badge">${plural(driveMaterialsState.records.length + [...teachingPacksByCourse.values()].flat().length, "material")}</span>
         </div>
+        ${[...teachingPacksByCourse].map(([code, packs]) =>
+          `<h3>${escapeHtml(code)}</h3>${teachingPackList(packs)}`
+        ).join("")}
         ${
           materialsEndpointReady
             ? teacherDriveMaterialTree(driveMaterialsState.records)
-            : `<div class="teacher-empty" role="status">${icon("file", 30)}<h3>Course Materials Temporarily Unavailable</h3><p>${escapeHtml(driveCatalogUnavailableMessage())}</p></div>`
+            : teachingPacksByCourse.size ? "" : `<div class="teacher-empty" role="status">${icon("file", 30)}<h3>Course Materials Temporarily Unavailable</h3><p>${escapeHtml(driveCatalogUnavailableMessage())}</p></div>`
         }
       </section>
     `;
@@ -6284,7 +6412,7 @@
         <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a>
       </header>
       <section class="teacher-metrics" aria-label="Faculty overview">
-        <a class="teacher-metric" href="#/teacher/courses" aria-label="${catalogCourses().length} active courses. Open Course Management."><span>${icon("book", 22)}</span><strong>${catalogCourses().length}</strong><p>Active Courses</p></a>
+        <a class="teacher-metric" href="#/teacher/courses" aria-label="${facultyCourses().length} active courses. Open Course Management."><span>${icon("book", 22)}</span><strong>${facultyCourses().length}</strong><p>Active Courses</p></a>
         <a class="teacher-metric" href="#/teacher/courses" aria-label="${studentCount} students. Open Course Management."><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></a>
         <a class="teacher-metric" href="#/teacher/submissions" aria-label="${awaitingReview} submissions awaiting review. Open Action Inbox."><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></a>
         <a class="teacher-metric" href="#/teacher/submissions" aria-label="${attachedFiles} submitted files. Open Action Inbox."><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></a>
@@ -6292,7 +6420,7 @@
       <section class="teacher-section">
         <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
         <div class="teacher-course-grid">
-          ${catalogCourses().map((course) => {
+          ${facultyCourses().map((course) => {
             const courseRecords = records.filter(
               (record) => record.course.id === course.id,
             );
@@ -6303,7 +6431,7 @@
               <a class="teacher-course-card" href="#/teacher/course/${course.id}">
                 <span class="course-code">${course.code}</span>
                 <h3>${escapeHtml(course.title)}</h3>
-                <p>${escapeHtml(course.subject)} · ${course.plannedHours} planned hours</p>
+                <p>${escapeHtml(course.subject)}${course.plannedHours ? ` · ${course.plannedHours} planned hours` : ""}</p>
                 <dl>
                   <div><dt>Submissions</dt><dd>${courseRecords.length}</dd></div>
                   <div><dt>Awaiting Review</dt><dd>${pending}</dd></div>
@@ -6330,12 +6458,12 @@
     const records = teacherSubmissionRecords();
     return `
       ${pageHeading(
-        "Six-Course Programme",
+        "OSSD Programme",
         "Course Management",
         "Open a course workspace to review its syllabus, enrolled students, assignments, submissions and Lotus Drive materials.",
       )}
       <section class="teacher-course-grid teacher-course-management-grid">
-        ${catalogCourses()
+        ${facultyCourses()
           .map((course) => {
             const enrolled = allStudentAccounts().filter((student) =>
               isCourseEnrolled(course.id, loadState(student)),
@@ -6351,9 +6479,9 @@
               <article class="teacher-course-card ${materials.expanded ? "is-materials-open" : ""}">
                 <span class="course-code">${course.code}</span>
                 <h2>${escapeHtml(course.title)}</h2>
-                <p>${escapeHtml(course.gradeType)} · ${course.plannedHours} hours</p>
+                <p>${escapeHtml(course.gradeType)}${course.plannedHours ? ` · ${course.plannedHours} hours` : ""}</p>
                 <dl>
-                  <div><dt>Enrolled</dt><dd>${enrolled}</dd></div>
+                  <div><dt>Enrolled</dt><dd>${course.institutional ? platformRuntime.teacherRosters[course.code]?.length ?? "Open roster" : enrolled}</dd></div>
                   <div><dt>Awaiting Review</dt><dd>${awaiting}</dd></div>
                 </dl>
                 <div class="teacher-course-card-actions">
@@ -6681,7 +6809,7 @@
       <section class="teacher-course-workspace">
         <div>
           <section class="teacher-section">
-            <div class="section-heading"><div><p class="eyebrow">Syllabus</p><h2>110-Hour Course Plan</h2></div><span class="badge">${escapeHtml(course.credit)}</span></div>
+            <div class="section-heading"><div><p class="eyebrow">Syllabus</p><h2>${course.plannedHours ? `${course.plannedHours}-Hour ` : ""}Course Plan</h2></div><span class="badge">${escapeHtml(course.credit)}</span></div>
             <p class="teacher-section-copy">${escapeHtml(syllabus.description || course.overview)}</p>
             <div class="teacher-syllabus-list platform-teacher-module-list">
               ${(course.platformModules || [])
@@ -6746,7 +6874,7 @@
                 ? `<div class="teacher-roster">${roster
                     .map(
                       (student) => `
-                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)} · ${Number(student.completedModules || 0)}/${Number(student.totalModules || 12)} modules</small></span></div>
+                        <div><span class="teacher-avatar">${escapeHtml(userInitials(student))}</span><span><strong>${escapeHtml(student.displayName)}</strong><small>${escapeHtml(student.email)} · ${Number(student.completedModules || 0)}/${Number(student.totalModules ?? course.platformModules.length)} modules</small></span></div>
                       `,
                     )
                     .join("")}</div>`
@@ -6784,7 +6912,7 @@
         <div>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Instructional Plan</p><h2>Teacher Presence</h2></div><span class="badge">${module.estimatedCreditHours || 0} hours</span></div><p class="teacher-section-copy">${escapeHtml(module.teacherPresence)}</p><h3>Learning Focus</h3><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Sequence</p><h2>Reading, Practice & Check</h2></div></div><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol><div class="module-activity-grid"><article><h3>Guided Practice</h3><p>${escapeHtml(module.guidedPractice)}</p></article><article><h3>Low-Stakes Check</h3><p>${escapeHtml(module.lowStakesCheck)}</p></article></div></section>
-          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}%</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}%</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</div></section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
         </div>
         <aside>
@@ -6869,8 +6997,8 @@
             );
     return `
       ${pageHeading(
-        course ? course.subject : "Action Inbox",
-        title,
+        course ? escapeHtml(course.subject) : "Action Inbox",
+        escapeHtml(title),
         course
           ? `Browse ${course.code} work by student, module and assignment.`
           : "Every uploaded assignment is organized by course, student, unit and assignment.",
@@ -6911,7 +7039,7 @@
             <span>Course</span>
             <select name="course">
               <option value="all" ${selectedCourse === "all" ? "selected" : ""}>All Courses</option>
-              ${catalogCourses()
+              ${facultyCourses()
                 .map(
                   (item) =>
                     `<option value="${item.id}" ${selectedCourse === item.id ? "selected" : ""}>${item.code} · ${escapeHtml(item.title)}</option>`,
@@ -7880,8 +8008,8 @@
   }
 
   function courseSelectionView() {
-    const enrolled = studentCourses();
-    const credits = selectedCreditCount();
+    const enrolled = catalogCourses().filter((course) => isCourseEnrolled(course.id));
+    const credits = selectedCreditCount(enrolled);
     const remoteEnrollmentEnabled = Boolean(
       configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint),
     );
@@ -8018,7 +8146,7 @@
     const enrolled = studentCourses();
     return `
       ${pageHeading(
-        "Grade 12 OSSD",
+        "OSSD",
         "My Courses",
         "Open a course to review its outline, work through lessons and see your current progress.",
         '<a class="button button-secondary" href="#/course-selection">Add or Change Courses</a>',
@@ -8041,11 +8169,13 @@
                 <p>${escapeHtml(course.description)}</p>
                 <div class="course-meta">
                   <span>${escapeHtml(course.instructor)}</span>
-                  <span>${escapeHtml(course.mode)} · ${course.plannedHours} planned hours</span>
+                  <span>${escapeHtml(course.mode)}${course.plannedHours ? ` · ${course.plannedHours} planned hours` : ""}</span>
                 </div>
                 <div class="course-progress">
-                  <div><span>${progress.completed} of ${progress.total} modules</span><strong>${progress.percent}%</strong></div>
-                  <div class="progress-track"><span style="width:${progress.percent}%"></span></div>
+                  ${course.institutional && !progress.official
+                    ? `<span>${plural(course.moduleCount, "published module")}</span>`
+                    : `<div><span>${progress.completed} of ${progress.total} modules</span><strong>${progress.percent}%</strong></div>
+                  <div class="progress-track"><span style="width:${progress.percent}%"></span></div>`}
                 </div>
                 <div class="course-card-actions">
                   <a class="button button-primary" href="#/course/${course.id}">Open Course ${icon("arrow", 16)}</a>
@@ -8073,6 +8203,10 @@
           moduleIsUnlocked(course, module) &&
           moduleStatus(course, module).key !== "completed",
       ) || modules[0];
+    if (!modules.length && course.institutional) {
+      const error = platformRuntime.errors[`student-progress:${course.code}`];
+      return pageHeading(course.code, escapeHtml(course.title), error ? "Course modules are temporarily unavailable." : "Loading course modules…");
+    }
     if (!modules.length) return notFoundView();
     const nextStatus = moduleStatus(course, nextModule);
     const nextRemoteModule = remotePlatformModule(course, nextModule);
@@ -8111,7 +8245,7 @@
           </div>
           <div class="course-hero-actions">
             ${primaryAction}
-            <a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>
+            ${course.institutional ? "" : `<a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>`}
             <a class="button button-on-dark" href="#/assessments">${icon("clipboard", 17)} Open Assessments (${ASSIGNMENTS.filter((assignment) => assignment.courseId === course.id).length})</a>
           </div>
         </div>
@@ -8119,7 +8253,7 @@
       </section>
       <section class="course-detail-grid">
         <div class="panel">
-          <header class="panel-header"><div><h2>12-Module Learning Path</h2><p>Read, practise, check understanding, complete evidence, then use feedback to unlock the next module.</p></div></header>
+          <header class="panel-header"><div><h2>${modules.length}-Module Learning Path</h2><p>Read, practise, check understanding, complete evidence, then use feedback to unlock the next module.</p></div></header>
           <div class="platform-connection-note ${progress.official ? "is-connected" : ""}" role="status">
             ${progress.official ? icon("check", 16) : icon("clock", 16)}
             <span><strong>${progress.official ? "Official progress connected" : "Catalog preview"}</strong><small>${progress.official ? "Module completion is synchronized with your school record." : "Course content is available to review. Official completion and unlock decisions appear when the secure course service is connected."}</small></span>
@@ -8134,7 +8268,7 @@
                   <span class="platform-module-copy">
                     <span class="module-row-meta">${escapeHtml(module.unitTitle || (module.number === 0 ? "Course Orientation" : module.number === 11 ? "Final Evaluation" : `Unit ${module.unitNumber}`))}</span>
                     <strong>${escapeHtml(module.title)}</strong>
-                    <small>${plural(module.readingSteps.length, "reading step")} · ${plural(module.selfStudyResources.length, "resource")} · ${assignments.length ? `${assignments.reduce((sum, assignment) => sum + Number(assignment.weightPercent || 0), 0)}% assessed` : "formative"}</small>
+                    <small>${plural(module.readingSteps.length, "reading step")} · ${plural(module.selfStudyResources.length, "resource")} · ${assignments.some((task) => task.weightPercent == null) ? plural(assignments.length, "assignment") : assignments.length ? `${assignments.reduce((sum, task) => sum + Number(task.weightPercent || 0), 0)}% assessed` : "formative"}</small>
                   </span>
                   <span class="badge ${status.className}">${status.label}</span>
                   ${icon(status.key === "locked" ? "clock" : "arrow", 17)}
@@ -8154,8 +8288,8 @@
           ${studentCourseMaterials(course)}
         </div>
         <aside>
-          <div class="panel guide-status-card">
-            <header class="panel-header"><div><h3>Course Sequence</h3><p>Permanent catalog</p></div><span class="badge">12 modules</span></header>
+          ${course.institutional ? "" : `<div class="panel guide-status-card">
+            <header class="panel-header"><div><h3>Course Sequence</h3><p>Permanent catalog</p></div><span class="badge">${modules.length} modules</span></header>
             <div class="panel-content">
               <p>Module 0 establishes course routines. Modules 1–10 move through core reading, self-study, guided application and assessment. Module 11 completes the final evaluation.</p>
               <a class="button button-secondary full-width" href="#/syllabus/${course.id}">Review Syllabus</a>
@@ -8182,6 +8316,7 @@
               <a class="text-link centered" href="#/support">View All Student Support ${icon("arrow", 15)}</a>
             </div>
           </div>
+          `}
         </aside>
       </section>
     `;
@@ -8241,7 +8376,7 @@
             <article class="panel module-content-section"><h2>Guided Practice</h2><p>${escapeHtml(module.guidedPractice)}</p></article>
             <article class="panel module-content-section"><h2>Low-Stakes Check</h2><p>${escapeHtml(module.lowStakesCheck)}</p></article>
           </section>
-          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}% of course grade</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignment.weightPercent}%)</a>`).join("")}</section>
+          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}% of course grade</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</section>
         </div>
         <aside>
           <section class="panel"><header class="panel-header"><h3>Feedback & Unlock</h3></header><div class="panel-content"><p>${escapeHtml(module.feedbackAndUnlock)}</p><div class="platform-connection-note ${officialProgressConnected(course) ? "is-connected" : ""}"><span>${officialProgressConnected(course) ? "Official record connected" : "Official progress unavailable"}</span></div>${officialProgressConnected(course) ? `<button class="button button-primary full-width" type="button" data-action="set-module-complete" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}" data-activity-id="${escapeHtml(remoteModule?.activity?.id || "")}" ${!remoteModule?.id || (status.key !== "completed" && !remoteModule?.activity?.id) ? "disabled" : ""}>${status.key === "completed" ? "Reopen Module" : `${icon("check", 16)} Mark Module Complete`}</button>` : '<p class="teacher-security-note"><strong>Preview only.</strong> Browser activity is not treated as the school’s official progress record.</p>'}</div></section>
@@ -8536,6 +8671,7 @@
             <p class="course-code">${lesson.course.code} · ${lesson.unit}</p>
             <h1>${escapeHtml(lesson.title)}</h1>
             <p>${escapeHtml(lesson.summary)}</p>
+            ${lessonReaderLink(lesson)}
           </header>
           <section class="lesson-section">
             <h2>Learning Goals</h2>
@@ -8672,7 +8808,7 @@
       <section class="support-lower-grid">
         <div class="panel">
           <header class="panel-header"><div><h2>Your Course Team</h2><p>Ask content questions and discuss feedback directly</p></div></header>
-          ${studentCourses().map(
+          ${studentCourses().filter((course) => course.instructorEmail).map(
             (course) => `
               <div class="teacher-row">
                 <span class="instructor-avatar">${course.instructor
@@ -8769,7 +8905,7 @@
           <strong>${escapeHtml(assignment.title)}</strong>
           <p>${assignmentScheduleLabel(assignment)}</p>
         </span>
-        <span><b>${assignment.weightPercent || 0}%</b><small>of course grade</small></span>
+        <span><b>${assignmentWeightLabel(assignment)}</b><small>of course grade</small></span>
         <span class="badge ${status.className}">${status.label}</span>
         ${icon(status.key === "locked" ? "lock" : "arrow", 18)}
       </${cardTag}>
@@ -9036,13 +9172,13 @@
       <section class="assignment-detail">
         <article class="panel assignment-summary">
           <div class="panel-content">
-            <p class="course-code">${course.code} · ${course.title}</p>
+            <p class="course-code">${course.code} · ${escapeHtml(course.title)}</p>
             <h1>${escapeHtml(assignment.title)}</h1>
             <span class="badge ${submission && !deliveredToSchoolRecord ? "warning" : status.className}">${submission && !deliveredToSchoolRecord ? "Device-Only Draft" : status.label}</span>
             <div class="assignment-date-grid">
               <div><span>Schedule</span><strong>${assignmentScheduleLabel(assignment)}</strong></div>
               <div><span>Availability</span><strong>${assignmentAvailabilityLabel(assignment)}</strong></div>
-              <div><span>Course Weight</span><strong>${assignment.weightPercent || 0}%</strong></div>
+              <div><span>Course Weight</span><strong>${assignmentWeightLabel(assignment)}</strong></div>
             </div>
             <section class="lesson-section">
               <h2>Assignment Brief</h2>
@@ -9054,7 +9190,7 @@
                 ${assignment.rubric
                   .map(
                     (criterion) => `
-                      <div><span>${escapeHtml(criterion.label)}</span><strong>${criterion.points} points</strong></div>
+                      <div><span>${escapeHtml(criterion.label)}</span><strong>${Number(criterion.points) || 0} points</strong></div>
                     `,
                   )
                   .join("")}
@@ -9535,15 +9671,14 @@
     APP_ROOT.innerHTML = teacherShell(view);
     if (teacherRoute[1] === "course") {
       ensureTeacherPlatformData(findCourse(teacherRoute[2]));
-    }
-    if (
-      ["course", "courses", "materials"].includes(teacherRoute[1]) &&
-      !driveEndpointChecked &&
-      driveMaterialsReadReady()
-    ) {
-      void refreshDriveMaterials({
-        silent: teacherRoute[1] === "materials",
-      });
+    } else if (["submissions", "submission"].includes(teacherRoute[1])) {
+      const selectedCourse = teacherRoute[1] === "submissions" && findCourse(teacherRoute[2]);
+      const courseIds = selectedCourse ? [selectedCourse.id]
+        : new Set(remoteSubmissionsState.records.map((record) => record.courseId));
+      for (const id of courseIds) {
+        const course = findCourse(id);
+        if (course?.institutional) ensureTeacherPlatformData(course);
+      }
     }
     if (
       submissionsEndpointUrl() &&
@@ -9613,6 +9748,13 @@
       return;
     }
     let route = routeParts();
+    const materialsView = isTeacher()
+      ? ["course", "courses", "materials"].includes(route[1])
+      : ["course", "courses", "guide", "syllabus", "lesson", "assessments", "assignments"].includes(route[0]);
+    if ((!courseCatalogChecked || (materialsView && !driveEndpointChecked)) &&
+        configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint)) {
+      void refreshDriveMaterials({ silent: true, catalogOnly: !materialsView });
+    }
     void ensureNotifications();
     if (isTeacher()) {
       renderTeacher(route);
@@ -9658,8 +9800,8 @@
     } else if (route[0] === "guide" || route[0] === "syllabus") {
       const course = findCourse(route[1]);
       view =
-        course && SELECTABLE_COURSE_IDS.includes(course.id)
-          ? courseSyllabusView(course)
+        course && (SELECTABLE_COURSE_IDS.includes(course.id) || course.institutional)
+          ? course.institutional ? courseView(course) : courseSyllabusView(course)
           : notFoundView();
     } else if (route[0] === "lesson") {
       const lesson = findLesson(route[1]);
@@ -9698,25 +9840,18 @@
     else if (route[0] === "security") view = securityView();
     else view = notFoundView();
     APP_ROOT.innerHTML = shell(view);
-    if (route[0] === "course") {
+    if (["course", "syllabus", "guide"].includes(route[0])) {
       ensureStudentPlatformData(findCourse(route[1]));
     } else if (route[0] === "lesson") {
       const lesson = findLesson(route[1]);
-      ensureStudentPlatformData(lesson?.course);
+      ensureStudentPlatformData(lesson?.course || institutionalCourseForItem(route[1]));
     } else if (route[0] === "assignment") {
       const assignment = findAssignment(route[1]);
-      ensureStudentPlatformData(findCourse(assignment?.courseId));
+      ensureStudentPlatformData(findCourse(assignment?.courseId) || institutionalCourseForItem(route[1]));
     } else if (
       ["dashboard", "assessments", "assignments", "calendar", "progress"].includes(route[0])
     ) {
       studentCourses().forEach(ensureStudentPlatformData);
-    }
-    if (
-      ["course", "courses", "guide", "syllabus", "assessments", "assignments"].includes(route[0]) &&
-      !driveEndpointChecked &&
-      driveMaterialsReadReady()
-    ) {
-      void refreshDriveMaterials({ silent: route[0] === "course" });
     }
     if (
       submissionsEndpointUrl() &&
