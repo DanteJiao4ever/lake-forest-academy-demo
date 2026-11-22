@@ -1,0 +1,488 @@
+{
+  "id": "fixture-all-cards",
+  "version": "1.0",
+  "courseCode": "TST4U",
+  "unit": "Fixture",
+  "title": "Fixture: paper symbols",
+  "glossary": [
+    {
+      "term": "Symbol",
+      "definition": "An invented mark for this test.",
+      "paragraphId": "fixture-intro"
+    }
+  ],
+  "nextReading": {
+    "title": "Additional fixture text",
+    "text": "Synthetic next-reading sentinel."
+  },
+  "paragraphs": [
+    {
+      "id": "fixture-intro",
+      "text": "A sheet holds coloured symbols. Trace a mark to follow the exercise."
+    }
+  ],
+  "blocks": [
+    {
+      "type": "heading",
+      "id": "section-paper-symbols",
+      "text": "Paper symbols"
+    },
+    {
+      "type": "paragraph",
+      "id": "fixture-intro",
+      "text": "A sheet holds coloured symbols. Trace a mark to follow the exercise."
+    },
+    {
+      "type": "math",
+      "id": "equation-1",
+      "text": "x + y = z"
+    },
+    {
+      "type": "card",
+      "id": "predict"
+    },
+    {
+      "type": "card",
+      "id": "one-choice"
+    },
+    {
+      "type": "card",
+      "id": "many-choices"
+    },
+    {
+      "type": "card",
+      "id": "exact-number"
+    },
+    {
+      "type": "card",
+      "id": "own-post"
+    },
+    {
+      "type": "card",
+      "id": "read-notes"
+    },
+    {
+      "type": "card",
+      "id": "sliders"
+    },
+    {
+      "type": "card",
+      "id": "sequence"
+    },
+    {
+      "type": "card",
+      "id": "bad-line"
+    },
+    {
+      "type": "card",
+      "id": "sort"
+    },
+    {
+      "type": "card",
+      "id": "finish"
+    }
+  ],
+  "cards": [
+    {
+      "id": "predict",
+      "type": "SocraticReveal",
+      "title": "Describe your guess",
+      "prompt": "Fixture exercise: Describe your guess.",
+      "ktca": [
+        "K"
+      ],
+      "required": false,
+      "mode": "predict",
+      "minWords": 15,
+      "private": {
+        "teacherReasoning": "An invented comparison for a software test."
+      }
+    },
+    {
+      "id": "one-choice",
+      "type": "ConceptCheck",
+      "title": "Shape choices",
+      "prompt": "Fixture exercise: Shape choices.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "mode": "single",
+      "options": [
+        {
+          "id": "circle",
+          "label": "Circle"
+        },
+        {
+          "id": "square",
+          "label": "Square"
+        },
+        {
+          "id": "triangle",
+          "label": "Triangle"
+        }
+      ],
+      "private": {
+        "correct": [
+          "circle"
+        ],
+        "feedback": {
+          "square": {
+            "name": "square category",
+            "hint": "square diagnostic."
+          },
+          "triangle": {
+            "name": "triangle category",
+            "hint": "triangle diagnostic."
+          }
+        },
+        "success": "Fixture selection saved."
+      }
+    },
+    {
+      "id": "many-choices",
+      "type": "ConceptCheck",
+      "title": "Shape choices",
+      "prompt": "Fixture exercise: Shape choices.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "mode": "multiple",
+      "options": [
+        {
+          "id": "circle",
+          "label": "Circle"
+        },
+        {
+          "id": "oval",
+          "label": "Oval"
+        },
+        {
+          "id": "square",
+          "label": "Square"
+        },
+        {
+          "id": "triangle",
+          "label": "Triangle"
+        }
+      ],
+      "private": {
+        "correct": [
+          "circle",
+          "oval"
+        ],
+        "feedback": {
+          "square": {
+            "name": "square category",
+            "hint": "square diagnostic."
+          },
+          "triangle": {
+            "name": "triangle category",
+            "hint": "triangle diagnostic."
+          }
+        },
+        "success": "Fixture selection saved.",
+        "missingHint": "Review the shape list."
+      }
+    },
+    {
+      "id": "exact-number",
+      "type": "ConceptCheck",
+      "title": "Enter a calibration value",
+      "prompt": "Fixture exercise: Enter a calibration value.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "mode": "numeric",
+      "unit": "markers",
+      "private": {
+        "value": 7,
+        "errors": [
+          {
+            "value": 3,
+            "name": "low category",
+            "hint": "low diagnostic."
+          },
+          {
+            "value": 9,
+            "name": "high category",
+            "hint": "high diagnostic."
+          }
+        ],
+        "fallback": {
+          "name": "other category",
+          "hint": "other diagnostic."
+        },
+        "success": "Calibration matches."
+      }
+    },
+    {
+      "id": "own-post",
+      "type": "PostFirstPrompt",
+      "title": "Describe a pattern",
+      "prompt": "Fixture exercise: Describe a pattern.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "minWords": 8,
+      "private": {
+        "peers": [
+          {
+            "id": "peer-a",
+            "label": "Example A",
+            "text": "Synthetic peer shape description."
+          },
+          {
+            "id": "peer-b",
+            "label": "Example B",
+            "text": "Another synthetic description."
+          }
+        ],
+        "teacherModel": "Synthetic teacher explanation of the pattern."
+      }
+    },
+    {
+      "id": "read-notes",
+      "type": "AnnotatedExcerpt",
+      "title": "Look at the symbols",
+      "prompt": "Fixture exercise: Look at the symbols.",
+      "ktca": [
+        "K"
+      ],
+      "required": false,
+      "segments": [
+        {
+          "id": "red",
+          "text": "red mark.",
+          "note": "Look at the red mark."
+        },
+        {
+          "id": "blue",
+          "text": "blue mark.",
+          "note": "Look at the blue mark."
+        },
+        {
+          "id": "green",
+          "text": "green mark.",
+          "note": "Look at the green mark."
+        }
+      ]
+    },
+    {
+      "id": "sliders",
+      "type": "InteractiveModel",
+      "title": "Run the fixture model",
+      "prompt": "Fixture exercise: Run the fixture model.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "question": "Which value matches the settings?",
+      "base": 40,
+      "slope": 2,
+      "parameters": [
+        {
+          "id": "price",
+          "label": "First parameter",
+          "min": 2,
+          "max": 10,
+          "step": 1,
+          "initial": 5
+        },
+        {
+          "id": "shift",
+          "label": "Second parameter",
+          "min": -10,
+          "max": 20,
+          "step": 2,
+          "initial": 0
+        }
+      ]
+    },
+    {
+      "id": "sequence",
+      "type": "StepwiseDerivation",
+      "title": "Follow a sequence",
+      "prompt": "Fixture exercise: Follow a sequence.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "mode": "fill",
+      "steps": [
+        {
+          "id": "first",
+          "prompt": "Compute first value."
+        },
+        {
+          "id": "second",
+          "prompt": "Compute second value."
+        },
+        {
+          "id": "third",
+          "prompt": "Compute third value."
+        }
+      ],
+      "private": {
+        "answers": {
+          "first": 2,
+          "second": 4,
+          "third": 6
+        },
+        "feedback": {
+          "first": "Revisit first value.",
+          "second": "Revisit second value.",
+          "third": "Revisit third value."
+        }
+      }
+    },
+    {
+      "id": "bad-line",
+      "type": "StepwiseDerivation",
+      "title": "Find the typo",
+      "prompt": "Fixture exercise: Find the typo.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "mode": "fallacy",
+      "lines": [
+        {
+          "id": "top",
+          "text": "Model line top."
+        },
+        {
+          "id": "middle",
+          "text": "Model line middle."
+        },
+        {
+          "id": "last",
+          "text": "Model line last."
+        }
+      ],
+      "reasons": [
+        {
+          "id": "typo",
+          "label": "Typo"
+        },
+        {
+          "id": "unit",
+          "label": "Units differ"
+        },
+        {
+          "id": "sum",
+          "label": "Sum is wrong"
+        }
+      ],
+      "private": {
+        "lineId": "middle",
+        "reasonId": "typo",
+        "lineHint": "Look again at the listed lines.",
+        "reasonFeedback": {
+          "unit": "Compare the units.",
+          "sum": "Compare the arithmetic."
+        },
+        "success": "You found the planted typo."
+      }
+    },
+    {
+      "id": "sort",
+      "type": "ContrastMatrix",
+      "title": "Sort a symbol list",
+      "prompt": "Fixture exercise: Sort a symbol list.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "buckets": [
+        {
+          "id": "round",
+          "label": "Round"
+        },
+        {
+          "id": "square",
+          "label": "Square"
+        }
+      ],
+      "items": [
+        {
+          "id": "zeta",
+          "text": "Shape zeta."
+        },
+        {
+          "id": "iota",
+          "text": "Shape iota."
+        },
+        {
+          "id": "kappa",
+          "text": "Shape kappa."
+        },
+        {
+          "id": "gamma",
+          "text": "Shape gamma."
+        },
+        {
+          "id": "beta",
+          "text": "Shape beta."
+        }
+      ],
+      "threshold": 0.8,
+      "private": {
+        "answers": {
+          "zeta": "round",
+          "iota": "square",
+          "kappa": "round",
+          "gamma": "square",
+          "beta": "round"
+        },
+        "feedback": {
+          "zeta": "Inspect shape zeta.",
+          "iota": "Inspect shape iota.",
+          "kappa": "Inspect shape kappa.",
+          "gamma": "Inspect shape gamma.",
+          "beta": "Inspect shape beta."
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "type": "SynthesisGate",
+      "title": "Write a description",
+      "prompt": "Fixture exercise: Write a description.",
+      "ktca": [
+        "K"
+      ],
+      "required": true,
+      "minWords": 12,
+      "skills": [
+        {
+          "id": "responsibility",
+          "label": "Responsibility"
+        },
+        {
+          "id": "organization",
+          "label": "Organization"
+        },
+        {
+          "id": "independent-work",
+          "label": "Independent Work"
+        },
+        {
+          "id": "collaboration",
+          "label": "Collaboration"
+        },
+        {
+          "id": "initiative",
+          "label": "Initiative"
+        },
+        {
+          "id": "self-regulation",
+          "label": "Self Regulation"
+        }
+      ]
+    }
+  ]
+}

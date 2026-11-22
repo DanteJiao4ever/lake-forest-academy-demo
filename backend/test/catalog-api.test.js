@@ -91,6 +91,14 @@ describe("database-driven course catalog API", () => {
     return { user, cookie: cookieFrom(response), csrf: response.json().csrfToken };
   }
 
+  test("catalog readiness rejects stale final splits even when course totals still match", async () => {
+    const counts = await repository.catalogReady();
+    repository.catalogReady = async () => ({ ...counts, valid_split_final_weights: 2 });
+    const result = await app.inject({ method: "GET", url: "/health/catalog-ready" });
+    assert.equal(result.statusCode, 503);
+    assert.equal(result.json().error.code, "COURSE_CATALOG_NOT_READY");
+  });
+
   test("serves only published teaching files for the current course grant and role", async () => {
     packRoot = await mkdtemp(path.join(tmpdir(), "lfa-course-packs-"));
     await app.close();
