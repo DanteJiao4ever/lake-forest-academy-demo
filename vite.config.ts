@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
@@ -48,7 +48,33 @@ export default defineConfig(({ mode }) => {
     // Relative asset URLs keep both the custom domain and the original
     // GitHub Pages project URL working during DNS propagation.
     base: "./",
-    plugins: [react(), learningRuntimeConfigPlugin(learningEnv)],
+    server: { fs: { deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/backend/src/lessons/**"] } },
+    plugins: [
+      react(),
+      learningRuntimeConfigPlugin(learningEnv),
+      {
+        name: "learning-sample-dev-entry",
+        configureServer(server) {
+          server.middlewares.use(async (req, res, next) => {
+            const path = req.url?.split("?")[0];
+            if (path === "/learning/" || path === "/learning/index.html") {
+              try {
+                const html = await readFile(resolve(root, "public/learning/index.html"), "utf8");
+                res.setHeader("Content-Type", "text/html;charset=utf-8");
+                res.end(await server.transformIndexHtml("/learning/index.html", html));
+              } catch (error) {
+                next(error);
+              }
+              return;
+            }
+            if (path === "/learning/assets/reading-sample.js") {
+              req.url = "/src/learning/standalone.tsx";
+            }
+            next();
+          });
+        },
+      },
+    ],
     build: {
       rolldownOptions: {
         input: {
@@ -56,6 +82,12 @@ export default defineConfig(({ mode }) => {
           academics: resolve(root, "academics/index.html"),
           courses: resolve(root, "courses/index.html"),
           admissions: resolve(root, "admissions/index.html"),
+          "reading-sample": resolve(root, "src/learning/standalone.tsx"),
+        },
+        output: {
+          entryFileNames: (entry) => entry.name === "reading-sample"
+            ? "learning/assets/reading-sample.js"
+            : "assets/[name]-[hash].js",
         },
       },
     },

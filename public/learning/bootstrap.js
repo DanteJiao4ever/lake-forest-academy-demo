@@ -14,7 +14,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "course-packs-v2";
+  const SCRIPT_VERSION = "portal-workbench-v1";
   let pendingServiceCheck = null;
   let lastFileConfig = {};
 
@@ -404,5 +404,22 @@
     await loadScript("app.js");
   }
 
-  start().catch(showStartupError);
+  function openPortal() {
+    if (window.location.hash === "#/reading-sample") {
+      document.title = "Reading sample | Lake Forest Learning";
+      const root = document.querySelector("#app");
+      root.replaceChildren(document.getElementById("public-reading-view").content.cloneNode(true));
+      // This public route can run with only the local reading bundle.
+      const skipLink = document.querySelector(".skip-link");
+      const skip = (event) => { event.preventDefault(); root.querySelector("main").focus(); };
+      skipLink.addEventListener("click", skip);
+      window.addEventListener("hashchange", () => {
+        skipLink.removeEventListener("click", skip);
+        start().catch(showStartupError);
+      }, { once: true });
+    } else {
+      start().catch(showStartupError);
+    }
+  }
+  openPortal();
 })();

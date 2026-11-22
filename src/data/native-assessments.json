@@ -1,0 +1,47 @@
+{
+  "year": "2026–27",
+  "courses": {
+    "SCH4U": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 25,
+      "task": 0
+    },
+    "ICS4U": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 10,
+      "task": 15
+    },
+    "SPH4U": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 25,
+      "task": 0
+    },
+    "MHF4U": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 25,
+      "task": 0
+    },
+    "MCV4U": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 25,
+      "task": 0
+    },
+    "BBB4M": {
+      "classroom": 65,
+      "final": 25,
+      "attendance": 10,
+      "exam": 15,
+      "task": 10
+    }
+  }
+}

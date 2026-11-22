@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/SynthesisGate.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "SynthesisGate"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "minWords": {
+      "$ref": "common.json#/definitions/minWords"
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/definitions/choice"
+      },
+      "minItems": 6,
+      "maxItems": 6
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt",
+    "minWords",
+    "skills"
+  ],
+  "additionalProperties": false
+}

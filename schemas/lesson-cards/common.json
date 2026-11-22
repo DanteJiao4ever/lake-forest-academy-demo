@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/common.json",
+  "definitions": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "text": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "number": {
+      "type": "number"
+    },
+    "minWords": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "choice": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "label": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "line": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "text": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "hint": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "name",
+        "hint"
+      ],
+      "additionalProperties": false
+    },
+    "ktca": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "K",
+          "T",
+          "C",
+          "A"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true
+    }
+  }
+}

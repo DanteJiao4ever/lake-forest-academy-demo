@@ -1,0 +1,19 @@
+.lfa-seminar{max-width:1180px;margin:0 auto;padding:24px;color:var(--ink,#172f2b);font-family:Inter,system-ui,sans-serif}
+.lfa-seminar header,.seminar-rooms li{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.lfa-seminar h1,.lfa-seminar h2,.lfa-seminar h3{font-family:Newsreader,Georgia,serif;line-height:1.18}
+.lfa-seminar h1{font-size:clamp(2rem,4vw,3.25rem);margin:.65em 0 .3em}
+.seminar-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:20px}
+.seminar-panel,.seminar-rooms li{background:var(--paper,#fffefa);padding:20px;border:1px solid #bacbc4;border-radius:8px;margin:12px 0;min-width:0}
+.lfa-seminar input:not([type=checkbox]),.lfa-seminar textarea{box-sizing:border-box;width:100%;margin:6px 0 12px;padding:9px;border:1px solid #839c97;border-radius:4px;color:inherit;background:transparent;font:inherit}
+.lfa-seminar textarea{min-height:90px;resize:vertical}.lfa-seminar label{display:block;font-weight:600}
+.lfa-seminar fieldset{margin:15px 0;padding:12px;border:1px solid #bdcfc6}
+.lfa-seminar button,.seminar-download{display:inline-block;margin:5px 6px 5px 0;padding:8px 12px;min-height:38px;border:1px solid #53776b;border-radius:5px;background:#f4f8f4;color:#204e40;font:inherit;cursor:pointer}
+.lfa-seminar button.primary{background:#23503f;color:white}.lfa-seminar button:disabled{opacity:.52;cursor:default}
+.lfa-seminar :focus-visible{outline:3px solid #287499;outline-offset:2px}
+.lfa-seminar details summary{cursor:pointer;font-weight:650}.seminar-events,.seminar-rooms{list-style:none;padding:0}
+.seminar-events>li{padding:12px 0;border-top:1px solid #d5dfd9}.seminar-events h3{font-size:1.25rem;margin:2px 0 6px}
+.lfa-seminar blockquote{margin:10px 0;padding:6px 12px;border-left:3px solid #5c95a5;background:#edf5f5}
+.seminar-prose,.seminar-events p,.seminar-choice span,.lfa-seminar blockquote{overflow-wrap:anywhere;white-space:pre-line}
+.seminar-prose{line-height:1.6}.seminar-prose .katex-display{overflow:auto}.seminar-status{color:#415d55}
+.lfa-seminar .seminar-choice{display:flex;align-items:start;gap:8px;padding:8px 0;font-weight:400}
+@media(max-width:750px){.lfa-seminar{padding:12px}.seminar-grid{grid-template-columns:1fr;gap:4px}.seminar-panel{padding:14px}.lfa-seminar button{min-height:44px}}

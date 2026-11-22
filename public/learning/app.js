@@ -18,6 +18,7 @@
   const CSRF_TOKEN_KEY = "lake-forest-learning-csrf-v1";
   const WORKSPACE_LOGOUT_SUPPRESS_KEY =
     "lake-forest-learning-workspace-signed-out-v1";
+  const WORKSPACE_NEXT_KEY = "lake-forest-learning-workspace-destination";
   const WORKSPACE_AUTH_RETURN_TO = "teacher/dashboard";
   const WORKSPACE_CALLBACK_MESSAGES = Object.freeze({
     connected: Object.freeze({
@@ -1451,6 +1452,8 @@
   let driveRequestInFlight = false;
   let driveEndpointChecked = false;
   let courseCatalogChecked = false;
+  let accessibleCourseCodes = null;
+  let classroomCourseCodes = new Set();
   let driveSessionGeneration = 0;
   let platformSessionGeneration = 0;
   const expandedCourseMaterials = new Set();
@@ -1485,11 +1488,13 @@
   };
   const platformRequests = new Map();
   let announcementBoard = null;
+  let riskBoard = null;
 
   function resetPlatformRuntime() {
     platformSessionGeneration += 1;
     mergeAssignedCourses([]);
     announcementBoard = null;
+    riskBoard = null;
     platformRuntime.modules = {};
     platformRuntime.assignments = {};
     platformRuntime.studentProgress = {};
@@ -1513,6 +1518,11 @@
   let drawerScrollY = 0;
   let remoteSessionValidated = !AUTH_CONFIG.workspaceSessionEndpoint;
   const drawerMedia = window.matchMedia("(max-width: 860px)");
+  if (!AUTH_CONFIG.workspaceSessionEndpoint && !AUTH_CONFIG.allowDeviceAccounts &&
+      typeof window.LFA_RECHECK_SERVICES === "function") {
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(CSRF_TOKEN_KEY);
+  }
   state = loadState();
 
   function normalizeEmail(value) {
@@ -1815,7 +1825,7 @@
       return {
         publicId: String(session.publicId || session.id || "").trim(),
         email: normalizeEmail(session.email),
-        role: ["teacher", "teacher_admin"].includes(session.role)
+        role: ["teacher", "teacher_admin", "observer"].includes(session.role)
           ? session.role
           : "student",
         firstName: String(session.firstName || "").trim(),
@@ -1843,7 +1853,7 @@
         `${identity.firstName || ""} ${identity.lastName || ""}`.trim() ||
         identity.email,
       accountType: identity.accountType || "personal",
-      role: ["teacher", "teacher_admin"].includes(identity.role)
+      role: ["teacher", "teacher_admin", "observer"].includes(identity.role)
         ? identity.role
         : "student",
       program: "OSSD · Grade 12",
@@ -1858,7 +1868,7 @@
       JSON.stringify({
         publicId: scalarLabel(account.publicId || account.id || account.userId),
         email: normalizeEmail(account.email),
-        role: ["teacher", "teacher_admin"].includes(account.role)
+        role: ["teacher", "teacher_admin", "observer"].includes(account.role)
           ? account.role
           : "student",
         firstName: String(account.firstName || "").trim(),
@@ -1880,7 +1890,9 @@
   }
 
   function expireRemoteSession() {
+    if (!isSignedIn()) return;
     const facultySession = isTeacher();
+    const sessionPortal = currentUser()?.role === "observer" ? "observer" : facultySession ? "faculty" : "student";
     sessionStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(CSRF_TOKEN_KEY);
     remoteSessionValidated = true;
@@ -1894,9 +1906,9 @@
     resetDriveMaterialsForSession();
     state = initialStateForUser(null);
     signInNotice = "Your secure session expired. Please sign in again.";
-    const destination = facultySession
-      ? "#/signin/faculty"
-      : "#/signin/student";
+    const portal = sessionPortal;
+    const next = requestedPortalRoute(portal);
+    const destination = `#/signin/${portal}${next ? "?returnTo=" + encodeURIComponent(next) : ""}`;
     if (window.location.hash !== destination) window.location.hash = destination;
     render(true);
   }
@@ -2225,6 +2237,7 @@
   function teacherSubmissionRecords() {
     if (submissionsEndpointUrl()) {
       return remoteSubmissionsState.records
+        .filter((remote) => !accessibleCourseCodes || accessibleCourseCodes.has(remote.courseMeta?.code || remote.courseId?.toUpperCase()))
         .map((remote) => {
           const matchedAssignment = findAssignment(remote.assignmentId);
           const matchedCourse = findCourse(
@@ -3757,9 +3770,18 @@
     return request;
   }
 
-  function optionalPlatformPayload(error) {
-    if (error?.name === "StaleSessionError") throw error;
-    return { data: [] };
+  async function optionalCourseData(course, resource, endpoint) {
+    const key = `${resource}:${course.code}`;
+    try {
+      const payload = await requestPlatformJson(endpoint);
+      if (!Array.isArray(payload?.data)) throw new Error("Invalid course data.");
+      delete platformRuntime.errors[key];
+      return payload;
+    } catch (error) {
+      if (error?.name === "StaleSessionError") throw error;
+      platformRuntime.errors[key] = "Unavailable";
+      return { data: [] };
+    }
   }
 
   function ensureStudentPlatformData(course) {
@@ -3778,12 +3800,8 @@
       ] = await Promise.all([
         requestPlatformJson(endpoint),
         requestPlatformJson(modulesEndpoint),
-        requestPlatformJson(courseAssignmentsEndpoint(course)).catch(
-          optionalPlatformPayload,
-        ),
-        requestPlatformJson(studentGradesEndpoint(course)).catch(
-          optionalPlatformPayload,
-        ),
+        optionalCourseData(course, "dates", courseAssignmentsEndpoint(course)),
+        optionalCourseData(course, "grades", studentGradesEndpoint(course)),
       ]);
       const records = platformPayloadData(progressPayload, []);
       platformRuntime.studentProgress[course.code] = Array.isArray(records)
@@ -3803,21 +3821,19 @@
     });
   }
 
-  function ensureTeacherPlatformData(course) {
-    if (!course || (!course.institutional && !course.platformModules?.length)) return;
+  function ensureTeacherPlatformData(course, view = "course") {
+    if (!course || !accessibleCourseCodes?.has(course.code) || (!course.institutional && !course.platformModules?.length)) return;
     const rosterEndpoint = teacherCourseEndpoint(course, "roster");
     const progressEndpoint = teacherCourseEndpoint(course, "progress");
     const gradebookEndpoint = teacherCourseEndpoint(course, "gradebook");
     const modulesEndpoint = courseModulesEndpoint(course);
-    if (modulesEndpoint) {
+    if (modulesEndpoint && view !== "grades") {
       const key = `teacher-modules:${course.code}`;
       if (!platformRequests.has(key)) {
         void loadPlatformData(key, async () => {
           const [payload, assignmentsPayload] = await Promise.all([
             requestPlatformJson(modulesEndpoint),
-            requestPlatformJson(courseAssignmentsEndpoint(course)).catch(
-              optionalPlatformPayload,
-            ),
+            optionalCourseData(course, "dates", courseAssignmentsEndpoint(course)),
           ]);
           const records = platformPayloadData(payload, []);
           setCourseModules(course, records);
@@ -3829,7 +3845,7 @@
         });
       }
     }
-    if (rosterEndpoint) {
+    if (rosterEndpoint && view === "course") {
       const key = `teacher-roster:${course.code}`;
       if (!platformRequests.has(key)) {
         void loadPlatformData(key, async () => {
@@ -3842,7 +3858,7 @@
         });
       }
     }
-    if (progressEndpoint) {
+    if (progressEndpoint && ["course", "dashboard"].includes(view)) {
       const key = teacherProgressRequestKey(course);
       if (!platformRequests.has(key)) {
         delete platformRuntime.teacherProgress[course.code];
@@ -3881,14 +3897,14 @@
         });
       }
     }
-    if (gradebookEndpoint) {
+    if (gradebookEndpoint && view !== "calendar") {
       const key = `teacher-gradebook:${course.code}`;
       if (!platformRequests.has(key)) {
         void loadPlatformData(key, async () => {
           const payload = await requestPlatformJson(gradebookEndpoint);
-          const record = platformPayloadData(payload, {});
-          platformRuntime.teacherGradebooks[course.code] =
-            record && typeof record === "object" ? record : {};
+          const record = platformPayloadData(payload, null);
+          if (!Array.isArray(record?.items) || !Array.isArray(record?.students)) throw new Error("The gradebook response could not be read.");
+          platformRuntime.teacherGradebooks[course.code] = record;
           delete platformRuntime.errors[key];
         });
       }
@@ -3963,7 +3979,7 @@
     const email = normalizeEmail(source.email || payload.email);
     const serverRole = String(source.role || payload.role || "").toLowerCase();
     const role = serverRole;
-    if (!email || !["student", "teacher", "teacher_admin"].includes(role)) {
+    if (!email || !["student", "teacher", "teacher_admin", "observer"].includes(role)) {
       return null;
     }
     const firstName = String(source.firstName || "").trim();
@@ -4336,6 +4352,8 @@
     driveSessionGeneration += 1;
     teachingPacksByCourse = new Map();
     courseCatalogChecked = false;
+    accessibleCourseCodes = null;
+    classroomCourseCodes = new Set();
     driveRequestInFlight = false;
     driveEndpointChecked = false;
     driveMaterialsState = loadDriveMaterialsCache();
@@ -4431,11 +4449,16 @@
       : "";
   }
 
-  function lessonReaderLink(lesson) {
+  function lessonReaderHref(lesson) {
     const reader = teachingPacksByCourse.get(lesson.course.code)?.find((pack) => pack.kind === "reader");
     const position = /-U(\d+)-L(\d+)$/i.exec(lesson.id);
     if (!reader || !position) return "";
-    const href = reader.url + "#u" + position[1] + "-l" + position[2];
+    return reader.url + "#u" + position[1] + "-l" + position[2];
+  }
+
+  function lessonReaderLink(lesson) {
+    const href = lessonReaderHref(lesson);
+    if (!href) return "";
     return `<a class="button button-primary" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Read this lesson ${icon("book", 15)}</a>`;
   }
 
@@ -4494,7 +4517,10 @@
       if (catalogEndpoint) {
         const catalogPayload = await requestDriveJson(catalogEndpoint);
         if (requestGeneration !== driveSessionGeneration) return false;
-        mergeAssignedCourses(catalogPayload?.data);
+        if (!Array.isArray(catalogPayload?.data)) throw new Error("The course catalogue could not be read.");
+        accessibleCourseCodes = new Set(catalogPayload.data.filter((row) => row?.code && (!row.status || row.status === "active")).map((row) => row.code));
+        classroomCourseCodes = new Set(catalogPayload.data.filter(row => row.classroomEnabled === true && accessibleCourseCodes.has(row.code)).map(row => row.code));
+        mergeAssignedCourses(catalogPayload.data);
         teachingPacksByCourse = teachingPackCatalog(catalogPayload);
         renderAfterBackgroundRefresh();
         if (catalogOnly || !driveMaterialsReadReady()) return true;
@@ -4638,6 +4664,25 @@
         if (isTeacher() && routeParts()[1] === "materials") render();
       }
     }
+  }
+
+  // Keep return paths within the role's existing router. Credentials, query strings and
+  // external origins never travel through the Workspace redirect.
+  function allowedPortalRoute(value, portal) {
+    const path = String(value || "").replace(/^#\//, "");
+    if (!path || path.length > 320 || !/^[a-zA-Z0-9_%@.+/-]+$/.test(path)) return "";
+    const parts = path.split("/");
+    if (parts.map(safeDecode).some((part) => !/^[a-zA-Z0-9_.@+-]+$/.test(part) || /^\.{1,2}$/.test(part))) return "";
+    const id = "[a-zA-Z0-9_%@.+-]+";
+    if (portal === "observer") return path === "observer" ? path : "";
+    const valid = portal === "faculty"
+      ? new RegExp(`^teacher/(?:(?:dashboard|courses|grades|calendar|notifications|announcements|materials|support|security)|(?:records|review|seminar|insights)/${id}|classroom/${id}/${id}|course/${id}(?:/module/${id})?|submissions(?:/${id}){0,2}|submission/${id}/${id})$`)
+      : new RegExp(`^(?:dashboard|courses|course-selection|assessments|assignments|progress|notifications|announcements|security|support|(?:records|review|seminar)/${id}|classroom/${id}/${id}|calendar(?:/${id})?|course/${id}(?:/module/${id})?|(?:guide|syllabus|lesson|assignment)/${id})$`);
+    return valid.test(path) ? path : "";
+  }
+
+  function requestedPortalRoute(portal) {
+    return allowedPortalRoute(authRouteQuery().get("returnTo") || routeParts().join("/"), portal);
   }
 
   function googleWorkspaceAuthUrl() {
@@ -5074,7 +5119,7 @@
   }
 
   function facultyCourses() {
-    return [...catalogCourses(), ...COURSES.slice(publicCourseCount)];
+    return [...catalogCourses(), ...COURSES.slice(publicCourseCount)].filter((course) => accessibleCourseCodes?.has(course.code));
   }
 
   function enrolledCourseIdsFor(userState = state) {
@@ -5214,6 +5259,7 @@
       ? records.filter(
           (grade) =>
             grade?.publishedAt &&
+            grade.score != null && grade.score !== "" &&
             Number.isFinite(Number(grade.score)) &&
             Number(grade.score) >= 0,
         )
@@ -5246,6 +5292,7 @@
   }
 
   function courseGrade(courseId, user = currentUser()) {
+    const course = findCourse(courseId);
     const assignments = ASSIGNMENTS.filter(
       (assignment) =>
         assignment.courseId === courseId && Number(assignment.weightPercent) > 0,
@@ -5256,6 +5303,20 @@
         score: assignmentScore(assignment, user),
       }))
       .filter((record) => record.score != null);
+    // A learner's recorded policy can predate the public course catalog.
+    for (const record of scored) {
+      const { assignment } = record;
+      const published = directGradeForAssignment(assignment);
+      if (published?.weightPercent != null) {
+        record.weightPercent = Number(published.weightPercent);
+      } else if (course?.code === "ICS4U" && assignment.sectionKind === "final_evaluation") {
+        const official = platformRuntime.assignments.ICS4U?.find((item) => item.id === assignment.id);
+        if (!(Number(official?.weightPercent) > 0)) return { current: null, weightsPending: true };
+        record.weightPercent = Number(official.weightPercent);
+      } else {
+        record.weightPercent = Number(assignment.weightPercent);
+      }
+    }
     const assignedGradebookIds = new Set(
       assignments.map((assignment) => assignment.gradebookItemId).filter(Boolean),
     );
@@ -5278,11 +5339,11 @@
     if (scored.length || directOnly.length) {
       const earnedFromAssignments = scored.reduce(
         (total, record) =>
-          total + record.score * Number(record.assignment.weightPercent),
+          total + record.score * record.weightPercent,
         0,
       );
       const assignmentWeight = scored.reduce(
-        (total, record) => total + Number(record.assignment.weightPercent),
+        (total, record) => total + record.weightPercent,
         0,
       );
       const earnedFromDirect = directOnly.reduce(
@@ -5305,7 +5366,6 @@
             gradedWeight: weight,
           };
     }
-    const course = findCourse(courseId);
     if (course?.institutional || course?.platformModules?.length) return null;
     if (!hasSeededAcademicRecord(user)) return null;
     return GRADES.find((grade) => grade.courseId === courseId);
@@ -5320,6 +5380,7 @@
     const submission = submissionForAssignment(assignment.id, user);
     if (
       Number.isInteger(submission?.score) &&
+      (!submissionsEndpointUrl() || Boolean(remoteSubmissionFor(assignment.id, user)?.publishedAt)) &&
       submission.score >= 0 &&
       submission.score <= 100
     ) {
@@ -5391,9 +5452,15 @@
     });
   }
 
-  function calendarEvents() {
-    const dueDates = studentAssignments()
-      .filter(assignmentIsUnlocked)
+  function calendarEvents(faculty = false) {
+    const courses = faculty ? facultyCourses() : studentCourses();
+    const assignments = courses.flatMap((course) => (platformRuntime.assignments[course.code] || [])
+      .filter((row) => !["archived", "draft", "inactive"].includes(row.status))
+      .map((row) => ({ assignment: findAssignment(row.id), due: row.dueAt }))
+      .filter(({ assignment, due }) => assignment?.courseId === course.id && due)
+      .map(({ assignment, due }) => ({ ...assignment, due })));
+    const dueDates = assignments
+      .filter((assignment) => faculty || assignmentIsUnlocked(assignment))
       .filter((assignment) => assignment.due && Number.isFinite(Date.parse(assignment.due)))
       .map((assignment) => {
       const course = findCourse(assignment.courseId);
@@ -5408,7 +5475,7 @@
           : formatTime(assignment.due),
         title: assignment.title,
         type: "Assignment Due",
-        route: `assignment/${assignment.id}`,
+        route: faculty ? `teacher/course/${course.id}` : `assignment/${assignment.id}`,
         sortTime: assignment.due,
         courseCode: course.code,
       };
@@ -5744,21 +5811,26 @@
         <aside class="sidebar" id="sidebar" aria-label="Student navigation">
           <button class="sidebar-close" type="button" data-action="close-menu" aria-label="Close menu">${icon("close")}</button>
           <div class="sidebar-brand">
-            <img src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <img src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
             <p>Student Learning</p>
           </div>
           <nav class="sidebar-nav">
             ${navLink("dashboard", "Dashboard", "home")}
-            ${navLink("course-selection", "Course Selection", "clipboard")}
-            ${navLink("courses", "My Courses", "book")}
+            ${navLink("courses", "Courses", "book")}
             ${navLink("calendar", "Calendar", "calendar")}
-            ${navLink("assessments", "Assessments", "clipboard", pending)}
-            ${navLink("progress", "Progress & Grades", "chart")}
-            ${navLink("notifications", "Notifications", "bell", unread)}
-            ${navLink("announcements", "Course Announcements", "book")}
-            ${navLink("support", "Student Support", "award")}
-            ${navLink("security", "Account Security", "lock")}
+            ${navLink("notifications", "Inbox", "bell", unread)}
+            ${navLink("progress", "Grades", "chart")}
+            ${navLink("support", "Academic Support", "award")}
           </nav>
+          <details class="sidebar-tools" ${["course-selection", "assessments", "announcements", "security"].includes(activeSection(route)) ? "open" : ""}>
+            <summary>Learning tools</summary><div class="sidebar-nav">
+              ${navLink("course-selection", "Course Selection", "clipboard")}
+              ${navLink("assessments", "Assessments", "clipboard", pending)}
+              ${navLink("announcements", "Course Announcements", "book")}
+              ${navLink("security", "Account Security", "lock")}
+              ${navLink("reading-sample", "Reading sample", "book")}
+            </div>
+          </details>
           <div class="sidebar-student">
             <span class="avatar" aria-hidden="true">${escapeHtml(initials)}</span>
             <span><strong>${escapeHtml(user.displayName)}</strong><span>${escapeHtml(user.program)}</span></span>
@@ -5802,6 +5874,9 @@
     return {
       dashboard: "Faculty Dashboard",
       courses: "Course Management",
+      calendar: "Faculty Calendar",
+      grades: "Published Grades",
+      support: "Academic Support",
       submissions: "Action Inbox",
       announcements: "Course Announcements",
       notifications: "Notifications",
@@ -5815,7 +5890,8 @@
     const active =
       route[0] === "teacher" &&
       (route[1] === section ||
-        (section === "submissions" && route[1] === "submission"));
+        (section === "submissions" && route[1] === "submission") ||
+        (section === "courses" && route[1] === "course"));
     return `
       <a href="#/teacher/${section}" class="${active ? "is-active" : ""}" ${active ? 'aria-current="page"' : ""}>
         <span class="nav-icon">${icon(iconName, 19)}</span>
@@ -5839,13 +5915,19 @@
         <aside class="sidebar faculty-sidebar" id="sidebar" aria-label="Faculty navigation">
           <button class="sidebar-close" type="button" data-action="close-menu" aria-label="Close menu">${icon("close")}</button>
           <div class="sidebar-brand">
-            <img src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+            <img src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
             <p>Faculty Learning</p>
           </div>
           <nav class="sidebar-nav">
             ${teacherNavLink("dashboard", "Dashboard", "home")}
-            ${teacherNavLink("courses", "Course Management", "book")}
-            ${teacherNavLink("submissions", "Action Inbox", "clipboard", awaitingReview)}
+            ${teacherNavLink("courses", "Courses", "book")}
+            ${teacherNavLink("calendar", "Calendar", "calendar")}
+            ${teacherNavLink("submissions", "Inbox", "clipboard", awaitingReview)}
+            ${teacherNavLink("grades", "Grades", "chart")}
+            ${teacherNavLink("support", "Academic Support", "award")}
+          </nav>
+          <details class="sidebar-tools" ${courseMenuOpen || ["materials","announcements","notifications","security"].includes(route[1]) ? "open" : ""}>
+            <summary>Faculty tools</summary><div class="sidebar-nav">
             ${teacherNavLink("notifications", "Notifications", "bell", unread)}
             ${teacherNavLink("announcements", "Course Announcements", "book")}
             ${teacherNavLink("materials", "Course Materials", "file")}
@@ -5867,10 +5949,10 @@
               <span class="nav-icon">${icon("file", 19)}</span>
               <span>Workspace Gmail</span>
             </a>
-          </nav>
+            </div></details>
           <div class="sidebar-student">
             <span class="avatar teacher-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span>
-            <span><strong>${escapeHtml(user.displayName)}</strong><span>Faculty · All Courses</span></span>
+            <span><strong>${escapeHtml(user.displayName)}</strong><span>Faculty</span></span>
             <button class="logout-button" type="button" data-action="logout" aria-label="Sign out">${icon("logout")}</button>
           </div>
         </aside>
@@ -6388,70 +6470,106 @@
     `;
   }
 
+  function dashboardRiskSummary(courses) {
+    const title='<header class="panel-header"><h2>At-risk learners</h2></header>';
+    const box=content=>'<section class="panel" aria-label="At-risk learners">'+title+content+'</section>';
+    const api=configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint);
+    const eligible = courses.filter(c => classroomCourseCodes.has(c.code));
+    if (!api || !eligible.length) return "";
+    const key=eligible.map(c=>c.code).sort().join(",");
+    if(!riskBoard || riskBoard.key!==key) {
+      const board={key,loading:true,error:false,students:[]};
+      riskBoard=board;
+      const fetchPages=async()=>{
+        let offset=0;
+        do {
+          const url=new URL("/v1/insights/alerts",api);
+          url.searchParams.set("offset",String(offset));
+          const response=await requestPlatformJson(url.href);
+          if(riskBoard!==board)return;
+          if(!Array.isArray(response.students) || (response.nextOffset!==null &&
+             (!Number.isInteger(response.nextOffset) || response.nextOffset<=offset))) throw new Error("Invalid alerts page.");
+          board.students.push(...response.students);
+          offset=response.nextOffset;
+        }while(offset!==null);
+      };
+      void fetchPages().catch(()=>{board.error=true;}).finally(()=>{
+        if(riskBoard!==board)return;
+        board.loading=false;
+        if(isTeacher() && routeParts().join("/")==="teacher/dashboard") renderAfterBackgroundRefresh();
+      });
+    }
+    const reload='<button type="button" class="text-link" data-action="refresh-risk-summary">Refresh learner alerts</button>';
+    if(riskBoard.loading) return box('<p role="status">Checking learner alerts…</p>');
+    if(riskBoard.error) return box('<p role="alert">Learner alerts could not be loaded.</p>'+reload);
+    const visible=riskBoard.students.filter(s=>classroomCourseCodes.has(s.courseCode));
+    const issues=[];
+    let insufficient=0;
+    for(const s of visible) {
+      const r=s.risk;
+      const issuesForStudent=[];
+      if(r.inactivity.flag) issuesForStudent.push("Over 5 days without course activity");
+      if(r.scores.flag) issuesForStudent.push("Both recent scores below 70%");
+      if(r.progress.flag) issuesForStudent.push("Over 15 percentage points behind plan");
+      if(issuesForStudent.length) issues.push('<li><a href="#/teacher/insights/'+encodeURIComponent(s.courseCode)+'?student='+encodeURIComponent(s.studentId)+'">'+escapeHtml(s.studentName)+'</a> · '+escapeHtml(s.courseCode)+'<br>'+issuesForStudent.join(" · ")+'</li>');
+      if([r.inactivity.flag,r.scores.flag,r.progress.flag].some(f=>f===null))insufficient++;
+    }
+    const empty=visible.length?"No learners currently meet a follow-up threshold.":"No learners in enabled classes.";
+    return box((issues.length?'<ul>'+issues.join("")+'</ul>':'<p>'+empty+'</p>')+
+      (insufficient?'<p>'+plural(insufficient,"learner")+' with insufficient evidence for one or more checks.</p>':'')+reload);
+  }
+
   function teacherDashboardView() {
     const user = currentUser();
     const greetingName =
       user?.firstName || user?.displayName || user?.email || "Faculty";
-    const records = teacherSubmissionRecords();
-    const awaitingReview = records.filter(
-      isAwaitingTeacherReview,
-    ).length;
-    const attachedFiles = records.filter(
-      (record) => record.submission.fileName,
-    ).length;
-    const studentCount = submissionsEndpointUrl()
-      ? new Set(records.map((record) => studentRecordKey(record.student))).size
-      : allStudentAccounts().length;
-    return `
-      <header class="teacher-hero">
-        <div>
-          <p class="eyebrow">Faculty Portal</p>
-          <h1>Welcome Back, ${escapeHtml(greetingName)}</h1>
-          <p>Review student progress and find submitted work across every OSSD course from one organized workspace.</p>
-        </div>
-        <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a>
-      </header>
-      <section class="teacher-metrics" aria-label="Faculty overview">
-        <a class="teacher-metric" href="#/teacher/courses" aria-label="${facultyCourses().length} active courses. Open Course Management."><span>${icon("book", 22)}</span><strong>${facultyCourses().length}</strong><p>Active Courses</p></a>
-        <a class="teacher-metric" href="#/teacher/courses" aria-label="${studentCount} students. Open Course Management."><span>${icon("award", 22)}</span><strong>${studentCount}</strong><p>Students</p></a>
-        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${awaitingReview} submissions awaiting review. Open Action Inbox."><span>${icon("clipboard", 22)}</span><strong>${awaitingReview}</strong><p>Awaiting Review</p></a>
-        <a class="teacher-metric" href="#/teacher/submissions" aria-label="${attachedFiles} submitted files. Open Action Inbox."><span>${icon("file", 22)}</span><strong>${attachedFiles}</strong><p>Files Submitted</p></a>
-      </section>
-      <section class="teacher-section">
-        <div class="section-heading"><div><p class="eyebrow">Course Overview</p><h2>Assigned Courses</h2></div></div>
-        <div class="teacher-course-grid">
-          ${facultyCourses().map((course) => {
-            const courseRecords = records.filter(
-              (record) => record.course.id === course.id,
-            );
-            const pending = courseRecords.filter(
-              isAwaitingTeacherReview,
-            ).length;
-            return `
-              <a class="teacher-course-card" href="#/teacher/course/${course.id}">
-                <span class="course-code">${course.code}</span>
-                <h3>${escapeHtml(course.title)}</h3>
-                <p>${escapeHtml(course.subject)}${course.plannedHours ? ` · ${course.plannedHours} planned hours` : ""}</p>
-                <dl>
-                  <div><dt>Submissions</dt><dd>${courseRecords.length}</dd></div>
-                  <div><dt>Awaiting Review</dt><dd>${pending}</dd></div>
-                </dl>
-                <span class="text-link">Open Course ${icon("arrow", 16)}</span>
-              </a>
-            `;
-          }).join("")}
-        </div>
-      </section>
-      <section class="teacher-section">
-        <div class="section-heading">
-          <div><p class="eyebrow">Latest Activity</p><h2>Recent Submissions</h2></div>
-          <a class="text-link" href="#/teacher/submissions">View All ${icon("arrow", 15)}</a>
-        </div>
-        <div class="teacher-records">
-          ${records.length ? records.slice(0, 5).map(teacherRecordMarkup).join("") : teacherHierarchy([])}
-        </div>
-      </section>
-    `;
+    const courses = facultyCourses();
+    const records = submissionsEndpointUrl() ? teacherSubmissionRecords().filter((record) => accessibleCourseCodes?.has(record.course.code)) : [];
+    return `<div class="workbench"><div class="workbench-main">
+      <section class="welcome"><div class="welcome-copy"><p class="eyebrow light">${todayLabel()}</p>
+        <h1>Welcome Back, ${escapeHtml(greetingName)}.</h1>
+        <p>Continue a review or open an assigned course.</p>
+        <a class="button button-gold" href="#/teacher/submissions">Open Action Inbox ${icon("arrow", 17)}</a></div></section>
+      <section class="dashboard-courses"><header class="panel-header"><h2>Assigned courses</h2><a class="text-link" href="#/teacher/courses">View all courses ${icon("arrow", 16)}</a></header>
+        <div class="dashboard-course-cards">${courses.map((course) => facultyCourseCard(course, records)).join("") || facultyCatalogEmpty()}</div></section>
+      <section class="panel"><header class="panel-header"><h2>Recent submissions</h2></header>
+        ${records.slice(0, 3).map(teacherRecordMarkup).join("") || `<p class="rail-empty">${remoteSubmissionsState.error ? "Submissions could not be loaded." : "No submissions to display."}</p>`}</section>
+      </div><aside class="workbench-rail" aria-label="Schedule and feedback">
+        ${dashboardRiskSummary(courses)}${weeklyAgenda(courses, true)}${recentFeedbackPanel(courses, true)}
+      ${classroomLinks(courses, true)}
+        <a class="rail-link" href="#/reading-sample">Try a reading sample ${icon("book", 16)}</a>
+      </aside></div>`;
+  }
+
+  function facultyCatalogEmpty() {
+    return `<p class="rail-empty" role="status">${accessibleCourseCodes ? "No assigned courses." : driveRequestInFlight ? "Loading your assigned courses…" : "Your assigned course list is unavailable."}</p>`;
+  }
+
+  function facultyCourseCard(course, records) {
+    const book = platformRuntime.teacherGradebooks[course.code];
+    const graded = book?.students?.filter((student) => teacherPublishedStanding(book, student).count > 0).length;
+    const modules = platformRuntime.teacherProgress[course.code]?.students.flatMap((student) => student.modules);
+    const completed = modules?.filter((module) => module.status === "completed").length;
+    const percent = modules?.length ? Math.round(100 * completed / modules.length) : null;
+    const queue = records.filter((record) => record.course.id === course.id && isAwaitingTeacherReview(record));
+    return `<article class="workbench-course-card"><div class="workbench-card-heading"><p class="course-code">${escapeHtml(course.code)}</p>
+      <h3><a href="#/teacher/course/${course.id}">${escapeHtml(course.title)}</a></h3></div>
+      <div class="workbench-card-record">${progressRing(percent)}
+        <div><strong>${percent === null ? "No class progress available" : `${completed} of ${modules.length} learner modules complete`}</strong>
+          <small>${graded === undefined ? "Gradebook unavailable" : `${plural(graded, "learner")} with published grades`}</small></div></div>
+      <a class="workbench-card-action" href="${queue.length ? teacherRecordLink(queue.at(-1)) : "#/teacher/course/" + course.id}">${queue.length ? `Resume review · ${queue.length} pending` : "Open workspace"} ${icon("arrow", 16)}</a>
+      </article>`;
+  }
+
+  function facultyGradesView() {
+    const courses = facultyCourses();
+    return pageHeading("Faculty gradebook", "Published Grades", "Current published standings for students in your assigned classes.") +
+      (courses.map((course) => {
+        const book = platformRuntime.teacherGradebooks[course.code];
+        return `<section class="workbench-gradebook panel"><header class="panel-header"><h2>${escapeHtml(course.code)} · ${escapeHtml(course.title)}</h2>
+          <a class="text-link" href="#/teacher/course/${course.id}">Open course ${icon("arrow", 16)}</a></header>
+          ${book ? teacherStandingMarkup(course, book) : '<p class="rail-empty">Gradebook unavailable.</p>'}</section>`;
+      }).join("") || facultyCatalogEmpty());
   }
 
   function teacherCoursesView() {
@@ -6780,6 +6898,9 @@
     );
     const connectedRoster = platformRuntime.teacherRosters[course.code];
     const roster = Array.isArray(connectedRoster) ? connectedRoster : [];
+    const rosterStatus = !teacherCourseEndpoint(course, "roster") ? "Connect the secure course service to view the official roster and progress."
+      : platformRuntime.errors["teacher-roster:" + course.code] ? "The course roster could not be loaded."
+      : !Array.isArray(connectedRoster) ? "Loading the course roster…" : "No enrolled students are available for this course.";
     const gradebook = platformRuntime.teacherGradebooks[course.code] || null;
     const assignments = ASSIGNMENTS.filter(
       (assignment) => assignment.courseId === course.id,
@@ -6800,8 +6921,9 @@
           <a class="button button-on-dark" href="#/teacher/materials">Course Materials</a>
         </div>
       </header>
+      ${courseWorkspaceLinks(course, true)}
       <section class="teacher-metrics teacher-course-metrics" aria-label="${course.code} overview">
-        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${roster.length}</strong><p>Enrolled Students</p></article>
+        <article class="teacher-metric"><span>${icon("award", 22)}</span><strong>${Array.isArray(connectedRoster) ? roster.length : "—"}</strong><p>Enrolled Students</p></article>
         <article class="teacher-metric"><span>${icon("clipboard", 22)}</span><strong>${assignments.length}</strong><p>Formal Assessments</p></article>
         <article class="teacher-metric"><span>${icon("file", 22)}</span><strong>${records.length}</strong><p>Submissions</p></article>
         <article class="teacher-metric"><span>${icon("clock", 22)}</span><strong>${awaiting.length}</strong><p>Awaiting Review</p></article>
@@ -6878,7 +7000,7 @@
                       `,
                     )
                     .join("")}</div>`
-                : `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No enrolled students are available for this course." : "Connect the secure course service to view the official roster and progress."}</p></div>`
+                : `<div class="teacher-empty"><p>${rosterStatus}</p></div>`
             }
           </section>
           <section class="teacher-section teacher-drive-card">
@@ -7336,19 +7458,21 @@
 
   function authStory() {
     return `
-      <section class="login-story" aria-label="Lake Forest Academy learning community">
-        <img src="../images/academics-seminar.jpg" alt="Students learning together in a classroom" />
+      <aside class="login-story" aria-label="Lake Forest Academy">
+        <img src="../images/academics-seminar.jpg" alt="" />
         <span class="login-overlay"></span>
         <div class="login-story-content">
-          <img class="login-logo" src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" />
+          <a href="../" aria-label="Lake Forest Academy home"><img class="login-logo" src="../images/lake-forest-academy-logo-light.png" alt="Lake Forest Academy" /></a>
           <div class="login-story-copy">
-            <p class="eyebrow light">Lake Forest Learning</p>
-            <h1>Your Courses.<br />Your Next Step.</h1>
-            <p>Access OSSD lessons, submit assignments, review feedback and keep your learning on track from one clear workspace.</p>
+            <p class="eyebrow light">Lake Forest Academy</p>
+            <h2>The learning<br />portal.</h2>
+            <p>Open your courses, continue a lesson and join the conversation with your teacher.</p>
+            <a class="auth-sample-link" href="#/reading-sample">Try a reading sample ${icon("arrow", 16)}</a>
           </div>
-          <p class="login-location">North York · Ontario · Canada</p>
+          <div class="login-story-footer"><p>North York · Ontario · Canada</p>
+            <a class="login-location" href="mailto:support@lakeforestacademy.ca">Technical support ${icon("arrow", 15)}</a></div>
         </div>
-      </section>
+      </aside>
     `;
   }
 
@@ -7362,6 +7486,7 @@
             <img class="login-mobile-logo" src="../images/lake-forest-academy-logo.png" alt="Lake Forest Academy" />
             ${content}
             ${connectionRecoveryView()}
+            <nav class="auth-mobile-links" aria-label="Portal resources"><a href="#/reading-sample">Try a reading sample</a><a href="mailto:support@lakeforestacademy.ca">Technical support</a></nav>
           </div>
         </section>
       </main>
@@ -7484,6 +7609,8 @@
     portal = "student",
   } = {}) {
     const facultyPortal = portal === "faculty";
+    const observerPortal = portal === "observer";
+    const title = facultyPortal ? "Faculty" : observerPortal ? "Parent / Advisor" : "Student";
     const savedEmail = email || signInPrefill;
     const callbackFeedback = facultyPortal ? workspaceLoginFeedback() : null;
     const message =
@@ -7501,23 +7628,24 @@
         : "form-success";
     const workspaceReady = Boolean(googleWorkspaceAuthUrl());
     const passwordSignInReady =
-      serverAuthReady() || AUTH_CONFIG.allowDeviceAccounts;
+      serverAuthReady() || (!observerPortal && AUTH_CONFIG.allowDeviceAccounts);
     const portalSwitcher = `
       <nav class="portal-switcher" aria-label="Choose a sign-in portal">
-        <a class="portal-switch-link ${facultyPortal ? "" : "is-active"}" href="#/signin/student" ${facultyPortal ? "" : 'aria-current="page"'}>Student Sign In</a>
-        <a class="portal-switch-link ${facultyPortal ? "is-active" : ""}" href="#/signin/faculty" ${facultyPortal ? 'aria-current="page"' : ""}>Faculty Sign In</a>
+        <a class="portal-switch-link ${portal==="student" ? "is-active" : ""}" href="#/signin/student" ${portal==="student" ? 'aria-current="page"' : ""}>Student</a>
+        <a class="portal-switch-link ${facultyPortal ? "is-active" : ""}" href="#/signin/faculty" ${facultyPortal ? 'aria-current="page"' : ""}>Faculty</a>
+        <a class="portal-switch-link ${observerPortal ? "is-active" : ""}" href="#/signin/observer" ${observerPortal ? 'aria-current="page"' : ""}>Parent / Advisor</a>
       </nav>
     `;
     authPage(
-      facultyPortal ? "Faculty Sign In" : "Student Sign In",
+      title+" Sign In",
       `
         ${portalSwitcher}
-        <p class="eyebrow">${facultyPortal ? "Faculty Portal" : "Student Portal"}</p>
+        <p class="eyebrow">${title+" Portal"}</p>
           <h1>Welcome Back</h1>
           <p class="login-intro">${
             facultyPortal
               ? "Sign in with your Lake Forest Academy Google Workspace account or your assigned faculty credentials."
-              : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
+              : observerPortal ? "Use the observer account issued by the school to read the student reports shared with you." : "Sign in with your school account or the personal email account you registered for Lake Forest Learning."
           }</p>
         ${message ? `<p class="${messageClass}" role="status">${escapeHtml(message)}</p>` : ""}
         ${
@@ -7540,17 +7668,17 @@
             : ""
         }
         <form id="login-form" novalidate>
-          <input type="hidden" name="portal" value="${facultyPortal ? "faculty" : "student"}" />
+          <input type="hidden" name="portal" value="${portal}" />
           <label for="email">Email Address</label>
           <input id="email" name="email" type="email" autocomplete="username" value="${escapeHtml(savedEmail)}" required />
           ${passwordInput("password", "Password", "current-password")}
           ${
             configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint)
-              ? `<div class="auth-form-links"><a href="${escapeHtml(`#/forgot-password?portal=${facultyPortal ? "faculty" : "student"}&email=${encodeURIComponent(savedEmail)}`)}">Forgot your password?</a></div>`
+              ? `<div class="auth-form-links"><a href="${escapeHtml(`#/forgot-password?portal=${portal}&email=${encodeURIComponent(savedEmail)}`)}">Forgot your password?</a></div>`
               : ""
           }
           ${renderedError ? `<p class="form-error" role="alert">${escapeHtml(renderedError)}</p>` : ""}
-          <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${facultyPortal ? "Faculty Sign In" : "Student Sign In"} ${icon("arrow", 17)}</button>
+          <button class="button button-primary login-submit" type="submit" ${passwordSignInReady ? "" : 'disabled aria-disabled="true"'}>${title+" Sign In"} ${icon("arrow", 17)}</button>
         </form>
         ${
           passwordSignInReady
@@ -7566,7 +7694,7 @@
               </div>
               <p class="login-help"><strong>Faculty Access</strong>Faculty accounts are provisioned and managed by school administrators.</p>
             `
-            : `
+            : observerPortal ? "" : `
               <div class="auth-switch">
                 <p><strong>New to Lake Forest Learning?</strong>Create an account with your personal email address.</p>
                 <a class="button button-secondary full-width" href="#/register">Create Personal Account</a>
@@ -7598,7 +7726,7 @@
 
   function forgotPasswordView({ error = "", notice = "", email = "" } = {}) {
     const query = authRouteQuery();
-    const portal = query.get("portal") === "faculty" ? "faculty" : "student";
+    const portal = ["faculty","observer"].includes(query.get("portal")) ? query.get("portal") : "student";
     const savedEmail = email || normalizeEmail(query.get("email"));
     const ready = Boolean(
       configuredAuthUrl(AUTH_CONFIG.passwordResetRequestEndpoint),
@@ -7624,7 +7752,7 @@
             ? '<p class="auth-privacy-note"><strong>For your security.</strong>The same confirmation appears whether or not an account exists. Reset links expire and work only once.</p>'
             : '<p class="auth-setup-note" role="status">Email password recovery is not available yet. Contact Student Support if you cannot sign in.</p>'
         }
-        <p class="auth-return"><a href="#/signin/${portal}">Return to ${portal === "faculty" ? "Faculty" : "Student"} Sign In</a></p>
+        <p class="auth-return"><a href="#/signin/${portal}">Return to ${portal === "faculty" ? "Faculty" : portal === "observer" ? "Observer" : "Student"} Sign In</a></p>
       `,
     );
   }
@@ -7830,19 +7958,11 @@
     const greetingName =
       user?.firstName || user?.displayName || user?.email || "Student";
     const enrolled = studentCourses();
-    const progress = overallProgress();
     const actions = smartActions();
     const primary = actions[0];
-    const pending = studentAssignments().filter((item) =>
-      ["due", "late", "overdue", "revision"].includes(
-        assignmentStatus(item).key,
-      ),
-    );
     const feedback = unreadFeedback();
     const standaloneFeedback = unreadStandaloneFeedbackNotifications();
     const feedbackCount = feedback.length + standaloneFeedback.length;
-    const week = nextSevenDays();
-    const weekEvents = calendarEvents().filter((event) => week.includes(event.date));
     const workspace = studentWorkspaceStatus();
     const primaryCopy = workspace.loading
       ? "Synchronizing your official course progress, submissions and feedback."
@@ -7851,7 +7971,7 @@
       : !enrolled.length
       ? "Choose your courses to build your learning plan and unlock course syllabi."
       : primary
-      ? `${escapeHtml(primary.eyebrow)} is the most important item in your learning plan.`
+      ? `${escapeHtml(primary.title)} · ${escapeHtml(primary.meta)}`
       : "You are caught up. Review your progress or plan the week ahead.";
     const primaryAction = workspace.loading
       ? '<span class="dashboard-sync-status" data-student-workspace-loading role="status"><span class="loading-dot" aria-hidden="true"></span>Syncing learning record</span>'
@@ -7863,6 +7983,7 @@
       ? `<a class="button button-gold" href="${escapeHtml(primary.actionUrl || `#/${primary.route}`)}" ${primary.notificationId ? `data-action="open-notification" data-id="${escapeHtml(primary.notificationId)}"` : ""}>${escapeHtml(primary.cta || "Open Next Action")} ${icon("arrow", 17)}</a>`
       : `<a class="button button-gold" href="#/calendar">Plan Your Week ${icon("arrow", 17)}</a>`;
     return `
+      <div class="workbench"><div class="workbench-main">
       <section class="welcome">
         <div class="welcome-copy">
           <p class="eyebrow light">${todayLabel()}</p>
@@ -7870,15 +7991,7 @@
           <p>${primaryCopy}</p>
           ${primaryAction}
         </div>
-        <img class="welcome-emblem" src="../images/lake-forest-academy-logo-light.png" alt="" />
       </section>
-      <section class="metric-grid" aria-label="Learning summary">
-        <a class="metric" href="#/courses" aria-label="${enrolled.length} active courses. Open My Courses."><span class="metric-icon">${icon("book")}</span><span><strong>${enrolled.length}</strong><span>Active Courses</span></span>${icon("arrow", 16)}</a>
-        <a class="metric" href="#/progress" aria-label="${progress}% overall progress. Open Progress and Grades."><span class="metric-icon">${icon("check")}</span><span><strong>${progress}%</strong><span>Overall Progress</span></span>${icon("arrow", 16)}</a>
-        <a class="metric" href="#/assignments" aria-label="${pending.length} items need attention. Open Assignments."><span class="metric-icon">${icon("clipboard")}</span><span><strong>${pending.length}</strong><span>Items Needing Attention</span></span>${icon("arrow", 16)}</a>
-        <a class="metric" href="#/progress" aria-label="${feedbackCount} new feedback items. Open Progress and Grades."><span class="metric-icon">${icon("bell")}</span><span><strong>${feedbackCount}</strong><span>New Feedback</span></span>${icon("arrow", 16)}</a>
-      </section>
-      <div class="dashboard-overview">
         <section class="dashboard-courses" aria-labelledby="dashboard-courses-heading">
           <header class="panel-header">
             <div><h2 id="dashboard-courses-heading">My Courses</h2><p>Open a course to continue your modules.</p></div>
@@ -7888,16 +8001,6 @@
             ? `<div class="dashboard-course-cards">${enrolled.map(dashboardCourseCard).join("")}</div>`
             : '<div class="empty-state"><p>No courses selected yet.</p><a class="button button-secondary" href="#/course-selection">Open Course Selection</a></div>'}
         </section>
-        <section class="panel dashboard-agenda" aria-labelledby="dashboard-agenda-heading">
-          <header class="panel-header">
-            <div><h2 id="dashboard-agenda-heading">Next 7 Days</h2><p>Published dates · Toronto time</p></div>
-            <a class="text-link" href="#/calendar">View All ${icon("arrow", 16)}</a>
-          </header>
-          ${agendaEntries(weekEvents.slice(0, 5)) ||
-            '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
-        </section>
-      </div>
-      <section class="dashboard-grid">
         <div class="panel dashboard-priority">
           <header class="panel-header">
             <div><h2>Next Actions</h2><p>Ordered by urgency across all courses</p></div>
@@ -7929,69 +8032,120 @@
               : '<div class="empty-state"><p>You are all caught up.</p></div>'
           }
         </div>
-        <div class="panel">
-          <header class="panel-header"><div><h2>Start Here</h2><p>Set up your courses and find help.</p></div></header>
-          <div class="dashboard-starter-links">
-            <a href="#/course-selection">Review course selection ${icon("arrow", 16)}</a>
-            <a href="#/announcements">Read course announcements ${icon("arrow", 16)}</a>
-            <a href="#/support">Find student support ${icon("arrow", 16)}</a>
-          </div>
-        </div>
-        <div class="panel">
-          <header class="panel-header"><div><h2>Feedback & Support</h2><p>Published feedback and people who can help</p></div></header>
-          ${
-            feedback.length || standaloneFeedback.length
-              ? feedback
-                  .slice(0, 2)
-                  .map((assignment) => {
-                    const course = findCourse(assignment.courseId);
-                    return `
-                      <a class="feedback-row" href="#/assignment/${assignment.id}">
-                        <span class="feedback-score">${assignmentScore(assignment)}%</span>
-                        <span><p class="course-code">${course.code} · New Feedback</p><h3>${escapeHtml(assignment.title)}</h3></span>
-                        ${icon("arrow", 18)}
-                      </a>
-                    `;
-                  })
-                  .join("") +
-                standaloneFeedback
-                  .slice(0, Math.max(0, 2 - feedback.length))
-                  .map(
-                    (notification) => `
-                      <a class="feedback-row" href="${escapeHtml(notification.actionUrl || "#/progress")}" data-action="open-notification" data-id="${escapeHtml(notification.id)}">
-                        <span class="feedback-score">${icon("bell", 18)}</span>
-                        <span><p class="course-code">New Feedback</p><h3>${escapeHtml(notification.title)}</h3></span>
-                        ${icon("arrow", 18)}
-                      </a>
-                    `,
-                  )
-                  .join("")
-              : '<div class="empty-state compact"><p>No unread feedback.</p></div>'
-          }
-          <a class="support-callout" href="#/support">
-            <span>${icon("award", 22)}</span>
-            <span><strong>Need help?</strong><small>Contact a teacher, counsellor or Learning Technology.</small></span>
-            ${icon("arrow", 18)}
-          </a>
-        </div>
-      </section>
+      </div>
+      <aside class="workbench-rail" aria-label="Schedule and feedback">
+        ${weeklyAgenda(enrolled)}
+        ${recentFeedbackPanel(enrolled)}
+        ${classroomLinks(enrolled, false)}
+        <a class="rail-link" href="#/progress" aria-label="${feedbackCount} new feedback items. Open Progress and Grades.">Progress &amp; Grades ${icon("arrow", 16)}</a>
+        <a class="rail-link" href="#/reading-sample">Try a reading sample ${icon("book", 16)}</a>
+      </aside></div>
     `;
+  }
+
+  function progressRing(percent) {
+    const available = Number.isFinite(percent);
+    return `<span class="progress-ring" style="--progress: ${available ? percent : 0}%" aria-hidden="true"><span>${available ? percent + "%" : "—"}</span></span>`;
   }
 
   function dashboardCourseCard(course) {
     const progress = courseProgress(course);
-    return `<a class="dashboard-course-card" href="#/course/${escapeHtml(course.id)}">
-      <img src="${escapeHtml(course.image)}" alt="" loading="lazy" />
-      <div>
-        <span class="course-code">${escapeHtml(course.code)}</span>
-        <h3>${escapeHtml(course.title)}</h3>
-        ${progress.official
-          ? `<progress max="100" value="${progress.percent}" aria-label="Official module progress"></progress>
-            <p>${progress.completed} of ${progress.total} modules complete</p>`
-          : '<p>Open the course to view module progress.</p>'}
-        <span class="dashboard-course-action">Open course ${icon("arrow", 16)}</span>
+    const grade = courseGrade(course.id);
+    const module = progress.official && course.platformModules.find((item) =>
+      moduleIsUnlocked(course, item) && moduleStatus(course, item).key !== "completed");
+    const gradeUnavailable = !Array.isArray(platformRuntime.studentGrades[course.code]) ||
+      platformRuntime.errors[`grades:${course.code}`] || remoteSubmissionsState.error;
+    const gradeLabel = gradeUnavailable || grade?.weightsPending ? "Grade unavailable" : grade ? `${grade.current}% current grade` : "No published grade";
+    return `<article class="workbench-course-card">
+      <div class="workbench-card-heading"><p class="course-code">${escapeHtml(course.code)}</p><h3><a href="#/course/${escapeHtml(course.id)}">${escapeHtml(course.title)}</a></h3></div>
+      <div class="workbench-card-record">
+        ${progressRing(progress.official ? progress.percent : null)}
+        <div><strong>${progress.official ? `${progress.completed} of ${progress.total} modules complete` : "Progress unavailable"}</strong><small>${escapeHtml(gradeLabel)}</small></div>
       </div>
-    </a>`;
+      <a class="workbench-card-action" href="#/${escapeHtml(module ? platformModuleRoute(course, module) : "course/" + course.id)}">${module ? "Resume" : "Open course"} ${icon("arrow", 16)}</a>
+    </article>`;
+  }
+
+  function courseDatesStatus(courses, faculty) {
+    if (faculty && !accessibleCourseCodes) {
+      return driveRequestInFlight ? "Loading course dates…" : "Some course dates are unavailable.";
+    }
+    for (const course of courses) {
+      const key = (faculty ? "teacher-modules:" : "student-progress:") + course.code;
+      if (!courseAssignmentsEndpoint(course) || (!faculty && !studentProgressEndpoint(course)) ||
+          platformRuntime.errors[key] || platformRuntime.errors["dates:" + course.code]) {
+        return "Some course dates are unavailable.";
+      }
+    }
+    return courses.some((course) => !Array.isArray(platformRuntime.assignments[course.code]))
+      ? "Loading course dates…" : "";
+  }
+
+  function agendaStatusMarkup(status, events, emptyMessage) {
+    const message = status || (!events.length && emptyMessage);
+    return message ? `<p class="rail-empty" role="status">${message}</p>` : "";
+  }
+
+  function weeklyAgenda(courses, faculty = false) {
+    const week = nextSevenDays();
+    const events = calendarEvents(faculty).filter((event) => week.includes(event.date));
+    const status = courseDatesStatus(courses, faculty);
+    return `<section class="workbench-rail-panel"><header><h2>Next 7 Days</h2><p>${formatDate(week[0])} – ${formatDate(week[6])} · Toronto</p></header>
+      ${agendaEntries(events.slice(0, 5))}
+      ${agendaStatusMarkup(status, events, "No dates are posted for the next seven days.")}
+      <a class="rail-link" href="#/${faculty ? "teacher/" : ""}calendar">Open calendar ${icon("arrow", 16)}</a></section>`;
+  }
+
+  function recentFeedbackPanel(courses, faculty = false) {
+    const entries = [];
+    const add = (course, title, body, date, href, author, recipient = "") => {
+      if (body && validTimestamp(date)) entries.push({ course, title, body, date, href, author, recipient });
+    };
+    for (const course of courses) {
+      for (const record of remoteSubmissionsState.records.filter((item) => item.courseId === course.id)) {
+        const assignment = findAssignment(record.assignmentId);
+        if (!assignment || (!faculty && !assignmentIsUnlocked(assignment))) continue;
+        const submission = record.submission;
+        const href = faculty ? teacherRecordLink({ ...record, assignment }) : "#/assignment/" + assignment.id;
+        const recipient = faculty ? record.student?.id : "";
+        for (const message of submission.messages || []) {
+          if (!faculty && !["teacher", "teacher_admin"].includes(message.authorRole)) continue;
+          add(course.code, assignment.title, message.body, message.createdAt, href, message.authorName, recipient);
+        }
+        add(course.code, assignment.title, submission.feedback, submission.publishedAt, href, submission.gradedByDisplayName, recipient);
+      }
+      if (faculty) {
+        const book = platformRuntime.teacherGradebooks[course.code];
+        const items = new Map((book?.items || []).map((item) => [item.id, item]));
+        for (const student of book?.students || []) for (const score of student.scores || []) {
+          const item = items.get(score.itemId);
+          const grade = publishedTeacherGrade(score);
+          if (item && grade) add(course.code, item.title, grade.feedback, grade.publishedAt, "#/teacher/course/" + course.id, student.displayName ? "For " + student.displayName : "", student.studentId);
+        }
+      } else for (const grade of publishedDirectGrades(course.code)) {
+        add(course.code, grade.title || "Published grade", grade.feedback, grade.publishedAt, "#/progress", grade.gradedByDisplayName);
+      }
+    }
+    entries.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    const seen = new Set();
+    const distinct = entries.filter((entry) => {
+      const key = JSON.stringify([entry.course, entry.title, entry.date, entry.body, entry.recipient]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const unavailable = !submissionsEndpointUrl() || remoteSubmissionsState.error ||
+      (faculty && !accessibleCourseCodes && !driveRequestInFlight) ||
+      courses.some((course) => faculty
+        ? !teacherCourseEndpoint(course, "gradebook") || platformRuntime.errors["teacher-gradebook:" + course.code]
+        : !studentGradesEndpoint(course) || platformRuntime.errors["grades:" + course.code] || platformRuntime.errors["student-progress:" + course.code]);
+    const loading = (!remoteSubmissionsState.lastLoadedAt || (faculty && !accessibleCourseCodes) ||
+      courses.some((course) => faculty ? !platformRuntime.teacherGradebooks[course.code] : !platformRuntime.studentGrades[course.code]));
+
+    return `<section class="workbench-rail-panel"><header><h2>${faculty ? "Recent feedback & replies" : "Recent teacher feedback"}</h2></header>
+      ${distinct.slice(0, 3).map((item) => `<a class="rail-comment" href="${escapeHtml(item.href)}"><span class="course-code">${escapeHtml(item.course)} · ${formatDate(item.date)}</span>
+        <strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.body)}</p>${item.author ? `<small>${escapeHtml(item.author)}</small>` : ""}</a>`).join("")}
+      ${unavailable || loading || !distinct.length ? `<p class="rail-empty" role="status">${unavailable ? "Some feedback could not be loaded." : loading ? "Loading recent feedback…" : "No recent feedback or revision comments to show."}</p>` : ""}</section>`;
   }
 
   function courseRow(course) {
@@ -8251,6 +8405,7 @@
         </div>
         <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
       </section>
+      ${courseWorkspaceLinks(course, false)}
       <section class="course-detail-grid">
         <div class="panel">
           <header class="panel-header"><div><h2>${modules.length}-Module Learning Path</h2><p>Read, practise, check understanding, complete evidence, then use feedback to unlock the next module.</p></div></header>
@@ -8302,7 +8457,7 @@
               <div class="fact"><span>Course Mode</span><strong>${escapeHtml(course.mode)}</strong></div>
               <div class="fact"><span>Planned Learning</span><strong>${course.plannedHours} hours</strong></div>
               <div class="fact"><span>Prerequisite</span><strong>${escapeHtml(course.prerequisite)}</strong></div>
-              <div class="fact"><span>Current Standing</span><strong>${grade ? `${grade.current}%` : "Not Yet Graded"}</strong></div>
+              <div class="fact"><span>Current Standing</span><strong>${grade?.weightsPending ? "Awaiting assessment weights" : grade ? `${grade.current}%` : "Not Yet Graded"}</strong></div>
               <div class="fact"><span>OSSD Credit</span><strong>${escapeHtml(course.credit)}</strong></div>
             </div>
           </div>
@@ -8719,17 +8874,18 @@
       </a>`).join("");
   }
 
-  function calendarView(courseId) {
-    const courses = studentCourses();
+  function calendarView(courseId, faculty = false) {
+    const courses = faculty ? facultyCourses() : studentCourses();
     const selected = courses.find((course) => course.id === courseId);
     const week = nextSevenDays();
     const today = week[0];
     const lastDay = week[6];
-    const upcoming = calendarEvents().filter((event) =>
+    const upcoming = calendarEvents(faculty).filter((event) =>
       event.date >= today && (!selected || event.courseId === selected.id),
     );
     const thisWeek = upcoming.filter((event) => event.date <= lastDay);
     const later = upcoming.filter((event) => event.date > lastDay);
+    const dateStatus = courseDatesStatus(selected ? [selected] : courses, faculty);
     const chip = (label, href, active) =>
       `<a href="${href}"${active ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
 
@@ -8738,23 +8894,23 @@
         "Course Schedule",
         "Learning Calendar",
         "Check published deadlines and scheduled events in Toronto time.",
-        '<a class="button button-secondary" href="#/assignments">View Assignments</a>',
+        faculty ? '<a class="button button-secondary" href="#/teacher/courses">View Courses</a>' : '<a class="button button-secondary" href="#/assignments">View Assignments</a>',
       )}
-      ${courses.length ? `<nav class="agenda-filters" aria-label="Filter calendar by course">
+      ${!faculty && courses.length ? `<nav class="agenda-filters" aria-label="Filter calendar by course">
         ${chip("All courses", "#/calendar", !selected)}
         ${courses.map((course) => chip(course.code, `#/calendar/${encodeURIComponent(course.id)}`, course.id === selected?.id)).join("")}
       </nav>` : ""}
       <section class="panel agenda-panel" aria-labelledby="agenda-week">
         <header class="panel-header"><div><h2 id="agenda-week">Next 7 Days</h2>
           <p>${formatDate(today)} – ${formatDate(lastDay)}</p></div></header>
-        ${agendaEntries(thisWeek) || '<div class="empty-state"><p>No dates are posted for the next seven days.</p></div>'}
+        ${agendaEntries(thisWeek)}${agendaStatusMarkup(dateStatus, thisWeek, "No dates are posted for the next seven days.")}
       </section>
       <section class="panel agenda-panel" aria-labelledby="agenda-later">
         <header class="panel-header"><div><h2 id="agenda-later">Later Dates</h2></div></header>
-        ${agendaEntries(later) || '<div class="empty-state"><p>No later dates are posted.</p></div>'}
+        ${agendaEntries(later)}${agendaStatusMarkup(dateStatus, later, "No later dates are posted.")}
       </section>
-      <p class="agenda-note">For overdue work or assignments without a published date, <a class="text-link" href="#/assignments">open Assignments</a>.</p>
-      ${courses.length ? `<section class="panel agenda-panel agenda-study" aria-labelledby="agenda-study">
+      ${faculty ? "" : '<p class="agenda-note">For overdue work or assignments without a published date, <a class="text-link" href="#/assignments">open Assignments</a>.</p>'}
+      ${!faculty && courses.length ? `<section class="panel agenda-panel agenda-study" aria-labelledby="agenda-study">
         <header class="panel-header"><div><h2 id="agenda-study">Weekly Study Plan</h2><p>Recommended independent study time</p></div>
           <a class="text-link" href="#/support">Ask for planning help ${icon("arrow", 16)}</a>
         </header>
@@ -9355,7 +9511,8 @@
   function progressView() {
     const enrolled = studentCourses();
     const standings = enrolled.map((course) => courseGrade(course.id)).filter(Boolean);
-    const average = standings.length
+    const weightsPending = standings.some((grade) => grade.weightsPending);
+    const average = standings.length && !weightsPending
       ? Math.round(
           standings.reduce((total, grade) => total + grade.current, 0) /
             standings.length,
@@ -9395,7 +9552,7 @@
       )}
       <section class="progress-summary">
         <div class="progress-stat"><p class="course-code">Overall Progress</p><strong>${overallProgress()}%</strong><span>${completedModules} of ${platformModules.length} modules complete</span></div>
-        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${average == null ? "No published grades yet" : `Across ${enrolled.length} active courses`}</span></div>
+        <div class="progress-stat"><p class="course-code">Current Average</p><strong>${average == null ? "—" : `${average}%`}</strong><span>${weightsPending ? "Awaiting assessment weights" : average == null ? "No published grades yet" : `Across ${enrolled.length} active courses`}</span></div>
         <div class="progress-stat"><p class="course-code">Evaluated Work</p><strong>${evaluatedCount}</strong><span>${evaluatedCount === 1 ? "Published gradebook result" : "Published gradebook results"}</span></div>
       </section>
       <section class="panel">
@@ -9409,8 +9566,8 @@
                 <h3>${course.code} · ${escapeHtml(course.title)}</h3>
                 <p>${progress.completed}/${progress.total} modules · Instructor: ${escapeHtml(course.instructor)}</p>
               </span>
-              <strong class="grade-score">${grade ? `${grade.current}%` : "—"}</strong>
-              <span class="badge ${grade ? "success" : ""}">${grade ? `${grade.gradedWeight || 0}% weight graded` : "Not Yet Graded"}</span>
+              <strong class="grade-score">${grade?.current != null ? `${grade.current}%` : "—"}</strong>
+              <span class="badge ${grade?.current != null ? "success" : ""}">${grade?.weightsPending ? "Awaiting assessment weights" : grade ? `${grade.gradedWeight || 0}% weight graded` : "Not Yet Graded"}</span>
             </a>
           `;
         }).join("")}
@@ -9617,6 +9774,30 @@
     window.history.replaceState(null, "", `#/${route}`);
   }
 
+  function facultyRouteGate(route) {
+    const [, section, target, assignmentId] = route;
+    if (!target || !["course", "submissions", "submission"].includes(section)) return "";
+    // An unpublished or unassigned native course still has local metadata. Only
+    // the authenticated catalogue can authorize rendering and subsequent reads.
+    if (!accessibleCourseCodes) {
+      if (!courseCatalogChecked && configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint)) {
+        void refreshDriveMaterials({ silent: true, catalogOnly: true });
+      }
+      return driveRequestInFlight
+        ? '<p role="status">Checking your assigned courses…</p>'
+        : '<h1>Course access unavailable</h1><p>Your assigned course list could not be verified.</p><button type="button" class="button button-secondary" data-action="retry-course-access">Check again</button>';
+    }
+    const course = section === "submission"
+      ? findCourse(findAssignment(safeDecode(assignmentId))?.courseId) || institutionalCourseForItem(safeDecode(assignmentId))
+      : findCourse(safeDecode(target));
+    const assignment = assignmentId && findAssignment(safeDecode(assignmentId));
+    if ((section !== "submission" && !course) || (course && !accessibleCourseCodes.has(course.code)) ||
+        (section === "submissions" && assignment && assignment.courseId !== course?.id)) {
+      return '<h1>Course unavailable</h1><p>This page is outside your assigned courses.</p>';
+    }
+    return "";
+  }
+
   function renderTeacher(route) {
     let teacherRoute = route;
     if (teacherRoute[0] !== "teacher") {
@@ -9629,6 +9810,13 @@
       view = teacherDashboardView();
     } else if (teacherRoute[1] === "courses") {
       view = teacherCoursesView();
+    } else if (teacherRoute[1] === "calendar") {
+      view = calendarView("", true);
+    } else if (teacherRoute[1] === "grades") {
+      view = facultyGradesView();
+    } else if (teacherRoute[1] === "support") {
+      view = pageHeading("Faculty services", "Academic Support", "Get help with course records, assessment or access.") +
+        '<div class="dashboard-starter-links"><a href="mailto:academics@lakeforestacademy.ca">Contact Academic Office</a><a href="mailto:support@lakeforestacademy.ca">Contact Learning Technology</a></div>';
     } else if (teacherRoute[1] === "submissions") {
       view = teacherSubmissionsView(
         safeDecode(teacherRoute[2] || ""),
@@ -9669,7 +9857,9 @@
       view = teacherDashboardView();
     }
     APP_ROOT.innerHTML = teacherShell(view);
-    if (teacherRoute[1] === "course") {
+    if (["dashboard", "calendar", "grades"].includes(teacherRoute[1])) {
+      facultyCourses().forEach((course) => ensureTeacherPlatformData(course, teacherRoute[1]));
+    } else if (teacherRoute[1] === "course") {
       ensureTeacherPlatformData(findCourse(teacherRoute[2]));
     } else if (["submissions", "submission"].includes(teacherRoute[1])) {
       const selectedCourse = teacherRoute[1] === "submissions" && findCourse(teacherRoute[2]);
@@ -9702,6 +9892,63 @@
     );
   }
 
+  function classroomLinks(courses, faculty) {
+    if (!classroomCourseCodes.has("MCV4U") || !courses.some((course) => course.code === "MCV4U")) return "";
+    const prefix = faculty ? "teacher/" : "";
+    return `<a class="rail-link" href="#/${prefix}classroom/MCV4U/cia4u-demand-2-3">Open the CIA4U demonstration seminar</a>`;
+  }
+
+  function courseWorkspaceLinks(course, faculty) {
+    if (!classroomCourseCodes.has(course.code)) return "";
+    const items = [["records","Module 0 & learning evidence"],["review","Feedback & revisions"],["seminar","Text seminars"]];
+    if (faculty && course.code === "MCV4U") items.push(["insights","Learner insights"]);
+    const prefix = faculty ? "teacher/" : "";
+    return '<nav class="course-workspace-links" aria-label="Course workspaces">' + items.map(([page,title]) =>
+      '<a class="text-link" href="#/' + prefix + page + '/' + encodeURIComponent(course.code) + '">' + title + '</a>').join("") + '</nav>';
+  }
+
+  function mountAcademicWorkspace(kind, courseCode) {
+    const api = configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint);
+    if (!api || (courseCode && !classroomCourseCodes.has(courseCode))) return false;
+    const key = [currentUser()?.id,kind,courseCode].join("/");
+    if (APP_ROOT.querySelector("lfa-academic-workspace")?.dataset.key === key) return true;
+    const host = document.createElement("lfa-academic-workspace");
+    host.dataset.key = key;
+    host.connection = {kind,courseCode,endpoint:new URL(api).origin,csrf:currentCsrfToken,role:currentUser().role,
+      returnHref:"#/" + (isTeacher()?"teacher/":"") + "course/" + courseCode.toLowerCase()};
+    document.title = ({records:"Academic record",review:"Feedback & revisions",seminar:"Text seminars",insights:"Learner insights"})[kind] + " | Lake Forest Learning";
+    APP_ROOT.replaceChildren(host);
+    window.scrollTo(0,0);
+    return true;
+  }
+
+  function mountObserverWorkspace() {
+    if (!mountAcademicWorkspace("insights","")) APP_ROOT.innerHTML = '<main><h1>Observer report</h1><p>The academic service is unavailable.</p><button data-action="logout">Sign out</button></main>';
+  }
+
+  function mountClassroom(courseCode, contentId, nativeLesson = null) {
+    const api = configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint);
+    if (!api || !classroomCourseCodes.has(courseCode) || !/^[A-Z0-9-]{3,20}$/.test(courseCode) || !/^[a-z0-9-]{1,100}$/.test(contentId)) return false;
+    const key = [currentUser()?.id, courseCode, contentId].join("/");
+    if (APP_ROOT.querySelector("lfa-classroom")?.dataset.key === key) return true;
+    const host = document.createElement("lfa-classroom");
+    const course = findCourse(courseCode.toLowerCase());
+    const next = nativeLesson && course?.lessons[course.lessons.findIndex(l => l.id === nativeLesson.id) + 1];
+    host.dataset.key = key;
+    host.connection = {
+      endpoint: new URL("/v1/courses/" + encodeURIComponent(courseCode) + "/interactive-lessons/" + encodeURIComponent(contentId), api).href,
+      csrf: currentCsrfToken,
+      returnHref: "#/" + (isTeacher() ? "teacher/" : "") + "course/" + courseCode.toLowerCase(),
+      integrityHref: "#/records/" + courseCode,
+      fallbackHref: nativeLesson ? lessonReaderHref(nativeLesson) : "",
+      nextHref: next && lessonIsUnlocked({...next, course}) ? "#/lesson/" + next.id : "",
+    };
+    document.title = "Interactive classroom | Lake Forest Learning";
+    APP_ROOT.replaceChildren(host);
+    window.scrollTo(0, 0);
+    return true;
+  }
+
   function renderAfterBackgroundRefresh() {
     if (document.querySelector('#announcement-form[data-dirty="true"]')) return false;
     if (assignmentFormHasUnsavedWork()) return false;
@@ -9715,6 +9962,15 @@
     }
     const previousScroll = preserveScroll ? window.scrollY : 0;
     const authParts = routeParts();
+    if (authParts[0] === "reading-sample") {
+      // Session and catalogue refreshes must preserve the visitor's reading state.
+      if (!APP_ROOT.querySelector("lfa-reading-sample")) {
+        document.title = "Reading sample | Lake Forest Learning";
+        APP_ROOT.replaceChildren(document.getElementById("public-reading-view").content.cloneNode(true));
+        if (shouldFocusMain) focusMain();
+      }
+      return;
+    }
     if (authParts[0] === "reset-password") {
       resetPasswordView();
       if (shouldFocusMain) focusMain();
@@ -9737,7 +9993,7 @@
             authRoute === "teacher" ||
             (authRoute === "signin" && authParts[1] === "faculty")
               ? "faculty"
-              : "student",
+              : (authRoute === "observer" || (authRoute === "signin" && authParts[1] === "observer")) ? "observer" : "student",
         });
       if (preserveScroll) {
         window.requestAnimationFrame(() =>
@@ -9748,6 +10004,53 @@
       return;
     }
     let route = routeParts();
+    if (currentUser()?.role === "observer") {
+      if (route[0] !== "observer" || route.length !== 1) replaceRoute("observer");
+      mountObserverWorkspace();
+      return;
+    }
+    if (route[0] === "signin") {
+      const next = requestedPortalRoute(isTeacher() ? "faculty" : "student");
+      if (next) { replaceRoute(next); route = routeParts(); }
+    }
+    const classroomRoute = isTeacher() && route[0] === "teacher" ? route.slice(1) : route;
+    const workspaceRoute = isTeacher() ? (route[0] === "teacher" ? route.slice(1) : []) : route;
+    const academicRoute = workspaceRoute.length === 2 && ["records","review","seminar",...(isTeacher()?["insights"]:[])].includes(workspaceRoute[0]);
+    const lessonRoute = classroomRoute.length === 3 && classroomRoute[0] === "classroom";
+    if (academicRoute || lessonRoute) {
+      const code = academicRoute ? workspaceRoute[1] : classroomRoute[1];
+      if (!courseCatalogChecked && configuredDriveUrl(PLATFORM_API_CONFIG.coursesEndpoint)) {
+        void refreshDriveMaterials({ silent: true, catalogOnly: true });
+      }
+      if (classroomCourseCodes.has(code) && (academicRoute
+          ? mountAcademicWorkspace(workspaceRoute[0],code)
+          : mountClassroom(code,classroomRoute[2]))) return;
+      const pending = !accessibleCourseCodes && driveRequestInFlight;
+      document.title = "Course access | Lake Forest Learning";
+      APP_ROOT.innerHTML = '<main id="main-content" class="page"><section class="teacher-empty">' +
+        (pending ? '<p role="status">Checking course access…</p>' : '<h1>Workspace unavailable</h1><a href="#/' +
+          (isTeacher() ? 'teacher/' : '') + 'courses">Return to courses</a>') + '</section></main>';
+      return;
+    }
+    if (!isTeacher() && route[0] === "lesson" && route.length === 2) {
+      const lesson = findLesson(route[1]);
+      if (lesson && isCourseEnrolled(lesson.course.id)) {
+        const module = platformModuleForLesson(lesson);
+        const row = platformRuntime.modules[lesson.course.code]?.flatMap(m => m.lessons || []).find(l => l.id === lesson.id);
+        if (row?.interactiveLessonId && module && moduleIsUnlocked(lesson.course, module) &&
+            mountClassroom(lesson.course.code, row.interactiveLessonId, lesson)) return;
+      }
+    }
+    if (isTeacher() && route[0] === "teacher") {
+      const gate = facultyRouteGate(route);
+      if (gate) {
+        document.title = "Course access | Lake Forest Learning";
+        APP_ROOT.innerHTML = `<main id="main-content" class="page"><section class="teacher-empty">${gate}
+          <a class="button button-primary" href="#/teacher/courses">Open assigned courses</a></section></main>`;
+        if (shouldFocusMain) focusMain();
+        return;
+      }
+    }
     const materialsView = isTeacher()
       ? ["course", "courses", "materials"].includes(route[1])
       : ["course", "courses", "guide", "syllabus", "lesson", "assessments", "assignments"].includes(route[0]);
@@ -10270,6 +10573,7 @@
         return;
       }
       const facultySession = isTeacher();
+      const sessionPortal = currentUser()?.role === "observer" ? "observer" : facultySession ? "faculty" : "student";
       const submitButton = event.target.querySelector('[type="submit"]');
       if (submitButton) {
         submitButton.disabled = true;
@@ -10294,8 +10598,8 @@
         signInPrefill = "";
         signInNotice =
           "Your password has been updated and all sessions were signed out. Sign in again with the new password.";
-        replaceRoute(facultySession ? "signin/faculty" : "signin/student");
-        loginView({ portal: facultySession ? "faculty" : "student" });
+        replaceRoute("signin/"+sessionPortal);
+        loginView({ portal: sessionPortal });
       } catch (error) {
         if (submitButton) {
           submitButton.disabled = false;
@@ -10316,7 +10620,7 @@
       const form = new FormData(event.target);
       const email = normalizeEmail(form.get("email"));
       const password = String(form.get("password") || "");
-      const portal = form.get("portal") === "faculty" ? "faculty" : "student";
+      const portal = ["faculty","observer"].includes(form.get("portal")) ? form.get("portal") : "student";
       let account = null;
       let accepted = false;
       let remoteLogin = false;
@@ -10337,7 +10641,7 @@
             account &&
               (portal === "faculty"
                 ? isTeacher(account)
-                : account.role === "student"),
+                : account.role === portal),
           );
           remoteLogin = accepted;
         } catch (error) {
@@ -10372,7 +10676,7 @@
               ? "Secure sign-in is not available until the school API is deployed."
               : portal === "faculty"
               ? "The faculty email or password is incorrect. Please try again."
-              : "The student email or password is incorrect. Please try again.",
+              : portal === "observer" ? "The observer email or password is incorrect. Please try again." : "The student email or password is incorrect. Please try again.",
           email,
           portal,
         });
@@ -10395,9 +10699,8 @@
       signInNotice = "";
       signInPrefill = "";
       sessionStorage.removeItem(REGISTERED_ACCOUNT_KEY);
-      window.location.hash = isTeacher()
-        ? "#/teacher/dashboard"
-        : "#/dashboard";
+      const next = requestedPortalRoute(portal);
+      window.location.hash = "#/" + (next || (portal === "observer" ? "observer" : isTeacher() ? "teacher/dashboard" : "dashboard"));
       render(true);
       showToast(
         enrollmentRefreshError ||
@@ -11292,6 +11595,9 @@
     if (action === "dismiss-toast") {
       window.clearTimeout(toastTimer);
       target.closest(".toast")?.remove();
+    } else if (action === "refresh-risk-summary" && isTeacher()) {
+      riskBoard=null;
+      render(false,true);
     } else if (action === "reload-announcements") {
       announcementBoard = null;
       render(false, true);
@@ -11615,6 +11921,7 @@
       workspaceCallbackFeedback = null;
       sessionStorage.removeItem(WORKSPACE_LOGOUT_SUPPRESS_KEY);
       try {
+        sessionStorage.setItem(WORKSPACE_NEXT_KEY, requestedPortalRoute("faculty"));
         window.location.assign(authorizationUrl);
       } catch {
         target.disabled = false;
@@ -11643,6 +11950,8 @@
           )
           ?.focus(),
       );
+    } else if (action === "retry-course-access") {
+      await refreshDriveMaterials({ catalogOnly: true });
     } else if (action === "refresh-course-materials") {
       await refreshDriveMaterials();
     } else if (action === "sync-drive-materials") {
@@ -11703,6 +12012,7 @@
       setDrawerOpen(false);
     } else if (action === "logout") {
       const facultySession = isTeacher();
+      const sessionPortal = currentUser()?.role === "observer" ? "observer" : facultySession ? "faculty" : "student";
       target.disabled = true;
       if (configuredAuthUrl(AUTH_CONFIG.workspaceLogoutEndpoint)) {
         sessionStorage.setItem(WORKSPACE_LOGOUT_SUPPRESS_KEY, "1");
@@ -11733,10 +12043,8 @@
         ? "You are signed out of Lake Forest Learning. Your Google account remains signed in to this browser."
         : "You are signed out of Lake Forest Learning.";
       signInPrefill = "";
-      window.location.hash = facultySession
-        ? "#/signin/faculty"
-        : "#/signin/student";
-      loginView({ portal: facultySession ? "faculty" : "student" });
+      window.location.hash = "#/signin/"+sessionPortal;
+      loginView({ portal: sessionPortal });
     } else if (action === "add-course-pair") {
       const course = findCourse(target.dataset.course);
       if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
@@ -12149,6 +12457,11 @@
   restoreWorkspaceSession().then((restored) => {
     if (!restored && !sessionCheckWasPending) return;
     const callbackFeedback = workspaceCallbackFeedback;
+    if (callbackFeedback) {
+      const next = allowedPortalRoute(sessionStorage.getItem(WORKSPACE_NEXT_KEY), "faculty");
+      sessionStorage.removeItem(WORKSPACE_NEXT_KEY);
+      if (restored && callbackFeedback.status === "connected" && isTeacher() && next && routeParts()[0] === "teacher") replaceRoute(next);
+    }
     if (restored) workspaceCallbackFeedback = null;
     render(Boolean(restored || sessionCheckWasPending));
     if (

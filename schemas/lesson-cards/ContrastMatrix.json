@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.lakeforest.academy/lesson-cards/ContrastMatrix.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "common.json#/definitions/id"
+    },
+    "type": {
+      "const": "ContrastMatrix"
+    },
+    "title": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "ktca": {
+      "$ref": "common.json#/definitions/ktca"
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "prompt": {
+      "$ref": "common.json#/definitions/text"
+    },
+    "threshold": {
+      "const": 0.8
+    },
+    "buckets": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/definitions/choice"
+      },
+      "minItems": 2,
+      "maxItems": 3
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/definitions/line"
+      },
+      "minItems": 4,
+      "maxItems": 6
+    },
+    "private": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          }
+        },
+        "feedback": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "common.json#/definitions/text"
+          }
+        }
+      },
+      "required": [
+        "answers",
+        "feedback"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "ktca",
+    "required",
+    "prompt",
+    "threshold",
+    "buckets",
+    "items",
+    "private"
+  ],
+  "additionalProperties": false
+}

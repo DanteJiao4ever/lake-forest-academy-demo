@@ -1,0 +1,81 @@
+.review-workspace {
+  max-width: 65rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  overflow-wrap: anywhere;
+  background: var(--lfa-paper);
+  color: var(--lfa-ink);
+  font: 1rem/1.6 var(--lfa-ui);
+}
+.review-workspace h1,
+.review-workspace h2,
+.review-workspace h3 {
+  font-family: var(--lfa-heading);
+}
+.review-workspace section,
+.review-workspace details {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--lfa-divider);
+  border-radius: 0.4rem;
+  background: var(--lfa-card);
+}
+.review-workspace label {
+  display: block;
+  margin-block: 0.65rem;
+}
+.review-workspace textarea,
+.review-workspace input:not([type="checkbox"]) {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  color: inherit;
+  background: var(--lfa-paper);
+  border: 1px solid var(--lfa-divider);
+}
+.review-workspace input[type="number"] {
+  max-width: 8rem;
+}
+.review-workspace textarea {
+  resize: vertical;
+}
+.review-workspace button {
+  font: inherit;
+  color: var(--lfa-blue);
+  padding: 0.35rem 0.65rem;
+  margin: 0.25rem;
+  border: 1px solid var(--lfa-divider);
+  background: var(--lfa-card);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+.review-workspace pre,
+.review-workspace blockquote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.5rem 0;
+  padding-inline-start: 0.8rem;
+  border-inline-start: 2px solid var(--lfa-blue);
+  font: inherit;
+}
+.review-workspace li {
+  margin-block: 0.65rem;
+}
+.review-workspace li span,
+.review-workspace small {
+  display: block;
+}
+.review-workspace button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.review-workspace mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--lfa-amber) 27%, var(--lfa-paper));
+}
+.review-workspace pre button {
+  font-size: 0.77em;
+  vertical-align: super;
+  padding: 0.05em 0.2em;
+}

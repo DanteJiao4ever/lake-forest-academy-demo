@@ -1,0 +1,51 @@
+lfa-reading-sample { display: block; }
+.lfa-reading-sample {
+  box-sizing: border-box;
+  width: min(100%, 78rem);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.5rem) clamp(1rem, 5vw, 4.75rem);
+  background: var(--lfa-paper);
+  color: var(--lfa-ink);
+  font: 400 1rem/1.65 var(--lfa-ui);
+  scroll-margin-block-start: 6rem;
+}
+.lfa-reading-sample *, .lfa-reading-sample *::before { box-sizing: border-box; }
+.lfa-reading-sample .lfa-sample-head { display: block; position: static; background: none; color: inherit; margin: 0 0 2rem; padding: 0; box-shadow: none; border: 0; }
+.lfa-reading-sample .lfa-sample-kicker { color: var(--lfa-blue); font: 600 .75rem/1.4 var(--lfa-ui); letter-spacing: .06em; text-transform: uppercase; }
+.lfa-reading-sample h2, .lfa-reading-sample h3 { color: inherit; letter-spacing: -.025em; text-transform: none; font-family: var(--lfa-heading); font-weight: 500; }
+.lfa-reading-sample h2 { font-size: clamp(2.35rem, 5vw, 4.1rem); line-height: 1.05; margin: .5rem 0; }
+.lfa-reading-sample h3 { font-size: 1.6rem; line-height: 1.15; margin: 0 0 .75rem; }
+.lfa-reading-sample p { margin: .4rem 0 1rem; color: inherit; max-width: 68ch; }
+.lfa-sample-passage { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); border-block: 1px solid var(--lfa-divider); }
+.lfa-sample-text, .lfa-sample-margin, .lfa-sample-card { min-width: 0; padding: clamp(1.1rem, 2.5vw, 2rem); }
+.lfa-sample-text { padding-inline-start: 0; }
+.lfa-sample-margin { background: var(--lfa-sidebar); border-inline-start: 2px solid var(--lfa-blue); color: var(--lfa-ink); }
+.lfa-sample-margin q, .lfa-sample-margin blockquote { display: block; font: 450 1rem/1.5 var(--lfa-humanities); border-inline-start: 2px solid var(--lfa-blue); margin: .5rem 0; padding-inline-start: .65rem; }
+.lfa-sample-margin ol { padding: 0; list-style: none; margin: 0; }
+.lfa-sample-margin li + li { border-block-start: 1px solid var(--lfa-divider); padding-block-start: .75rem; margin-block-start: .75rem; }
+.lfa-sample-margin li { overflow-wrap: anywhere; }
+.lfa-sample-tools label { display: block; font-size: .88rem; }
+.lfa-sample-tools select { text-overflow: ellipsis; }
+.lfa-sample-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(.75rem, 2vw, 1.6rem); margin-top: 1.25rem; }
+.lfa-sample-card { background: var(--lfa-card); border: 1px solid var(--lfa-divider); border-inline-start: 4px solid var(--lfa-blue); }
+.lfa-sample-card + .lfa-sample-card { border-inline-start-color: var(--lfa-forest); }
+.lfa-reading-sample :is(input, textarea, select, button) { font: inherit; }
+.lfa-reading-sample :is(select, textarea) { width: 100%; max-width: 100%; padding: .55rem .65rem; margin: .4rem 0; background: var(--lfa-card); color: var(--lfa-ink); border: 1px solid #9aa9a3; border-radius: 3px; }
+.lfa-reading-sample textarea { display: block; resize: vertical; min-height: 3.9rem; }
+.lfa-reading-sample button { color: white; background: var(--lfa-forest); border: 1px solid transparent; border-radius: 3px; padding: .45rem .9rem; min-height: 44px; margin-top: .45rem; cursor: pointer; font-size: .9rem; }
+.lfa-reading-sample .lfa-sample-quiet { color: var(--lfa-blue); background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+.lfa-reading-sample button:disabled { opacity: .55; cursor: default; }
+.lfa-reading-sample :is(input, select, textarea, button, mark):focus-visible { outline: 3px solid var(--lfa-blue); outline-offset: 2px; }
+.lfa-reading-sample fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+.lfa-reading-sample legend { color: inherit; margin: 0 0 .45rem; padding: 0; }
+.lfa-reading-sample .lfa-sample-choice { display: flex; gap: .65rem; align-items: baseline; padding: .4rem 0; cursor: pointer; font-size: .94rem; }
+.lfa-sample-choice input { flex: none; width: 1rem; height: 1rem; margin: 0; accent-color: var(--lfa-forest); }
+.lfa-reading-sample mark { color: var(--lfa-ink); background: color-mix(in srgb, var(--lfa-blue) 18%, var(--lfa-paper)); }
+.lfa-sample-feedback { margin-top: 1rem; padding-inline-start: .8rem; border-inline-start: 3px solid var(--lfa-blue); }
+.lfa-sample-feedback[data-result="retry"] { border-color: var(--lfa-amber); }
+.lfa-sample-feedback[data-result="correct"] { border-color: var(--lfa-forest); }
+@media (max-width: 760px) {
+  .lfa-sample-passage, .lfa-sample-cards { grid-template-columns: minmax(0, 1fr); }
+  .lfa-sample-text { padding-inline-end: 0; }
+  .lfa-sample-margin { margin-bottom: 1rem; }
+}

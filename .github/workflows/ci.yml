@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
 
   backend:
@@ -84,4 +84,17 @@ jobs:
           INTERACTIVE_TEST_RUNTIME_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
           INTERACTIVE_TEST_OWNER_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
           SECTION_SETUP_DATABASE_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
+      - name: Install website and browser test dependencies
+        working-directory: .
+        run: |
+          npm ci --no-audit --no-fund
+          npx --no-install playwright-core install --with-deps chromium
+      - name: Test browser workspaces with PostgreSQL
+        working-directory: .
+        run: |
+          npx --no-install vite build
+          npm run test:browser
+        env:
+          INTERACTIVE_TEST_RUNTIME_URL: postgresql://lfa_api:ci-runtime-password@127.0.0.1:5432/lfa_learning
+          INTERACTIVE_TEST_OWNER_URL: postgresql://lfa_migrator:ci-migrator-password@127.0.0.1:5432/lfa_learning
       - run: docker build --tag lfa-learning-api:${GITHUB_SHA} .

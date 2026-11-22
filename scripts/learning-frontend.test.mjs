@@ -488,9 +488,9 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=course-packs-v2",
-    "./platform-sequences.js?v=course-packs-v2",
-    "./app.js?v=course-packs-v2",
+    "./course-catalog.js?v=portal-workbench-v1",
+    "./platform-sequences.js?v=portal-workbench-v1",
+    "./app.js?v=portal-workbench-v1",
   ]);
 });
 
@@ -766,6 +766,17 @@ async function renderPortal(hash, session, options = {}) {
         window,
       }
     : appRoot.innerHTML;
+}
+
+async function renderAssignedFaculty(code, hash, session, options = {}) {
+  return renderPortal(hash, session, {
+    ...options,
+    platformApiConfig: { ...options.platformApiConfig, coursesEndpoint: "https://api.example.test/v1/courses" },
+    fetch: (request, init) => {
+      if (new URL(request).pathname === "/v1/courses") return jsonResponse({ data: [{ code, status: "active" }] });
+      return options.fetch ? options.fetch(request, init) : jsonResponse({ data: [] });
+    },
+  });
 }
 
 function jsonResponse(payload, status = 200) {
@@ -1448,7 +1459,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "course-packs-v2";/,
+    /const SCRIPT_VERSION = "portal-workbench-v1";/,
   );
 });
 
@@ -1480,8 +1491,8 @@ test("the browser catalog exposes six courses, 72 modules and 38 assignments", a
       (item) => item.moduleKey === `${code}-M11` && item.assignmentKey,
     );
     assert.deepEqual(
-      Array.from(finalAssignments, (item) => item.weightPercent),
-      [10, 15],
+      Object.fromEntries(finalAssignments.map((item) => [item.submissionMode, item.weightPercent])),
+      { project: 10, supervised: 15 },
     );
   }
   assert.doesNotMatch(JSON.stringify(catalog), /20\d{2}-\d{2}-\d{2}/);
@@ -1563,7 +1574,7 @@ test("student and faculty module routes render the merged course sequence", asyn
     assert.match(finalModule, /\(15%\)/);
   }
 
-  const facultyModule = await renderPortal(
+  const facultyModule = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u/module/2",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -1575,7 +1586,7 @@ test("student and faculty module routes render the merged course sequence", asyn
   assert.match(facultyModule, /Evidence to Retain/);
   assert.match(facultyModule, /Create Unlock Override/);
 
-  const facultyCourse = await renderPortal("#/teacher/course/sch4u", {
+  const facultyCourse = await renderAssignedFaculty("SCH4U", "#/teacher/course/sch4u", {
     email: "administrator@lakeforestacademy.ca",
     displayName: "Academic Administrator",
     role: "teacher_admin",
@@ -1592,7 +1603,7 @@ test("student and faculty module routes render the merged course sequence", asyn
   assert.match(facultyCourse, /Connect the secure course service to view the official roster and progress/);
   assert.doesNotMatch(facultyCourse, />undefined</);
 
-  const invalidFacultyModule = await renderPortal(
+  const invalidFacultyModule = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u/module/SCH4U-M99",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -1606,7 +1617,7 @@ test("student and faculty module routes render the merged course sequence", asyn
     email: "student@lakeforestacademy.ca",
     role: "student",
   });
-  assert.match(calendar, /No dates are posted for the next seven days/);
+  assert.match(calendar, /Some course dates are unavailable/);
   assert.doesNotMatch(calendar, /Invalid Date/);
 });
 
@@ -2409,7 +2420,7 @@ test("faculty can return an assignment for revision through the secure workflow"
   };
   let revisionRequest = null;
   let submittedForm = null;
-  const result = await renderPortal(
+  const result = await renderAssignedFaculty("SCH4U",
     "#/teacher/submission/return%40example.test/sch4u-m02-assignment",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -2545,7 +2556,8 @@ test("student and faculty assignment conversations post messages to the same sec
       progress,
       submission: record,
     });
-    const result = await renderPortal(
+    const renderThread = testCase.role === "student" ? renderPortal : renderAssignedFaculty.bind(null, "SCH4U");
+    const result = await renderThread(
       testCase.route,
       {
         email: testCase.email,
@@ -2731,8 +2743,8 @@ test("configured progress fails closed while loading or unavailable and preserve
   assert.match(available, /Required Reading Order/);
 });
 
-test("final evaluation assignment labels do not depend on the remote API", async () => {
-  const html = await renderPortal("#/teacher/course/sch4u", {
+test("authorized faculty retain final evaluation labels when course detail APIs are unavailable", async () => {
+  const html = await renderAssignedFaculty("SCH4U", "#/teacher/course/sch4u", {
     email: "administrator@lakeforestacademy.ca",
     displayName: "Academic Administrator",
     role: "teacher_admin",
@@ -2810,7 +2822,7 @@ test("faculty module details prefer staff-only API fields and normalize final ev
     }
     return jsonResponse({ data: [] });
   };
-  const html = await renderPortal(
+  const html = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u/module/SCH4U-M11",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -2827,7 +2839,7 @@ test("faculty module details prefer staff-only API fields and normalize final ev
   assert.match(html, /Remote process checkpoint/);
   assert.match(html, /Remote identity evidence/);
 
-  const courseHtml = await renderPortal(
+  const courseHtml = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -2910,7 +2922,7 @@ test("faculty course and module views render the official student progress matri
     displayName: "Academic Administrator",
     role: "teacher_admin",
   };
-  const courseResult = await renderPortal("#/teacher/course/sch4u", session, {
+  const courseResult = await renderAssignedFaculty("SCH4U", "#/teacher/course/sch4u", session, {
     platformApiConfig,
     fetch,
     settleTurns: 14,
@@ -2949,7 +2961,7 @@ test("faculty course and module views render the official student progress matri
   assert.match(course, /data-status="in_progress">In Progress/);
   assert.match(course, /Override active/);
 
-  const module = await renderPortal(
+  const module = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u/module/SCH4U-M02",
     session,
     { platformApiConfig, fetch, settleTurns: 14 },
@@ -3015,7 +3027,7 @@ test("faculty progress fails closed when the central endpoint is unavailable", a
       }),
     },
   };
-  const course = await renderPortal(
+  const course = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u",
     session,
     options,
@@ -3026,7 +3038,7 @@ test("faculty progress fails closed when the central endpoint is unavailable", a
   assert.doesNotMatch(course, /aria-label="SCH4U official progress matrix"/);
   assert.doesNotMatch(course, /class="badge [^"]*teacher-progress-status"/);
 
-  const module = await renderPortal(
+  const module = await renderAssignedFaculty("SCH4U",
     "#/teacher/course/sch4u/module/SCH4U-M02",
     session,
     options,
@@ -3134,7 +3146,7 @@ async function checkCentralDraft(rubric) {
     }
     return jsonResponse({ data: [] });
   };
-  const result = await renderPortal(
+  const result = await renderAssignedFaculty("SCH4U",
     "#/teacher/submission/student%40example.test/sch4u-m02-assignment",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -3292,7 +3304,7 @@ test("published grades and revision requests use distinct workflow language", as
     return jsonResponse({ data: [] });
   };
 
-  const teacher = await renderPortal(
+  const teacher = await renderAssignedFaculty("SCH4U",
     "#/teacher/submission/student%40lakeforestacademy.ca/sch4u-m02-assignment",
     {
       email: "faculty@lakeforestacademy.ca",
@@ -3348,7 +3360,7 @@ test("published grades and revision requests use distinct workflow language", as
     }
     return jsonResponse({ data: [] });
   };
-  const revision = await renderPortal(
+  const revision = await renderAssignedFaculty("SCH4U",
     "#/teacher/submission/student%40lakeforestacademy.ca/sch4u-m02-assignment",
     {
       email: "faculty@lakeforestacademy.ca",
@@ -4356,7 +4368,31 @@ test("Drive material cache keys are account- and role-scoped", async () => {
   assert.match(app, /function resetDriveMaterialsForSession\(\)/);
 });
 
-test("student progress uses only published direct grades and weights supervised and participation results", async () => {
+test("retains a published ICS4U project result while waiting for official assignment weights", async () => {
+  const session = { email: "project-student@example.test", role: "student" };
+  const id = "ics4u-m11-culminating-assignment";
+  const options = {
+    localStorageSeed: studentStateStorage(session.email, {
+      enrolledCourseIds: ["ics4u"], submissions: { [id]: { score: 90, publishedAt: "published" } },
+    }),
+    platformApiConfig: studentPlatformApiConfig, settleTurns: 14,
+  };
+  const progress = (weights) => renderPortal("#/progress", session, {
+    ...options,
+    fetch: async (request) => jsonResponse({
+      data: new URL(String(request)).pathname === "/v1/courses/ICS4U/assignments" ? weights : [],
+    }),
+  });
+  const waiting = await progress([]);
+  assert.match(waiting, /Awaiting assessment weights/);
+  assert.match(waiting, /grade-score">90%/);
+  assert.doesNotMatch(waiting, /15% weight graded/);
+  const ready = await progress([{ id, status: "active", weightPercent: 10 }]);
+  assert.match(ready, /10% weight graded/);
+  assert.doesNotMatch(ready, /Awaiting assessment weights/);
+});
+
+test("uses the recorded ICS4U exam weight for a published historical standing", async () => {
   const platformApiConfig = {
     coursesEndpoint: "https://api.example.test/v1/courses",
     studentProgressEndpoint: "https://api.example.test/v1/me/progress",
@@ -4366,22 +4402,22 @@ test("student progress uses only published direct grades and weights supervised 
     const url = new URL(String(request));
     if (url.pathname === "/v1/me/grades") {
       const grades =
-        url.searchParams.get("courseCode") === "MHF4U"
+        url.searchParams.get("courseCode") === "ICS4U"
           ? [
               {
-                courseCode: "MHF4U",
-                gradebookItemId: "mhf4u-m11-written-exam",
-                title: "MHF4U Mandatory Written Examination",
+                courseCode: "ICS4U",
+                gradebookItemId: "ics4u-m11-written-exam",
+                title: "ICS4U Mandatory Written Examination",
                 category: "Final evaluation",
-                weightPercent: 25,
+                weightPercent: 15,
                 maxScore: 100,
                 score: 80,
                 feedback: "Strong supervised result.",
                 publishedAt: "published",
               },
               {
-                courseCode: "MHF4U",
-                gradebookItemId: "mhf4u-participation",
+                courseCode: "ICS4U",
+                gradebookItemId: "ics4u-participation",
                 title: "Attendance and Participation",
                 category: "Participation",
                 weightPercent: 10,
@@ -4391,7 +4427,7 @@ test("student progress uses only published direct grades and weights supervised 
                 publishedAt: "published",
               },
               {
-                courseCode: "MHF4U",
+                courseCode: "ICS4U",
                 gradebookItemId: "staff-draft",
                 title: "STAFF DRAFT MUST STAY HIDDEN",
                 category: "Draft",
@@ -4409,12 +4445,15 @@ test("student progress uses only published direct grades and weights supervised 
   const html = await renderPortal(
     "#/progress",
     { email: "student@lakeforestacademy.ca", role: "student" },
-    { platformApiConfig, fetch, settleTurns: 14 },
+    {
+      platformApiConfig, fetch, settleTurns: 14,
+      localStorageSeed: studentStateStorage("student@lakeforestacademy.ca", { enrolledCourseIds: ["ics4u"] }),
+    },
   );
   assert.match(html, /Attendance and Participation/);
   assert.match(html, /Consistent seminar contribution/);
-  assert.match(html, /MHF4U[\s\S]*?<strong class="grade-score">86%<\/strong>/);
-  assert.match(html, /35% weight graded/);
+  assert.match(html, /ICS4U[\s\S]*?<strong class="grade-score">88%<\/strong>/);
+  assert.match(html, /25% weight graded/);
   assert.match(html, /<strong>2<\/strong><span>Published gradebook results<\/span>/);
   assert.doesNotMatch(html, /STAFF DRAFT MUST STAY HIDDEN/);
 });
@@ -4502,7 +4541,7 @@ test("teacher direct-entry forms exclude submission work and preserve a prior pu
     }
     return jsonResponse({ data: [] });
   };
-  const html = await renderPortal(
+  const html = await renderAssignedFaculty("MHF4U",
     "#/teacher/course/mhf4u",
     {
       email: "administrator@lakeforestacademy.ca",
@@ -4651,5 +4690,378 @@ test("an institutionally assigned course uses published native modules, lessons,
     });
     assert.doesNotMatch(html, /Technology &amp; design|Prototype and measure|Unit one individual reading/);
     assert.ok(!requests.some((url) => url.includes("/ENG4U/")));
+  }
+});
+
+test("all three sign-in routes preserve their portal and keep observer registration private", async () => {
+  for (const [portal, label] of [["student", "Student"], ["faculty", "Faculty"], ["observer","Parent / Advisor"]]) {
+    const html = await renderPortal("#/signin/" + portal, null);
+    assert.match(html, new RegExp('href="#/signin/' + portal + '" aria-current="page">' + label));
+    assert.match(html, /href="#\/signin\/observer"/);
+    if(portal==="observer") assert.doesNotMatch(html,/href="#\/register"/);
+    assert.match(html, /href="mailto:support@lakeforestacademy.ca"/);
+    assert.match(html, /href="#\/reading-sample"/);
+    assert.doesNotMatch(html, /href="#\/signin\/parent/);
+  }
+});
+
+test("the public portal sample mounts without contacting authentication or health services", async () => {
+  const html = await source("public/learning/index.html");
+  assert.match(html, /<template id="public-reading-view">[\s\S]*?<lfa-reading-sample>/);
+  let mounted = false;
+  let fetches = 0;
+  let onNavigation;
+  const document = {
+    querySelector(selector) {
+      if (selector === "#app") return { replaceChildren() { mounted = true; } };
+      return { addEventListener() {}, removeEventListener() {} };
+    },
+    getElementById() { return { content: { cloneNode: () => ({}) } }; },
+  };
+  vm.runInNewContext(await source("public/learning/bootstrap.js"), {
+    window: { location: { hash: "#/reading-sample" }, addEventListener(_, fn) { onNavigation = fn; } },
+    document, fetch: () => { fetches += 1; },
+  });
+  assert.equal(mounted, true);
+  assert.equal(fetches, 0);
+  assert.equal(typeof onNavigation, "function");
+});
+
+test("password sign-in resumes an internal route for the authenticated role", async () => {
+  for (const [portal, route, destination] of [
+    ["student", "#/calendar", "#/calendar"],
+    ["observer", "#/signin/observer?returnTo=teacher%2Fgrades", "#/observer"],
+    ["faculty", "#/teacher/grades", "#/teacher/grades"],
+    ["student", "#/signin/student?returnTo=progress", "#/progress"],
+    ["student", "#/signin/student?returnTo=teacher%2Fgrades", "#/dashboard"],
+    ["faculty", "#/signin/faculty?returnTo=https%3A%2F%2Fexample.test", "#/teacher/dashboard"],
+  ]) {
+    const role = portal === "faculty" ? "teacher" : portal;
+    const user = { email: "member@example.test", displayName: "Portal member", role };
+    const requests = [];
+    const result = await renderPortal(route, null, {
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = {
+          loginEndpoint: "https://api.example.test/v1/auth/login",
+          workspaceSessionEndpoint: "https://api.example.test/v1/auth/session",
+        };
+      },
+      FormData: TestFormData,
+      async fetch(url) {
+        requests.push(String(url));
+        if (String(url).endsWith("/session")) return jsonResponse({ authenticated: false });
+        return jsonResponse({ authenticated: true, user, csrfToken: "local-test-token" });
+      },
+      interact: async ({ listeners }) => {
+        await listeners.get("submit")[0]({
+          preventDefault() {}, target: interactiveForm("login-form", {}, { email: user.email, portal, password: "fixture" }),
+        });
+      },
+      returnHarness: true,
+    });
+    assert.equal(result.window.location.hash, destination);
+    assert.deepEqual(requests, ["https://api.example.test/v1/auth/session", "https://api.example.test/v1/auth/login"]);
+  }
+});
+
+test("a failed startup health check discards cached identity before rendering private routes", async () => {
+  const result = await renderPortal("#/teacher/dashboard", { role: "teacher", email: "expired@example.test" }, {
+    beforeApp(window) {
+      window.LFA_API_STATUS = { state: "unavailable" };
+      window.LFA_RECHECK_SERVICES = async () => {};
+    },
+    returnHarness: true,
+  });
+  assert.match(result.html, /Faculty Sign In/);
+  assert.doesNotMatch(result.html, /expired@example.test|class="workbench"/);
+  assert.equal(result.sessionStorage.getItem("lake-forest-learning-session-v1"), null);
+});
+
+test("student course cards show authoritative progress, published standing and recent teacher comments", async () => {
+  const user = { email: "reader@example.test", role: "student" };
+  const time = new Date().toISOString();
+  const base = sch4uPlatformFetch({
+    progress: Array.from({ length: 12 }, (_, i) => ({
+      moduleNumber: i, moduleKey: "SCH4U-M" + String(i).padStart(2, "0"),
+      status: i < 2 ? "completed" : i === 2 ? "in_progress" : "locked",
+    })),
+    submission: {
+      id: "local-attempt", courseCode: "SCH4U", assignmentId: "sch4u-m02-assignment",
+      student: user, submittedAt: time, status: "revision_requested",
+      messages: [
+        { id: "teacher-note", body: "Compare the two reaction rates.", authorRole: "teacher", authorName: "Course teacher", createdAt: time },
+        { id: "student-note", body: "Private student reply", authorRole: "student", createdAt: time },
+      ],
+    },
+  });
+  const html = await renderPortal("#/dashboard", user, {
+    localStorageSeed: studentStateStorage(user.email),
+    platformApiConfig: studentPlatformApiConfig, settleTurns: 16,
+    submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions" },
+    async fetch(request, init) {
+      const path = new URL(request).pathname;
+      if (path === "/v1/me/grades") return jsonResponse({ data: [
+        { gradebookItemId: "participation", weightPercent: 10, score: 81, maxScore: 100, feedback: "Participation comment", publishedAt: time },
+        { gradebookItemId: "private-score", score: 15, weightPercent: 90, feedback: "Unreleased grade", publishedAt: null },
+      ] });
+      if (path.endsWith("/assignments")) return jsonResponse({ data: [
+        { id: "sch4u-m02-assignment", dueAt: time, status: "active", moduleNumber: 2 },
+      ] });
+      return base(request, init);
+    },
+  });
+  assert.match(html, /2 of 12 modules complete/);
+  assert.match(html, /81% current grade/);
+  assert.match(html, /class="workbench-card-action" href="#\/course\/sch4u\/module\/SCH4U-M02">Resume/);
+  assert.match(html, /Recent teacher feedback[\s\S]*Compare the two reaction rates/);
+  assert.match(html, /Next 7 Days[\s\S]*Assignment Due/);
+  assert.doesNotMatch(html, /Private student reply|Unreleased grade/);
+});
+
+test("faculty workbench requests only assigned class records and excludes draft comments", async () => {
+  const paths = [];
+  const time = new Date().toISOString();
+  const user = { email: "class-teacher@example.test", role: "teacher" };
+  const options = {
+    platformApiConfig: { ...studentPlatformApiConfig, teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses" },
+    settleTurns: 16,
+    async fetch(request) {
+      const path = new URL(request).pathname;
+      paths.push(path);
+      if(path==="/v1/insights/alerts")return jsonResponse({students:[{studentId:"scope-case",studentName:"Casey",courseCode:"SCH4U",risk:{inactivity:{flag:true},scores:{flag:null},progress:{flag:false}}}],nextOffset:null});
+      if (path === "/v1/courses") return jsonResponse({ data: [{ code: "SCH4U", status: "active", classroomEnabled: true }] });
+      if (path.endsWith("/progress")) return jsonResponse({ data: { courseCode: "SCH4U", students: [{ modules: [{ status: "completed" }, { status: "in_progress" }] }] } });
+      if (path.endsWith("/gradebook")) return jsonResponse({ data: {
+        items: [{ id: "activity", title: "Course project", weightPercent: 20, maxScore: 100 }],
+        students: [{ displayName: "Class learner", scores: [{ itemId: "activity", feedback: "Teacher-only draft",
+          score: 95, latestPublished: { score: 80, publishedAt: time, feedback: "Published learner feedback" } }] }],
+      } });
+      return jsonResponse({ data: [] });
+    },
+  };
+  const html = await renderPortal("#/teacher/dashboard", user, options);
+  assert.match(html, /1 of 2 learner modules complete/);
+  assert.match(html, /1 learner with published grades/);
+  assert.match(html, /Published learner feedback/);
+  assert.doesNotMatch(html, /Teacher-only draft|#\/teacher\/course\/mcv4u/);
+  assert.match(html,/At-risk learners[\s\S]*Casey[\s\S]*Over 5 days without course activity/);
+  assert.match(html,/1 learner with insufficient evidence/);
+  assert.ok(paths.every((path) => path === "/v1/courses" || path === "/v1/insights/alerts" || path.includes("/SCH4U/")));
+  const grades = await renderPortal("#/teacher/grades", user, options);
+  assert.match(grades, /Class learner[\s\S]*80%/);
+  assert.doesNotMatch(grades, /Teacher-only draft/);
+});
+
+test("a live session expiry returns to the correct sign-in and preserves the calendar destination", async () => {
+  const result = await renderPortal("#/calendar", { role: "student", email: "calendar@example.test" }, {
+    platformApiConfig: { notificationsEndpoint: "https://api.example.test/v1/me/notifications" },
+    fetch: async () => jsonResponse({ error: { message: "Sign in again." } }, 401),
+    returnHarness: true,
+  });
+  assert.equal(result.window.location.hash, "#/signin/student?returnTo=calendar");
+  assert.match(result.html, /Your secure session expired/);
+  assert.equal(result.sessionStorage.getItem("lake-forest-learning-session-v1"), null);
+});
+
+test("a Workspace callback consumes its local destination only after validating the faculty session", async () => {
+  const storageKey = "lake-forest-learning-workspace-destination";
+  const opened = await renderPortal("#/teacher/calendar", null, {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = { googleWorkspaceAuthStart: "https://api.example.test/v1/auth/google-workspace/start" };
+    },
+    interact: async ({ listeners }) => {
+      await listeners.get("click")[0]({ target: actionTarget("google-workspace-signin") });
+    },
+    returnHarness: true,
+  });
+  assert.equal(opened.sessionStorage.getItem(storageKey), "teacher/calendar");
+  assert.equal(new URL(opened.assignedLocations[0]).searchParams.get("returnTo"), "teacher/dashboard");
+  for (const [stored, expected] of [["teacher/calendar", "teacher/calendar"], ["https://example.test", "teacher/dashboard"], ["progress", "teacher/dashboard"]]) {
+    const result = await renderPortal("#/teacher/dashboard?workspace=connected", null, {
+      sessionStorageSeed: { [storageKey]: stored },
+      beforeApp(window) {
+        window.LFA_AUTH_CONFIG = { workspaceSessionEndpoint: "https://api.example.test/v1/auth/session" };
+      },
+      fetch: async () => jsonResponse({ authenticated: true, user: { role: "teacher", email: "member@example.test" } }),
+      returnHarness: true,
+    });
+    assert.equal(result.window.location.hash, "#/" + expected);
+    assert.equal(result.sessionStorage.getItem(storageKey), null);
+    assert.deepEqual(result.assignedLocations, []);
+  }
+});
+
+test("native faculty deep links wait for the assigned catalogue before loading class records", async () => {
+  const teacher = { email: "math-teacher@example.test", role: "teacher" };
+  const platformApiConfig = {
+    coursesEndpoint: "https://api.example.test/v1/courses",
+    teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses",
+    notificationsEndpoint: "https://api.example.test/v1/me/notifications",
+  };
+  const catalogue = { data: [{ code: "MCV4U", status: "active" }] };
+  for (const [route, allowed] of [
+    ["#/teacher/course/mcv4u/module/0", true],
+    ["#/teacher/course/mcv4u", true],
+    ["#/teacher/course/sch4u", false],
+    ["#/teacher/course/sch4u/module/0", false],
+    ["#/teacher/submissions/sch4u", false],
+    ["#/teacher/submissions/mcv4u/sch4u-m02-assignment", false],
+    ["#/teacher/submission/student%40example.test/sch4u-m02-assignment", false],
+  ]) {
+    const paths = [];
+    let resolveCatalogue;
+    const result = await renderPortal(route, teacher, {
+      platformApiConfig,
+      submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions" },
+      async fetch(request) {
+        const path = new URL(request).pathname;
+        paths.push(path);
+        if (path === "/v1/courses") {
+          if (paths.length === 1) return new Promise((resolve) => { resolveCatalogue = resolve; });
+          return jsonResponse(catalogue);
+        }
+        if (path.endsWith("/roster")) return jsonResponse({}, 503);
+        return jsonResponse({ data: [] });
+      },
+      interact: async ({ appRoot, window }) => {
+        assert.match(appRoot.innerHTML, /Checking your assigned courses/);
+        assert.doesNotMatch(appRoot.innerHTML, /Workload|Action Inbox|Syllabus|Course Plan|Roster/);
+        assert.deepEqual(paths, ["/v1/courses"]);
+        assert.equal(window.location.hash, route);
+        resolveCatalogue(jsonResponse(catalogue));
+      },
+      returnHarness: true,
+    });
+    assert.equal(result.window.location.hash, route);
+    if (allowed) {
+      assert.match(result.html, /MCV4U/);
+      assert.ok(paths.includes("/v1/teacher/courses/MCV4U/roster"));
+      if (!route.includes("/module/")) {
+        assert.match(result.html, /The course roster could not be loaded/);
+        assert.doesNotMatch(result.html, /No enrolled students are available/);
+      }
+    } else {
+      assert.deepEqual(paths, ["/v1/courses"]);
+      assert.match(result.html, /outside your assigned courses/);
+      assert.doesNotMatch(result.html, /SCH4U|Chemistry|Course Plan|Enrolled Students|id="grading-form"/);
+    }
+  }
+});
+
+test("catalogue failures keep the original authorized deep link available for retry", async () => {
+  const paths = [];
+  let retry = false;
+  const route = "#/signin/faculty?returnTo=teacher%2Fcourse%2Fmcv4u%2Fmodule%2F0";
+  const result = await renderPortal(route, { role: "teacher", email: "math-teacher@example.test" }, {
+    platformApiConfig: { coursesEndpoint: "https://api.example.test/v1/courses" },
+    async fetch(url) {
+      const path = new URL(url).pathname;
+      paths.push(path);
+      if (path === "/v1/courses") {
+        return retry ? jsonResponse({ data: [{ code: "MCV4U", status: "active" }] }) : jsonResponse({}, 503);
+      }
+      return jsonResponse({ data: [] });
+    },
+    interact: async ({ appRoot, listeners, window }) => {
+      assert.match(appRoot.innerHTML, /assigned course list could not be verified/);
+      assert.doesNotMatch(appRoot.innerHTML, /outside your assigned courses|Teacher Presence/);
+      assert.deepEqual(paths, ["/v1/courses"]);
+      assert.equal(window.location.hash, "#/teacher/course/mcv4u/module/0");
+      retry = true;
+      await listeners.get("click")[0]({ target: actionTarget("retry-course-access") });
+    },
+    returnHarness: true,
+  });
+  assert.equal(result.window.location.hash, "#/teacher/course/mcv4u/module/0");
+  assert.match(result.html, /Teacher Presence/);
+});
+
+test("faculty and student calendars distinguish pending, unavailable and successfully empty dates", async () => {
+  for (const role of ["student", "teacher"]) {
+    const email = role + "@calendar.example.test";
+    for (const httpStatus of [200, 503]) {
+      let finishAssignments;
+      const html = await renderPortal(role === "teacher" ? "#/teacher/calendar" : "#/calendar", { email, role }, {
+        localStorageSeed: studentStateStorage(email),
+        platformApiConfig: { ...studentPlatformApiConfig, teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses" },
+        async fetch(url) {
+          const path = new URL(url).pathname;
+          if (path === "/v1/courses") return jsonResponse({ data: [{ code: "SCH4U", status: "active" }] });
+          if (path.endsWith("/assignments")) return new Promise((resolve) => { finishAssignments = resolve; });
+          return jsonResponse({ data: [] });
+        },
+        interact: async ({ appRoot }) => {
+          assert.match(appRoot.innerHTML, /Loading course dates/);
+          assert.doesNotMatch(appRoot.innerHTML, /No dates are posted|No later dates are posted/);
+          finishAssignments(jsonResponse({ data: [] }, httpStatus));
+        },
+      });
+      if (httpStatus === 503) {
+        assert.match(html, /Some course dates are unavailable/);
+        assert.doesNotMatch(html, /No dates are posted|No later dates are posted/);
+      } else {
+        assert.match(html, /No dates are posted for the next seven days/);
+        assert.match(html, /No later dates are posted/);
+      }
+    }
+  }
+});
+
+test("faculty feedback waits for every gradebook and reports failed snapshots", async () => {
+  for (const httpStatus of [200, 503]) {
+    let finishBook;
+    const html = await renderPortal("#/teacher/dashboard", { role: "teacher", email: "teacher@example.test" }, {
+      platformApiConfig: { ...studentPlatformApiConfig, teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses" },
+      submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions" },
+      async fetch(url) {
+        const path = new URL(url).pathname;
+        if (path === "/v1/courses") return jsonResponse({ data: [{ code: "MCV4U", status: "active" }] });
+        if (path.endsWith("/gradebook")) return new Promise((resolve) => { finishBook = resolve; });
+        return jsonResponse({ data: [] });
+      },
+      interact: async ({ appRoot }) => {
+        assert.match(appRoot.innerHTML, /Loading recent feedback/);
+        assert.doesNotMatch(appRoot.innerHTML, /No recent feedback or revision comments/);
+        finishBook(jsonResponse({ data: { students: [], items: [] } }, httpStatus));
+      },
+    });
+    if (httpStatus === 503) {
+      assert.match(html, /Some feedback could not be loaded/);
+      assert.doesNotMatch(html, /No recent feedback or revision comments/);
+    } else {
+      assert.match(html, /No recent feedback or revision comments/);
+    }
+  }
+});
+
+test("faculty menus, risk requests and direct classroom links use the authenticated rollout", async () => {
+  const user = { email: "section-teacher@example.test", role: "teacher" };
+  for (const enabled of [false, true]) {
+    const paths = [];
+    const options = {
+      platformApiConfig: { ...studentPlatformApiConfig, teacherCoursesEndpoint: "https://api.example.test/v1/teacher/courses" },
+      settleTurns: 16,
+      async fetch(request) {
+        const path = new URL(request).pathname;
+        paths.push(path);
+        if (path === "/v1/courses") return jsonResponse({ data: [{ code: "MCV4U", status: "active", classroomEnabled: enabled }] });
+        if (path === "/v1/insights/alerts") return jsonResponse({ students: [], nextOffset: null });
+        return jsonResponse({ data: [] });
+      },
+    };
+    const dashboard = await renderPortal("#/teacher/dashboard", user, options);
+    assert.equal(dashboard.includes("At-risk learners"), enabled);
+    assert.equal(dashboard.includes("#/teacher/classroom/MCV4U/"), enabled);
+    assert.equal(paths.includes("/v1/insights/alerts"), enabled);
+    const course = await renderPortal("#/teacher/course/mcv4u", user, options);
+    for (const workspace of ["review","seminar","records","insights"]) {
+      assert.equal(course.includes("#/teacher/" + workspace + "/MCV4U"), enabled);
+    }
+    if (!enabled) {
+      for (const page of ["review/MCV4U", "classroom/MCV4U/cia4u-demand-2-3"]) {
+        const direct = await renderPortal("#/teacher/" + page, user, options);
+        assert.match(direct,/Workspace unavailable/);
+      }
+    }
   }
 });

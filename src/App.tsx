@@ -1,145 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ReadingSample } from "./learning/ReadingSample";
+import { assessmentForCourse, courseGroups, courseTypes, filterCourses, ontario, policyYear, programs } from "./data/course-guide";
+import { emailHref, schoolContact } from "./data/school";
+
 type ActionType = "enquire" | "tour" | "apply";
 type PageKind = "home" | "academics" | "courses" | "admissions";
 type InnerPageKind = Exclude<PageKind, "home">;
-
-const schoolContact = {
-  admissionsEmail: "admissions@lakeforestacademy.ca",
-  location: "North York, Toronto, Ontario, Canada",
-  mapHref: "https://www.google.com/maps/search/?api=1&query=North+York%2C+Toronto%2C+Ontario%2C+Canada",
-} as const;
-
-function emailHref(subject: string) {
-  return `mailto:${schoolContact.admissionsEmail}?subject=${encodeURIComponent(subject)}`;
-}
-
-const programs = [
-  { slug: "science", code: "SCI", title: "Science", text: "Students learn to ask useful questions, plan careful investigations and explain what the evidence shows." },
-  { slug: "mathematics", code: "MAT", title: "Mathematics", text: "Courses build from strong fundamentals to functions, calculus and data, with time to practise and revisit difficult ideas." },
-  { slug: "technology", code: "TEC", title: "Technology & Computer Studies", text: "Hands-on design, coding and collaborative projects help students turn an idea into something they can test and improve." },
-  { slug: "business", code: "BUS", title: "Business", text: "Case studies and practical assignments introduce entrepreneurship, accounting, marketing and responsible decision-making." },
-  { slug: "humanities", code: "HUM", title: "Humanities & Social Sciences", text: "History, geography and the social sciences invite students to read closely and understand different perspectives." },
-  { slug: "english-support", code: "ENG", title: "English & Language Support", text: "English courses and targeted language support help students communicate confidently and prepare for senior-level study." },
-] as const;
-
-type CourseListing = {
-  code: string;
-  title: string;
-  grade: string;
-  pathway: string;
-  credit: string;
-  prerequisite: string;
-  summary: string;
-};
-
-type CourseGroup = {
-  slug: (typeof programs)[number]["slug"];
-  code: string;
-  title: string;
-  eyebrow: string;
-  introduction: string;
-  courses: CourseListing[];
-};
-
-const courseGroups: CourseGroup[] = [
-  {
-    slug: "science",
-    code: "SCI",
-    title: "Science",
-    eyebrow: "From Integrated Science To Senior Specialization",
-    introduction: "The science pathway begins with a shared foundation, then opens into biology, chemistry and physics. Laboratory work, data analysis and scientific communication run through every year.",
-    courses: [
-      { code: "SNC1W", title: "Science", grade: "Grade 9", pathway: "De-Streamed", credit: "1 Credit", prerequisite: "None", summary: "Explore biology, chemistry, physics, Earth and space science through investigation, engineering design and real-world applications." },
-      { code: "SNC2D", title: "Science", grade: "Grade 10", pathway: "Academic", credit: "1 Credit", prerequisite: "Grade 9 Science (SNC1W)", summary: "Study biological systems, chemical reactions, climate change and light while developing stronger laboratory and analytical skills." },
-      { code: "SBI3U", title: "Biology", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 Science, Academic (SNC2D)", summary: "Investigate biodiversity, evolution, genetics, animal systems and plant structure, with an emphasis on evidence and experimental design." },
-      { code: "SCH3U", title: "Chemistry", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 Science, Academic (SNC2D)", summary: "Examine matter, chemical trends, reactions, quantities, solutions and gases through theory, calculation and laboratory investigation." },
-      { code: "SPH3U", title: "Physics", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 Science, Academic (SNC2D)", summary: "Develop models for motion, forces, energy, waves, sound, electricity and magnetism, then test those models against observations." },
-      { code: "SBI4U", title: "Biology", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 11 Biology, University (SBI3U)", summary: "Connect biochemistry, metabolism, molecular genetics, homeostasis and population dynamics in preparation for post-secondary study." },
-      { code: "SCH4U", title: "Chemistry", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 11 Chemistry, University (SCH3U)", summary: "Study organic chemistry, molecular structure, energy changes, reaction rates, equilibrium and electrochemistry through advanced problem solving." },
-      { code: "SPH4U", title: "Physics", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 11 Physics, University (SPH3U)", summary: "Explore dynamics, energy and momentum, gravitational and electromagnetic fields, light and key ideas in modern physics." },
-      { code: "SES4U", title: "Earth And Space Science", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 Science, Academic (SNC2D)", summary: "Investigate the universe, the solar system, Earth's materials and geological history, and the processes that shape the planet." },
-    ],
-  },
-  {
-    slug: "mathematics",
-    code: "MAT",
-    title: "Mathematics",
-    eyebrow: "Build Fluency, Reasoning And Choice",
-    introduction: "Students develop mathematical confidence through clear instruction, purposeful practice and problems that connect algebra, functions, geometry, probability and data.",
-    courses: [
-      { code: "MTH1W", title: "Mathematics", grade: "Grade 9", pathway: "De-Streamed", credit: "1 Credit", prerequisite: "None", summary: "Strengthen number sense, algebra, geometry, measurement, data literacy, coding and financial literacy in one connected course." },
-      { code: "MPM2D", title: "Principles Of Mathematics", grade: "Grade 10", pathway: "Academic", credit: "1 Credit", prerequisite: "Grade 9 Mathematics (MTH1W)", summary: "Use linear and quadratic relationships, analytic geometry and trigonometry to model and solve increasingly complex problems." },
-      { code: "MCR3U", title: "Functions", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 Principles Of Mathematics, Academic (MPM2D)", summary: "Study polynomial, rational, exponential and trigonometric functions while refining algebraic reasoning and mathematical communication." },
-      { code: "MHF4U", title: "Advanced Functions", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 11 Functions (MCR3U) Or Mathematics For College Technology (MCT4C)", summary: "Extend work with polynomial, rational, logarithmic and trigonometric functions and prepare for calculus-based study." },
-      { code: "MCV4U", title: "Calculus And Vectors", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Advanced Functions (MHF4U), Taken Before Or At The Same Time", summary: "Investigate rates of change, derivatives and the geometry and algebra of vectors for programs in science, engineering and mathematics." },
-      { code: "MDM4U", title: "Mathematics Of Data Management", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Functions (MCR3U) Or Functions And Applications (MCF3M)", summary: "Explore counting, probability, distributions, statistical analysis and a culminating investigation built around a meaningful data question." },
-    ],
-  },
-  {
-    slug: "technology",
-    code: "TEC",
-    title: "Technology & Computer Studies",
-    eyebrow: "Design, Build, Code And Improve",
-    introduction: "Technology courses give students structured time to work safely with tools and digital systems, develop prototypes and learn through testing, feedback and revision.",
-    courses: [
-      { code: "TAS1O", title: "Technology And The Skilled Trades", grade: "Grade 9", pathway: "Open", credit: "1 Credit", prerequisite: "None", summary: "Use the engineering design process to create prototypes, products or services while exploring tools, safety and pathways in technology and the skilled trades." },
-      { code: "TAS2O", title: "Technology And The Skilled Trades", grade: "Grade 10", pathway: "Open", credit: "1 Credit", prerequisite: "None", summary: "Apply the engineering design process to more complex prototypes while developing safe tool use and exploring technological systems and skilled-trades pathways." },
-      { code: "ICS3U", title: "Introduction To Computer Science", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "None", summary: "Design programs with clear algorithms, modular code and testing while considering software development practices and computing careers." },
-      { code: "ICS4U", title: "Computer Science", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Introduction To Computer Science (ICS3U)", summary: "Develop more complex software using data structures, algorithms, object-oriented design, collaborative tools and a substantial final project." },
-      { code: "TEJ3M", title: "Computer Engineering Technology", grade: "Grade 11", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "None", summary: "Work with computer hardware, electronics, interfaces and programming while designing and troubleshooting integrated systems." },
-      { code: "TEJ4M", title: "Computer Engineering Technology", grade: "Grade 12", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "Computer Engineering Technology (TEJ3M)", summary: "Design more complex digital and computer systems and complete an engineering project that brings hardware and software together." },
-    ],
-  },
-  {
-    slug: "business",
-    code: "BUS",
-    title: "Business",
-    eyebrow: "Ideas, Decisions And Responsible Leadership",
-    introduction: "Business courses connect entrepreneurial thinking with financial literacy, marketing, accounting and leadership. Students learn by developing ideas and making decisions with evidence.",
-    courses: [
-      { code: "BEM1O", title: "Building The Entrepreneurial Mindset", grade: "Grade 9", pathway: "Open", credit: "1 Credit", prerequisite: "None", summary: "Identify needs, generate and test ideas, use business technologies and consider how responsible entrepreneurs create value." },
-      { code: "BEP2O", title: "Launching And Leading A Business", grade: "Grade 10", pathway: "Open", credit: "1 Credit", prerequisite: "None", summary: "Explore market opportunities and the responsibilities involved in planning, operating and leading an ethical business." },
-      { code: "BAF3M", title: "Financial Accounting Fundamentals", grade: "Grade 11", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "None", summary: "Learn the accounting cycle, prepare financial statements and use financial information to understand how a service or merchandising business is performing." },
-      { code: "BAT4M", title: "Financial Accounting Principles", grade: "Grade 12", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "Financial Accounting Fundamentals (BAF3M)", summary: "Apply advanced accounting principles to partnerships and corporations and interpret financial information for decision-making." },
-      { code: "BBB4M", title: "International Business Fundamentals", grade: "Grade 12", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "None", summary: "Examine global markets, trade, culture, ethics and the strategies Canadian organizations use when operating internationally." },
-      { code: "BOH4M", title: "Business Leadership: Management Fundamentals", grade: "Grade 12", pathway: "University / College Preparation", credit: "1 Credit", prerequisite: "None", summary: "Study leadership, planning, organizing and communication, then apply management concepts to contemporary workplace situations." },
-    ],
-  },
-  {
-    slug: "humanities",
-    code: "HUM",
-    title: "Humanities & Social Sciences",
-    eyebrow: "Understand Place, History And People",
-    introduction: "Students examine how communities, institutions and ideas change over time. Research, discussion and writing help them compare perspectives and make well-supported arguments.",
-    courses: [
-      { code: "CGC1W", title: "Exploring Canadian Geography", grade: "Grade 9", pathway: "De-Streamed", credit: "1 Credit", prerequisite: "None", summary: "Investigate connections among Canada's natural and human systems and consider how local choices relate to national and global issues." },
-      { code: "CHC2D", title: "Canadian History Since World War I", grade: "Grade 10", pathway: "Academic", credit: "1 Credit", prerequisite: "None", summary: "Use historical evidence to examine political, economic and social developments in Canada from 1914 to the present." },
-      { code: "CHV2O", title: "Civics And Citizenship", grade: "Grade 10", pathway: "Open", credit: "0.5 Credit", prerequisite: "None", summary: "Explore rights, responsibilities, public issues and ways citizens can participate thoughtfully in democratic life." },
-      { code: "HSP3U", title: "Introduction To Anthropology, Psychology And Sociology", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 English, Academic, Or Grade 10 Canadian History, Academic", summary: "Learn how three social science disciplines investigate human behaviour, culture and society, then apply their research methods to contemporary questions." },
-      { code: "HSB4U", title: "Challenge And Change In Society", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Any Grade 11 Or 12 U/M Course In Social Sciences And Humanities, English, Or Canadian And World Studies", summary: "Use social science theories and research to analyze how demographic, technological and cultural forces shape social change." },
-    ],
-  },
-  {
-    slug: "english-support",
-    code: "ENG",
-    title: "English & Language Support",
-    eyebrow: "Read Closely, Write Clearly, Speak With Confidence",
-    introduction: "English instruction develops interpretation, writing, media literacy and oral communication. Multilingual learners can receive language support connected directly to the work they do across subjects.",
-    courses: [
-      { code: "ENL1W", title: "English", grade: "Grade 9", pathway: "De-Streamed", credit: "1 Credit", prerequisite: "None", summary: "Read and discuss varied texts, develop an individual voice in writing and strengthen the literacy skills used across the Grade 9 program." },
-      { code: "ENG2D", title: "English", grade: "Grade 10", pathway: "Academic", credit: "1 Credit", prerequisite: "Grade 9 English (ENL1W)", summary: "Analyze literary, informational and media texts and communicate ideas with greater precision in discussion, presentations and writing." },
-      { code: "ENG3U", title: "English", grade: "Grade 11", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 10 English, Academic (ENG2D)", summary: "Interpret challenging texts, refine essay writing and use evidence and academic language to develop independent arguments." },
-      { code: "ENG4U", title: "English", grade: "Grade 12", pathway: "University Preparation", credit: "1 Credit", prerequisite: "Grade 11 English, University (ENG3U)", summary: "Consolidate critical literacy, research, analytical writing and oral communication for university-level reading and argument." },
-      { code: "ESLAO", title: "English As A Second Language - Level 1", grade: "ESL Level 1", pathway: "Open", credit: "1 Credit", prerequisite: "Initial English-Language Placement", summary: "Build beginning listening, speaking, reading and writing skills for everyday communication and participation in the school community." },
-      { code: "ESLBO", title: "English As A Second Language - Level 2", grade: "ESL Level 2", pathway: "Open", credit: "1 Credit", prerequisite: "ESLAO Or Equivalent Proficiency", summary: "Develop classroom communication, short-text comprehension and paragraph writing while expanding academic and everyday vocabulary." },
-      { code: "ESLCO", title: "English As A Second Language - Level 3", grade: "ESL Level 3", pathway: "Open", credit: "1 Credit", prerequisite: "ESLBO Or Equivalent Proficiency", summary: "Participate in sustained classroom discussion, interpret varied texts and produce increasingly connected oral and written work." },
-      { code: "ESLDO", title: "English As A Second Language - Level 4", grade: "ESL Level 4", pathway: "Open", credit: "1 Credit", prerequisite: "ESLCO Or Equivalent Proficiency", summary: "Use academic language with greater independence in subject reading, reports, presentations and collaborative learning." },
-      { code: "ESLEO", title: "English As A Second Language - Level 5", grade: "ESL Level 5", pathway: "Open", credit: "1 Credit", prerequisite: "ESLDO Or Equivalent Proficiency", summary: "Refine academic reading, research, essay writing and presentation skills in preparation for full participation in senior English courses." },
-      { code: "OLC4O", title: "Ontario Secondary School Literacy Course", grade: "Grade 11 / 12", pathway: "Open", credit: "1 Credit", prerequisite: "Eligibility Confirmed By Guidance", summary: "Strengthen practical reading and writing skills while working toward the provincial secondary school literacy graduation requirement." },
-    ],
-  },
-];
 
 const admissionsSteps = [
   ["01", "Tell us about your student", "Begin with a short enquiry about the student's current grade, interests and intended entry term."],
@@ -220,7 +87,7 @@ const menuGroups = [
   {
     title: "Academics",
     description: "OSSD courses, English support and university planning.",
-    links: [["OSSD Pathway", "#academics"], ["Course Catalogue", "#courses"], ["Learning Support", "#guidance"], ["Learning Portal", "#learning"]],
+    links: [["OSSD Pathway", "#academics"], ["Course Catalogue", "#courses"], ["Learning Support", "#guidance"], ["Student / Faculty Portal", "#learning"], ["Try a sample lesson", "#reading-sample"]],
   },
   {
     title: "Student Life",
@@ -265,6 +132,8 @@ const searchItems = [
   { title: "Student Life", area: "Community", text: "Clubs, athletics, leadership and international transition support.", href: "#student-life" },
   { title: "News and Events", area: "Community", text: "Upcoming orientation, academic planning and community events.", href: "#news" },
   { title: "How to Apply", area: "Admissions", text: "Four steps from inquiry to an OSSD study plan.", href: "#admissions" },
+  { title: "Student / Faculty Portal", area: "Online learning", text: "Sign in to courses, assignments and feedback.", href: "#learning" },
+  { title: "60-second reading sample", area: "Online learning", text: "Try a short interactive lesson.", href: "#reading-sample" },
   { title: "Admissions FAQ", area: "Admissions", text: "Answers about grades, language support and campus visits.", href: "#faq" },
   { title: "Contact Admissions", area: "Admissions", text: "Ask about entry, course planning or student support.", href: "#contact" },
 ];
@@ -293,6 +162,38 @@ function ProgramCard({ program, routeHref }: { program: (typeof programs)[number
   );
 }
 
+function DiplomaRoadmap() {
+  const [entryYear, setEntryYear] = useState("2025");
+  const modernCredits = Number(entryYear) >= 2024;
+  return (
+    <section className="diploma-roadmap section" id="diploma-roadmap" aria-labelledby="roadmap-heading">
+      <div className="roadmap-intro">
+        <p className="eyebrow">Ontario Secondary School Diploma</p>
+        <h2 id="roadmap-heading">Your graduation roadmap</h2>
+        <label>When did you start Grade 9?
+          <select value={entryYear} onChange={(event) => setEntryYear(event.target.value)}>
+            <option value="2025">2025–26 or later</option>
+            <option value="2024">2024–25</option>
+            <option value="2020">2020–21 through 2023–24</option>
+            <option value="2019">Before 2020–21</option>
+          </select>
+        </label>
+        <p>Transferring schools or returning to study? Guidance can review your transcript, equivalent credits and individual requirements.</p>
+        <a className="text-link" href={ontario.diploma}>Ontario diploma requirements ↗</a>
+      </div>
+      <dl className="roadmap-list" aria-live="polite" aria-atomic="true">
+        <div><dt>30 credits</dt><dd>{modernCredits
+          ? "17 compulsory and 13 optional credits. Include a Grade 9 or 10 technological education credit."
+          : "18 compulsory and 12 optional credits."}</dd></div>
+        <div><dt>Literacy</dt><dd>Complete the Ontario Secondary School Literacy Test (OSSLT) or, if eligible, the Ontario Secondary School Literacy Course (OLC4O).</dd></div>
+        <div><dt>Community involvement</dt><dd>Plan for 40 hours of eligible activities. Confirm your activity with guidance before you begin.</dd></div>
+        {Number(entryYear) >= 2020 && <div><dt>Online learning</dt><dd>Earn two of your 30 credits online, unless an opt-out or exemption applies.</dd></div>}
+        {entryYear === "2025" && <div><dt>Financial literacy</dt><dd>Starting in 2026–27, achieve at least 70% on the financial literacy modules in Grade 10 Career Studies.</dd></div>}
+      </dl>
+    </section>
+  );
+}
+
 function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewProps) {
   return (
     <>
@@ -302,7 +203,7 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
           <h1>Learn with purpose. <strong>Keep your options open.</strong></h1>
           <p>A good course plan should make sense now and still leave room for a student to change. Our Grade 9-12 program combines Ontario curriculum, practical work and regular guidance.</p>
           <div className="hero-actions">
-            <a className="button primary" href="#pathway">See how planning works <span aria-hidden="true">-&gt;</span></a>
+            <a className="button primary" href="#diploma-roadmap">See how planning works <span aria-hidden="true">-&gt;</span></a>
             <button className="button ghost" type="button" onClick={() => openAction("enquire")}>Ask about courses</button>
           </div>
         </div>
@@ -310,7 +211,7 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
       </section>
 
       <nav className="page-subnav" aria-label="Academics page">
-        <a href="#pathway">OSSD Pathway</a><a href="#grade-journey">Grades 9-12</a><a href="#programs">Course Areas</a><a href="#guidance">Guidance</a>
+        <a href="#diploma-roadmap">Graduation roadmap</a><a href="#grade-journey">Grades 9-12</a><a href="#programs">Course Areas</a><a href="#guidance">Guidance</a>
       </nav>
 
       <section className="page-intro section" id="pathway">
@@ -321,14 +222,7 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
         </div>
       </section>
 
-      <section className="framework section" aria-label="OSSD planning framework">
-        <div className="framework-grid">
-          <article><span>01</span><h3>Credit planning</h3><p>Review completed learning and map the remaining required and elective courses in a sensible sequence.</p></article>
-          <article><span>02</span><h3>Literacy development</h3><p>Strengthen the reading, writing and communication students use in every subject.</p></article>
-          <article><span>03</span><h3>Community involvement</h3><p>Choose meaningful ways to contribute, then reflect on what the experience taught.</p></article>
-          <article><span>04</span><h3>Future prerequisites</h3><p>Look at possible college and university programs before senior course choices are finalized.</p></article>
-        </div>
-      </section>
+      <DiplomaRoadmap />
 
       <section className="grade-journey section" id="grade-journey">
         <div className="section-heading"><p className="eyebrow">Grades 9-12</p><h2>A plan that changes as students do.</h2><p>Each year should answer today&apos;s questions while preparing students for the choices that come next.</p></div>
@@ -374,22 +268,33 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
   const [query, setQuery] = useState("");
   const [grade, setGrade] = useState("");
   const [subject, setSubject] = useState("");
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const filtersActive = Boolean(terms.length || grade || subject);
-  const matchingGroups = courseGroups.flatMap((group) => {
-    if (subject && group.slug !== subject) return [];
-    const courses = group.courses.filter((course) =>
-      (!grade || course.grade === grade) &&
-      terms.every((term) => `${course.code} ${course.title}`.toLowerCase().includes(term)),
-    );
-    return courses.length ? [{ ...group, courses }] : [];
-  });
+  const [courseType, setCourseType] = useState("");
+  const [linkedId, setLinkedId] = useState(() => typeof window === "undefined" ? "" : window.location.hash.slice(1));
+
+  useEffect(() => {
+    function followCatalogueLink() {
+      const id = window.location.hash.slice(1);
+      setLinkedId(id);
+      const isListing = courseGroups.some((group) => group.slug === id || group.courses.some((course) => course.code === id));
+      if (isListing && !document.getElementById(id)) resetFilters();
+    }
+    window.addEventListener("hashchange", followCatalogueLink);
+    return () => window.removeEventListener("hashchange", followCatalogueLink);
+  }, []);
+
+  useEffect(() => {
+    if (linkedId) document.getElementById(linkedId)?.scrollIntoView({ behavior: "instant" });
+  }, [linkedId]);
+
+  const filtersActive = Boolean(query.trim() || grade || subject || courseType);
+  const matchingGroups = filterCourses({ query, grade, subject, courseType });
   const resultCount = matchingGroups.reduce((total, group) => total + group.courses.length, 0);
 
   function resetFilters() {
     setQuery("");
     setGrade("");
     setSubject("");
+    setCourseType("");
   }
 
   return (
@@ -397,8 +302,8 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
       <section className="inner-hero course-catalogue-hero" id="top">
         <div className="inner-hero-copy">
           <p className="eyebrow light">2026-27 Course Guide</p>
-          <h1>Explore Courses. <strong>Build Your Pathway.</strong></h1>
-          <p>Begin with the courses a student has already completed, then look ahead to the prerequisites that keep future options open. This guide brings course content and sequencing into one place.</p>
+          <h1>The course <strong>catalogue.</strong></h1>
+          <p>Explore 42 courses across six subject areas. Check the prerequisites for your next course and find the credit and assessment details you need to plan your year.</p>
           <div className="hero-actions">
             <a className="button primary" href="#course-finder">Browse course listings <span aria-hidden="true">-&gt;</span></a>
             <a className="button ghost" href={`${routeHref("admissions")}#contact`}>Contact admissions</a>
@@ -407,15 +312,6 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
         <div className="inner-hero-media"><img src={assetUrl("science-lab.jpg")} alt="Students working through a science investigation in the laboratory" /></div>
       </section>
 
-
-      <section className="course-guide-intro section">
-        <div className="course-guide-copy"><p className="eyebrow">Course Planning At A Glance</p><h2>See What A Course Covers - And What It Opens Next.</h2><p>Every course listing includes the ministry course code, grade, pathway, credit value and prerequisite. Course availability is reviewed each year and a student&apos;s final timetable is confirmed through guidance.</p></div>
-        <div className="course-guide-facts" aria-label="OSSD planning facts">
-          <article><strong>30</strong><span>Credits In A Complete OSSD Program</span></article>
-          <article><strong>2</strong><span>Compulsory Science Credits</span></article>
-          <article><strong>1</strong><span>Grade 9 Or 10 Technology Credit For 2024+ Cohorts</span></article>
-        </div>
-      </section>
 
       <section className={`course-catalogue section${filtersActive ? " is-filtered" : ""}`} aria-label="Course catalogue by subject">
         <div className="course-finder" id="course-finder">
@@ -427,7 +323,14 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
             <label>Grade
               <select value={grade} onChange={(event) => setGrade(event.target.value)}>
                 <option value="">All grades</option>
-                {[9, 10, 11, 12].map((level) => <option key={level}>Grade {level}</option>)}
+                {[9, 10, 11, 12].map((level) => <option key={level} value={level}>Grade {level}</option>)}
+                <option value="ESL">ESL levels 1–5</option>
+              </select>
+            </label>
+            <label>Course type
+              <select value={courseType} onChange={(event) => setCourseType(event.target.value)}>
+                <option value="">All types</option>
+                {courseTypes.map(([code, title]) => <option key={code} value={code}>{code} · {title}</option>)}
               </select>
             </label>
             <label>Subject
@@ -469,29 +372,60 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
             )}
 
             <div className="course-list">
-              {group.courses.map((course) => (
-                <article className="course-row" key={course.code}>
-                  <div className="course-identity"><strong>{course.code}</strong><span>{course.grade}</span></div>
-                  <div className="course-description"><p className="course-meta">{course.pathway} &middot; {course.credit}</p><h3>{course.title}</h3><p>{course.summary}</p></div>
-                  <div className="course-prerequisite">
-                    <span>Prerequisite</span><p>{course.prerequisite}</p>
-                    <a className="text-link" href={emailHref(`Course enquiry: ${course.code} — ${course.title}`)}>Email about {course.code}</a>
-                  </div>
-                </article>
-              ))}
+              {group.courses.map((course) => {
+                const policy = assessmentForCourse(course, group.slug);
+                return (
+                  <article className="course-row" key={course.code} id={course.code} data-linked={course.code === linkedId || undefined}>
+                    <div className="course-identity">
+                      <a href={`#${course.code}`} aria-label={`Link to ${course.code}`}>{course.code}</a>
+                      <span>{course.grade}</span>
+                    </div>
+                    <div className="course-description">
+                      <p className="course-meta">{course.pathway} &middot; {course.credit}</p>
+                      <h3>{course.title}</h3><p>{course.summary}</p>
+                      <details className="course-policy">
+                        <summary>Ontario assessment · {policyYear}</summary>
+                        <p>{policy.weights}</p>
+                        {policy.final && <p>{policy.final}</p>}
+                        {course.code === "ICS4U" && <p>Request the course outline to confirm the exam and project weights for your section.</p>}
+                        <a href={ontario.assessment}>Provincial assessment policy ↗</a>
+                      </details>
+                    </div>
+                    <div className="course-prerequisite">
+                      <span>Prerequisite</span><p>{course.prerequisite}</p>
+                      <a className="text-link" href={emailHref(`Course outline request: ${course.code} — ${course.title} (${policyYear})`)}>Request {course.code} outline</a>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
         ))}
+      </section>
+
+      <section className="course-guide-intro section">
+        <div className="course-guide-copy"><p className="eyebrow">Planning for graduation</p><h2>How do these credits fit?</h2><p>Plan for at least 110 scheduled hours of instruction for a full credit, or 55 hours for a half credit such as Civics and Citizenship. Guidance can confirm availability and review your choices against your diploma requirements.</p><a className="text-link" href={`${routeHref("academics")}#diploma-roadmap`}>Check your graduation roadmap <span aria-hidden="true">→</span></a></div>
+        <div className="course-guide-facts" aria-label="OSSD planning facts">
+          <article><strong>30</strong><span>Credits In A Complete OSSD Program</span></article>
+          <article><strong>2</strong><span>Compulsory Science Credits</span></article>
+          <article><strong>1</strong><span>Grade 9 Or 10 Technology Credit For 2024+ Cohorts</span></article>
+        </div>
       </section>
 
       <section className="course-planning section">
         <div><p className="eyebrow light">Plan With The Full Picture</p><h2>A Course Choice Should Make Sense Today And Tomorrow.</h2><p>Graduation requirements vary by the year a student entered Grade 9. Guidance reviews previous credits, compulsory requirements, language needs and post-secondary prerequisites before confirming a plan.</p></div>
         <div className="course-planning-actions">
           <button className="button primary" type="button" onClick={() => openAction("enquire")}>Discuss A Course Plan</button>
-          <a className="button ghost" href={routeHref("academics")}>Review The OSSD Pathway</a>
+          <a className="button ghost" href={`${routeHref("academics")}#diploma-roadmap`}>Review the OSSD pathway</a>
           <a className="text-link light-link" href={`${routeHref("admissions")}#contact`}>Contact Admissions <span aria-hidden="true">-&gt;</span></a>
         </div>
-        <div className="curriculum-references"><span>Curriculum References</span><a href="https://www.dcp.edu.gov.on.ca/en/curriculum" target="_blank" rel="noreferrer">Ontario Curriculum & Resources <span aria-hidden="true">{"\u2197"}</span></a><a href="https://www.ontario.ca/page/earning-your-high-school-diploma" target="_blank" rel="noreferrer">Current OSSD Requirements <span aria-hidden="true">{"\u2197"}</span></a></div>
+        <div className="curriculum-references">
+          <span>Ontario references</span>
+          <a href={ontario.curriculum}>Curriculum ↗</a>
+          <a href={ontario.courseCredits}>Courses and credits ↗</a>
+          <a href={ontario.diploma}>Diploma requirements ↗</a>
+          <a href={ontario.assessment}>Assessment policy ↗</a>
+        </div>
       </section>
     </>
   );
@@ -679,7 +613,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
 
   function resolveHref(href: string) {
     if (href === "#courses") return routeHref("courses");
-    if (href === "#learning") return homeHref("#online-learning");
+    if (href === "#learning") return `${base}learning/#/signin/student`;
     if (["#academics", "#programs", "#guidance"].includes(href)) {
       return `${routeHref("academics")}${href === "#academics" ? "" : href}`;
     }
@@ -734,14 +668,15 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
 
         <nav className="nav-links" aria-label="Primary navigation">
           <a href={homeHref("#about")}>Our School</a>
-          <a href={routeHref("academics")} aria-current={page === "academics" || page === "courses" ? "page" : undefined}>Academics</a>
+          <a href={routeHref("academics")} aria-current={page === "academics" ? "page" : undefined}>Academics</a>
+          <a href={routeHref("courses")} aria-current={page === "courses" ? "page" : undefined}>Courses</a>
           <a href={homeHref("#student-life")}>Student Life</a>
           <a href={routeHref("admissions")} aria-current={page === "admissions" ? "page" : undefined}>Admissions</a>
           <button className="nav-cta" type="button" onClick={() => openAction("enquire")}>Enquire</button>
         </nav>
 
         <div className="header-tools">
-          <a className="header-learning" href={resolveHref("#learning")}>Online Learning</a>
+          <a className="header-learning" href={resolveHref("#learning")}><span>Student / Faculty Portal</span><span aria-hidden="true">↗</span></a>
           <button ref={searchButtonRef} className="header-tool" type="button" aria-label="Search this website" onClick={() => setSearchOpen(true)}>
             <span className="search-symbol" aria-hidden="true" />
             <span className="tool-label">Search</span>
@@ -819,10 +754,12 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
           <p className="hero-lead">High school brings big decisions. At Lake Forest Academy, students receive the academic challenge, steady guidance and room to grow they need to make those decisions well.</p>
           <div className="hero-actions">
             <a className="button primary" href={routeHref("courses")}>Browse the course catalogue <span aria-hidden="true">-&gt;</span></a>
-            <button className="button ghost" type="button" onClick={() => openAction("tour")}>Plan a visit</button>
+            <a className="button ghost" href="#reading-sample">Try a 60-second lesson</a>
           </div>
         </div>
       </section>
+
+      <ReadingSample />
 
       <section className="family-paths section" aria-label="Explore Lake Forest Academy">
         <a href={`${routeHref("courses")}#course-finder`}>
@@ -835,7 +772,7 @@ export function SchoolSite({ initialPage }: { initialPage?: PageKind }) {
         </a>
         <a href={resolveHref("#learning")}>
           <img src={assetUrl("library-study.jpg")} alt="" loading="lazy" />
-          <div><h2>LFA Online Learning</h2><p>Find the sign-in for students or teachers.</p><span aria-hidden="true">→</span></div>
+          <div><h2>Open the portal</h2><p>Sign in to courses and feedback.</p><span aria-hidden="true">→</span></div>
         </a>
       </section>
 
