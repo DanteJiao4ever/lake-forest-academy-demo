@@ -3,6 +3,13 @@ import { ApiError } from "../lib/errors.js";
 import { evaluateUnlockPolicy } from "../lib/unlock-policy.js";
 
 const { Pool } = pg;
+const notificationVisibleInSection = `NOT EXISTS (
+  SELECT 1 FROM student_submissions subject
+   WHERE subject.id = user_notifications.submission_id
+     AND in_course_test_section(subject.course_code, subject.student_user_id)
+         <> in_course_test_section(subject.course_code, user_notifications.recipient_user_id)
+)`;
+
 const PLATFORM_COURSE_CODES = Object.freeze([
   "SCH4U",
   "ICS4U",
@@ -848,7 +855,14 @@ export class PostgresRepository {
     return result.rows.map((row) => row.course_code);
   }
 
-  async canAccessCourse(user, courseCode) {
+  async canAccessCourse(user, courseCode, studentUserId = null) {
+    if (studentUserId && user.role !== "student") {
+      const scope = await this.pool.query(
+        "SELECT in_course_test_section($1, $2) = in_course_test_section($1, $3) AS matches",
+        [courseCode, user.id, studentUserId],
+      );
+      if (!scope.rows[0].matches) return false;
+    }
     if (user.role === "teacher_admin") return true;
     if (user.role === "student") {
       const result = await this.pool.query(
@@ -868,7 +882,15 @@ export class PostgresRepository {
     return false;
   }
 
-  async listCourseAnnouncements(courseCodes) {
+  async listTestSections(courseCodes, userId) {
+    const result = await this.pool.query(
+      "SELECT course_code FROM course_test_members WHERE user_id = $1 AND course_code = ANY($2::text[]) ORDER BY course_code",
+      [userId, courseCodes],
+    );
+    return result.rows.map((row) => row.course_code);
+  }
+
+  async listCourseAnnouncements(courseCodes, userId) {
     const result = await this.pool.query(
       `SELECT a.id, a.title, a.body, a.published_at AS "publishedAt",
               u.display_name AS "authorName",
@@ -877,10 +899,11 @@ export class PostgresRepository {
          JOIN course_announcements a ON a.id = t.announcement_id
          JOIN app_users u ON u.id = a.author_user_id
         WHERE t.course_code = ANY($1::text[])
+          AND t.test_section = in_course_test_section(t.course_code, $2)
         GROUP BY a.id, u.display_name
         ORDER BY a.published_at DESC, a.id DESC
         LIMIT 100`,
-      [courseCodes],
+      [courseCodes, userId],
     );
     return result.rows;
   }
@@ -894,8 +917,8 @@ export class PostgresRepository {
          ON CONFLICT (id) DO NOTHING
          RETURNING id
        )
-       INSERT INTO course_announcement_targets (announcement_id, course_code)
-       SELECT n.id, c.code FROM new_announcement n CROSS JOIN unnest($5::text[]) AS c(code)`,
+       INSERT INTO course_announcement_targets (announcement_id, course_code, test_section)
+       SELECT n.id, c.code, in_course_test_section(c.code, $2) FROM new_announcement n CROSS JOIN unnest($5::text[]) AS c(code)`,
       [publicationId, authorUserId, title, body, courseCodes],
     );
     if (inserted.rowCount > 0) return true;
@@ -1576,7 +1599,7 @@ export class PostgresRepository {
     }
   }
 
-  async listCourseRoster(courseCode) {
+  async listCourseRoster(courseCode, viewerId) {
     const result = await this.pool.query(
       `SELECT u.public_id AS student_id, u.display_name, u.email,
               ce.status AS enrollment_status, ce.enrolled_at,
@@ -1590,8 +1613,9 @@ export class PostgresRepository {
          FROM course_enrollments ce
          JOIN app_users u ON u.id = ce.student_user_id
         WHERE ce.course_code = $1 AND ce.status = 'active' AND u.status = 'active'
+          AND in_course_test_section($1, u.id) = in_course_test_section($1, $2)
         ORDER BY u.display_name, u.public_id`,
-      [courseCode],
+      [courseCode, viewerId],
     );
     return result.rows.map((row) => ({
       studentId: row.student_id,
@@ -1604,7 +1628,7 @@ export class PostgresRepository {
     }));
   }
 
-  async listCourseProgress(courseCode) {
+  async listCourseProgress(courseCode, viewerId) {
     const result = await this.pool.query(
       `SELECT u.public_id AS student_id, u.display_name, u.email,
               cm.id AS module_id, cm.module_number,
@@ -1643,8 +1667,9 @@ export class PostgresRepository {
          ) override ON true
         WHERE enrollment.course_code = $1
           AND enrollment.status = 'active'
+          AND in_course_test_section($1, u.id) = in_course_test_section($1, $2)
         ORDER BY u.display_name, u.public_id, cm.module_number`,
-      [courseCode],
+      [courseCode, viewerId],
     );
 
     const students = [];
@@ -1688,7 +1713,7 @@ export class PostgresRepository {
     return { courseCode, students };
   }
 
-  async listCourseGradebook(courseCode) {
+  async listCourseGradebook(courseCode, viewerId) {
     const [itemsResult, roster] = await Promise.all([
       this.pool.query(
         `SELECT id, category, component_key, title, weight_percent, max_score,
@@ -1698,7 +1723,7 @@ export class PostgresRepository {
           ORDER BY position`,
         [courseCode],
       ),
-      this.listCourseRoster(courseCode),
+      this.listCourseRoster(courseCode, viewerId),
     ]);
     const scoresResult = await this.pool.query(
       `WITH latest AS (
@@ -1766,8 +1791,9 @@ export class PostgresRepository {
          ) submission_published ON true
         WHERE ce.course_code = $1 AND ce.status = 'active'
           AND gi.course_code = $1 AND gi.status = 'published'
+          AND in_course_test_section($1, u.id) = in_course_test_section($1, $2)
         ORDER BY u.public_id, gi.position`,
-      [courseCode],
+      [courseCode, viewerId],
     );
     const scores = new Map();
     for (const row of scoresResult.rows) {
@@ -1828,8 +1854,9 @@ export class PostgresRepository {
             AND gi.id = $3
             AND gi.status = 'published'
           WHERE u.public_id = $1 AND u.role = 'student' AND u.status = 'active'
+            AND in_course_test_section($2, u.id) = in_course_test_section($2, $4)
           LIMIT 1`,
-        [input.studentPublicId, input.courseCode, input.gradebookItemId],
+        [input.studentPublicId, input.courseCode, input.gradebookItemId, input.grader.id],
       );
       if (!target.rows[0]) {
         throw new ApiError(
@@ -2017,8 +2044,9 @@ export class PostgresRepository {
              ON ce.student_user_id = u.id AND ce.course_code = cm.course_code AND ce.status = 'active'
           WHERE u.public_id = $1 AND u.role = 'student' AND u.status = 'active'
             AND cm.id = $2 AND cm.status = 'published'
+            AND in_course_test_section(cm.course_code, u.id) = in_course_test_section(cm.course_code, $3)
           LIMIT 1`,
-        [studentPublicId, moduleId],
+        [studentPublicId, moduleId, teacherUserId],
       );
       if (!target.rows[0]) {
         throw new ApiError(404, "STUDENT_MODULE_NOT_FOUND", "The enrolled student or module was not found.");
@@ -2239,6 +2267,7 @@ export class PostgresRepository {
            SELECT teacher.id
              FROM app_users teacher
             WHERE teacher.status = 'active'
+              AND in_course_test_section($2, teacher.id) = in_course_test_section($2, $3)
               AND (
                 teacher.role = 'teacher_admin'
                 OR (
@@ -2311,6 +2340,10 @@ export class PostgresRepository {
         SELECT 1 FROM teacher_course_access tca
         WHERE tca.teacher_user_id = ${add(user.id)} AND tca.course_code = s.course_code
       )`);
+    }
+    if (user.role !== "student") {
+      conditions.push(`in_course_test_section(s.course_code, s.student_user_id) =
+        in_course_test_section(s.course_code, ${add(user.id)})`);
     }
     if (filters.courseCode) conditions.push(`s.course_code = ${add(filters.courseCode)}`);
     if (filters.unitNumber) conditions.push(`s.unit_number = ${add(filters.unitNumber)}`);
@@ -2508,6 +2541,7 @@ export class PostgresRepository {
              SELECT teacher.id
                FROM app_users teacher
               WHERE teacher.status = 'active'
+                AND in_course_test_section($2, teacher.id) = in_course_test_section($2, $3)
                 AND (
                   teacher.role = 'teacher_admin'
                   OR (
@@ -2570,7 +2604,7 @@ export class PostgresRepository {
   async listNotifications(recipientUserId, { unreadOnly = false, limit = 50, offset = 0 } = {}) {
     const result = await this.pool.query(
       `SELECT * FROM user_notifications
-        WHERE recipient_user_id = $1
+        WHERE recipient_user_id = $1 AND ${notificationVisibleInSection}
           AND ($2::boolean = false OR read_at IS NULL)
         ORDER BY created_at DESC, id DESC
         LIMIT $3 OFFSET $4`,
@@ -2582,7 +2616,7 @@ export class PostgresRepository {
   async countUnreadNotifications(recipientUserId) {
     const result = await this.pool.query(
       `SELECT count(*)::int AS count FROM user_notifications
-        WHERE recipient_user_id = $1 AND read_at IS NULL`,
+        WHERE recipient_user_id = $1 AND ${notificationVisibleInSection} AND read_at IS NULL`,
       [recipientUserId],
     );
     return Number(result.rows[0]?.count || 0);
@@ -2592,7 +2626,7 @@ export class PostgresRepository {
     const result = await this.pool.query(
       `UPDATE user_notifications
           SET read_at = COALESCE(read_at, now())
-        WHERE recipient_user_id = $1 AND id = ANY($2::uuid[])
+        WHERE recipient_user_id = $1 AND ${notificationVisibleInSection} AND id = ANY($2::uuid[])
         RETURNING *`,
       [recipientUserId, notificationIds],
     );
@@ -2608,7 +2642,7 @@ export class PostgresRepository {
     const result = await this.pool.query(
       `UPDATE user_notifications
           SET read_at = COALESCE(read_at, now())
-        WHERE recipient_user_id = $1 AND read_at IS NULL
+        WHERE recipient_user_id = $1 AND ${notificationVisibleInSection} AND read_at IS NULL
         RETURNING *`,
       [recipientUserId],
     );

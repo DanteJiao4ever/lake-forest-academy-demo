@@ -9368,7 +9368,7 @@
     const heading = pageHeading(isTeacher() ? "Faculty" : "My Courses", "Course Announcements",
       isTeacher() ? "Post an update to one or more courses." : "Updates from your course teachers.");
     if (!announcementBoard) {
-      const board = { loaded: false, error: "", items: [], courses: [] };
+      const board = { loaded: false, error: "", items: [], courses: [], testCourses: [] };
       announcementBoard = board;
       requestPlatformJson(PLATFORM_API_CONFIG.announcementsEndpoint)
         .then((payload) => {
@@ -9377,6 +9377,7 @@
           }
           board.items = payload.data;
           board.courses = payload.courseCodes;
+          board.testCourses = payload.testCourseCodes || [];
           board.loaded = true;
         })
         .catch((error) => { board.error = error.message || "Could not load course announcements."; })
@@ -9388,11 +9389,14 @@
     if (board.error) return heading + `<div class="notification-state" role="alert"><p>${escapeHtml(board.error)}</p>
       <button class="button button-secondary" type="button" data-action="reload-announcements">Try again</button></div>`;
     if (!board.loaded) return heading + '<p role="status">Loading course announcements…</p>';
+    const courseLabel = (code) => code === "MCV4U"
+      ? `${code} · ${board.testCourses.includes(code) ? "Test section" : "Regular section"}`
+      : code;
     const composer = isTeacher() && board.courses.length ? `
       <section class="teacher-section"><h2>New announcement</h2>
         <form id="announcement-form" class="announcement-composer">
           <fieldset><legend>Publish to courses</legend>
-            ${board.courses.map((code) => `<label><input type="checkbox" name="courseCode" value="${escapeHtml(code)}"> ${escapeHtml(code)}</label>`).join("")}
+            ${board.courses.map((code) => `<label><input type="checkbox" name="courseCode" value="${escapeHtml(code)}"> ${escapeHtml(courseLabel(code))}</label>`).join("")}
           </fieldset>
           <label for="announcement-title">Title</label>
           <input id="announcement-title" name="title" required maxlength="160">
@@ -9403,11 +9407,14 @@
         </form>
       </section>` : "";
     const articles = board.items.map((item) => `<article class="announcement-card"><div>
-      <p class="course-code">${escapeHtml(item.courseCodes.join(" · "))}</p>
+      <p class="course-code">${escapeHtml(item.courseCodes.map(courseLabel).join(" · "))}</p>
       <h2>${escapeHtml(item.title)}</h2><p class="course-announcement-body">${escapeHtml(item.body)}</p>
       <div class="announcement-meta"><span>${escapeHtml(item.authorName)}</span><span>${formatDate(item.publishedAt, true)}</span></div>
       </div></article>`).join("");
-    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || '<p class="empty-state compact">No announcements for your courses yet.</p>'}</section>`;
+    const emptyState = board.courses.includes("MCV4U")
+      ? `No announcements for your courses yet. Your class: ${courseLabel("MCV4U")}.`
+      : "No announcements for your courses yet.";
+    return heading + composer + `<section class="announcement-list" aria-label="Published announcements">${articles || `<p class="empty-state compact">${escapeHtml(emptyState)}</p>`}</section>`;
   }
 
   function notFoundView() {
