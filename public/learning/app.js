@@ -2557,6 +2557,29 @@
     return href;
   }
 
+  function teacherDriveFileUrl(value) {
+    if (!value || !isTeacher()) return "";
+    try {
+      const url = new URL(value);
+      if (url.username || url.password) return "";
+      const isDrive = url.origin === "https://drive.google.com";
+      const isDocs = url.origin === "https://docs.google.com";
+      if (isDrive && url.pathname === "/open" && /^[A-Za-z0-9_-]+$/.test(url.searchParams.get("id") || "")) {
+        url.pathname = "/file/d/" + url.searchParams.get("id") + "/view";
+      }
+      const driveFile = isDrive && /^\/file\/(?:u\/\d+\/)?d\/[A-Za-z0-9_-]+(?:\/(?:view|edit|preview))?\/?$/.test(url.pathname);
+      const document = isDocs && /^\/(?:document|spreadsheets|presentation|drawings|forms)\/(?:u\/\d+\/)?d\/[A-Za-z0-9_-]+(?:\/(?:view|edit|preview|viewform))?\/?$/.test(url.pathname);
+      if (!driveFile && !document) return "";
+      const resourceKey = url.searchParams.get("resourcekey");
+      url.search = "";
+      url.hash = "";
+      if (resourceKey && /^[A-Za-z0-9_-]+$/.test(resourceKey)) url.searchParams.set("resourcekey", resourceKey);
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+
   function submissionsEndpointUrl(scope = "") {
     const configured = configuredDriveUrl(
       SUBMISSION_CONFIG.submissionsEndpoint,
@@ -2717,11 +2740,9 @@
         scalarLabel(version.fileType || version.mimeType) ||
         fallback.fileType ||
         "",
-      fileUrl: submissionAttachmentUrl(
-        version.fileUrl || version.openUrl || version.downloadUrl || fallback.fileUrl,
-        version.submissionId,
-        version.fileReceiptId,
-      ),
+      fileUrl: [version.fileUrl, version.openUrl, version.downloadUrl, fallback.fileUrl]
+        .map(value => submissionAttachmentUrl(value, version.submissionId, version.fileReceiptId)).find(Boolean) || "",
+      teacherWebViewLink: teacherDriveFileUrl(version.webViewLink || version.fileUrl) || fallback.teacherWebViewLink || "",
       messages: normalizeSubmissionMessages(
         version.messages || version.interactionMessages || version.thread,
         attemptNumber,
@@ -2909,11 +2930,9 @@
           ? source.files[0]
           : {};
     const fileName = scalarLabel(source.fileName || primaryFile.name);
-    const fileUrl = submissionAttachmentUrl(
-      source.fileUrl || source.openUrl || primaryFile.openUrl || source.downloadUrl || primaryFile.url,
-      source.submissionId || source.id,
-      primaryFile.id,
-    );
+    const fileUrl = [source.fileUrl, source.openUrl, primaryFile.openUrl, source.downloadUrl, primaryFile.url]
+      .map(value => submissionAttachmentUrl(value, source.submissionId || source.id, primaryFile.id)).find(Boolean) || "";
+    const teacherWebViewLink = teacherDriveFileUrl(source.webViewLink || primaryFile.webViewLink || source.fileUrl);
     const historySource = Array.isArray(source.history)
       ? source.history
       : Array.isArray(source.versions)
@@ -2975,6 +2994,7 @@
       workflowStatus === "revision_requested";
     const fallbackVersion = {
       attemptNumber,
+      teacherWebViewLink,
       note: source.note,
       fileName,
       submittedAt,
@@ -3086,6 +3106,7 @@
         fileSize: fallbackVersion.fileSize,
         fileType: fallbackVersion.fileType,
         fileUrl,
+        teacherWebViewLink,
         status: workflowStatus,
         workflowStatus,
         resubmissionAllowed,
@@ -7331,6 +7352,7 @@
             fileSize: record.submission.fileSize,
             fileType: record.submission.fileType,
             fileUrl: record.submission.fileUrl,
+            teacherWebViewLink: record.submission.teacherWebViewLink,
           },
         ];
     return `
@@ -7368,7 +7390,8 @@
                   ? Number(version.attemptNumber)
                   : history.length - index;
                 const fileReceiptId = version.fileReceiptId;
-                const fileUrl = submissionAttachmentUrl(version.fileUrl);
+                const fileUrl = submissionAttachmentUrl(version.fileUrl) ||
+                  teacherDriveFileUrl(version.teacherWebViewLink || version.webViewLink || version.fileUrl);
                 const fileName = version.fileName || "Submission note only";
                 return `
                   <article class="submission-file-card">

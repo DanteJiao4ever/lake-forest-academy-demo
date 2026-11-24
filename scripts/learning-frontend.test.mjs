@@ -3731,6 +3731,51 @@ test("students open each attempt's protected attachment on the school API and re
   assert.match(history, /<details><summary>Written response<\/summary><p>Written clarification, no file\./);
 });
 
+test("faculty can open version-specific legacy Drive files while students receive only school API links", async () => {
+  const email = "legacy-files@example.test";
+  const student = { email, role: "student" };
+  const task = "sch4u-m02-assignment";
+  const endpoint = "https://api.example.test/v1/submissions";
+  const apiFile = "/v1/submissions/s5/files/file5/open";
+  const versions = [
+    { fileName: "Draft.pdf", webViewLink: "https://drive.google.com/open?id=draft123&resourcekey=protected_1" },
+    { note: "Written draft with no file." },
+    { fileName: "Invalid.pdf", webViewLink: "https://drive.google.com.example.test/file/d/invalid/view" },
+    { fileName: "Invalid folder", webViewLink: "https://drive.google.com/drive/folders/folder-id" },
+    { fileName: "Result.pdf", fileUrl: "https://drive.google.com/file/d/unused/view", openUrl: apiFile, fileReceiptId: "file5" },
+    { fileName: "Worksheet", webViewLink: "https://docs.google.com/spreadsheets/d/sheet123/edit?usp=sharing" },
+    { fileName: "Final report" },
+  ].map((v, i) => ({ ...v, submissionId: "s" + (i + 1), receiptId: "s" + (i + 1),
+    attemptNumber: i + 1, submittedAt: `2026-08-0${i + 1}T11:00:00Z` }));
+  const options = {
+    settleTurns: 14,
+    localStorageSeed: studentStateStorage(email),
+    submissionConfig: { submissionsEndpoint: endpoint },
+    async fetch(url) {
+      if (new URL(String(url)).pathname !== "/v1/submissions") return jsonResponse({ data: [] });
+      return jsonResponse({ data: [{ id: "s7", courseCode: "SCH4U", assignmentId: task, student,
+        status: "submitted", submittedAt: versions.at(-1).submittedAt, attemptNumber: 7,
+        webViewLink: "https://docs.google.com/document/d/final7/edit", history: versions,
+      }], page: { nextCursor: null } });
+    },
+  };
+  const faculty = await renderAssignedFaculty("SCH4U", "#/teacher/submission/" + encodeURIComponent(email) + "/" + task,
+    { role: "teacher", email: "teacher@example.test" }, options);
+  const rows = faculty.match(/<article class="submission-file-card">[\s\S]*?<\/article>/g);
+  assert.equal(rows.length, 7);
+  const links = rows.map(row => row.match(/href="([^"]+)"[^>]*>Open File<\/a>/)?.[1] || "");
+  assert.deepEqual(links, ["https://docs.google.com/document/d/final7/edit",
+    "https://docs.google.com/spreadsheets/d/sheet123/edit", "https://api.example.test" + apiFile,
+    "", "", "", "https://drive.google.com/file/d/draft123/view?resourcekey=protected_1"]);
+  assert.match(rows[5], /Written draft with no file/);
+  assert.doesNotMatch(rows[5], /Download File/);
+  const learner = await renderPortal("#/assignment/" + task, student, options);
+  const history = learner.split('<div class="submission-history">')[1];
+  assert.ok(history.includes(endpoint + "/s5/files/file5/open"));
+  assert.match(history, /Written draft with no file/);
+  assert.doesNotMatch(history, /docs\.google\.com|drive\.google\.com|protected_1/);
+});
+
 test("legacy submission histories receive stable chronological version numbers", async () => {
   const email = "legacy-history@example.test";
   const submissionsEndpoint = "https://api.example.test/v1/submissions";
