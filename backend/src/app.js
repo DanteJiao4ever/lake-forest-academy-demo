@@ -15,6 +15,7 @@ import { validateUploadedFile } from "./lib/file-validation.js";
 import { submissionGradeSchema } from "./lib/submission-grade.js";
 import { evaluateUnlockPolicy, policyRequires } from "./lib/unlock-policy.js";
 import { listTeachingPacks, openTeachingPack, teachingPacksReady } from "./services/teaching-packs.js";
+import { registerCoursePacing } from "./services/pacing-engine.js";
 import { registerClassInsights } from "./services/class-insights.js";
 import { registerReviewWorkflow } from "./services/review-workflow.js";
 import { registerIntegrityEvidence } from "./services/integrity-evidence.js";
@@ -1539,6 +1540,7 @@ export async function createApp({
     courseCatalog,
   );
 
+  registerCoursePacing(app,{repository,requireRoles,requireCsrf,packRoot:config.coursePacksRoot ?? process.env.LFA_COURSE_PACKS_ROOT ?? "/opt/lfa/teaching/pacing"});
   registerClassInsights(app, { repository, requireRoles, requireCsrf });
   registerReviewWorkflow(app, { repository, requireRoles, requireCsrf, drive, config });
   registerIntegrityEvidence(app,{ repository,requireRoles,requireCsrf,requireCourseAccess });
