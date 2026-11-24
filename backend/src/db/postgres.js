@@ -304,8 +304,28 @@ const historyLateral = `
 `;
 
 // The launch courses start with orientation 0. Unit-based published courses can start at 1.
+// Archived courses never enter ordinary enrolment. This one class is visible
+// to its individually assigned students only while its test rollout is enabled.
+const assignedMdmStudent = `SELECT c.code FROM courses c
+  JOIN course_test_members tm ON tm.course_code = c.code
+  JOIN app_users u ON u.id = tm.user_id
+  WHERE c.code = 'MDM4U' AND c.status = 'archived' AND u.id = $1
+    AND u.role = 'student' AND u.status = 'active'
+    AND classroom_rollout_enabled(c.code, u.id)`;
+
+// The assigned classroom uses published M00–M11 rows alongside the original
+// draft records. The authored IDs are independent of their catalogue positions.
+function classroomModuleNumber(row) {
+  const id = row.module_id ?? row.id;
+  if (row.course_code === "MDM4U" && /^mdm4u-m(0[0-9]|1[01])$/.test(id)) {
+    return Number(id.slice(-2));
+  }
+  return row.module_number;
+}
+
 function isEntryModule(row) {
-  return row.module_number === 0 || (row.module_number === 1 && row.previous_module_id == null);
+  const number = classroomModuleNumber(row);
+  return number === 0 || (number === 1 && row.previous_module_id == null);
 }
 
 export class PostgresRepository {
@@ -855,7 +875,9 @@ export class PostgresRepository {
   async listEnrollments(studentUserId) {
     const result = await this.pool.query(
       `SELECT e.course_code FROM course_enrollments e JOIN courses c ON c.code = e.course_code
-       WHERE e.student_user_id = $1 AND e.status = 'active' AND c.status = 'active' ORDER BY e.course_code`,
+       WHERE e.student_user_id = $1 AND e.status = 'active' AND c.status = 'active'
+       UNION ${assignedMdmStudent}
+       ORDER BY course_code`,
       [studentUserId],
     );
     return result.rows.map((row) => row.course_code);
@@ -876,7 +898,8 @@ export class PostgresRepository {
     if (user.role === "student") {
       const result = await this.pool.query(
         `SELECT 1 FROM course_enrollments e JOIN courses c ON c.code = e.course_code
-         WHERE e.student_user_id = $1 AND e.course_code = $2 AND e.status = 'active' AND c.status = 'active'`,
+         WHERE e.student_user_id = $1 AND e.course_code = $2 AND e.status = 'active' AND c.status = 'active'
+         UNION ALL SELECT 1 FROM (${assignedMdmStudent}) pilot WHERE pilot.code = $2`,
         [user.id, courseCode],
       );
       return result.rowCount > 0;
@@ -1104,7 +1127,7 @@ export class PostgresRepository {
             ))
           GROUP BY m.course_code
        )
-       SELECT c.code, c.title, c.status, classroom_rollout_enabled(c.code,$3) AS classroom_enabled,
+       SELECT c.code, c.title, 'active' AS status, classroom_rollout_enabled(c.code,$3) AS classroom_enabled,
               COALESCE(module_stats.module_count, 0)::int AS module_count,
               COALESCE(module_stats.planned_hours, 0)::numeric AS planned_hours,
               COALESCE(material_stats.material_count, 0)::int AS material_count,
@@ -1112,7 +1135,9 @@ export class PostgresRepository {
          FROM courses c
          LEFT JOIN module_stats ON module_stats.course_code = c.code
          LEFT JOIN material_stats ON material_stats.course_code = c.code
-        WHERE c.code = ANY($1::text[]) AND c.status = 'active'
+        WHERE c.code = ANY($1::text[])
+          AND (c.status = 'active' OR (NOT $2::boolean AND c.code = 'MDM4U' AND c.status = 'archived'
+               AND in_course_test_section(c.code,$3) AND classroom_rollout_enabled(c.code,$3)))
         ORDER BY c.code`,
       [allowed, user.role !== "student", user.id],
     );
@@ -1142,7 +1167,7 @@ export class PostgresRepository {
       ? {
           id: row.id,
           courseCode: row.course_code,
-          moduleNumber: row.module_number,
+          moduleNumber: classroomModuleNumber(row),
           unitNumber: row.unit_number,
           title: row.title,
           unitTitle: row.unit_title,
@@ -1166,7 +1191,7 @@ export class PostgresRepository {
           id: row.id,
           moduleId: row.module_id,
           courseCode: row.course_code,
-          moduleNumber: row.module_number,
+          moduleNumber: classroomModuleNumber(row),
           sequence: row.sequence,
           completionCriteria: row.unlock_criteria,
           status: row.status,
@@ -1292,7 +1317,7 @@ export class PostgresRepository {
     return modulesResult.rows.map((row) => ({
       id: row.id,
       courseCode: row.course_code,
-      moduleNumber: row.module_number,
+      moduleNumber: classroomModuleNumber(row),
       unitNumber: row.unit_number,
       title: row.title,
       unitTitle: row.unit_title,
@@ -1334,7 +1359,7 @@ export class PostgresRepository {
       id: row.id,
       courseCode: row.course_code,
       moduleId: row.module_id,
-      moduleNumber: row.module_number,
+      moduleNumber: classroomModuleNumber(row),
       unitNumber: row.unit_number,
       curriculumUnitNumber:
         row.section_kind === "final_evaluation" ? null : row.unit_number,
@@ -1363,7 +1388,7 @@ export class PostgresRepository {
 
   async listStudentProgress(studentUserId, courseCode) {
     const result = await this.pool.query(
-      `SELECT cm.id, cm.module_number, (cm.module_number > 0 AND NOT integrity_allows($1,cm.course_code)) AS integrity_locked, p.status AS recorded_status,
+      `SELECT cm.id, cm.course_code, cm.module_number, (cm.module_number > 0 AND NOT integrity_allows($1,cm.course_code)) AS integrity_locked, p.status AS recorded_status,
               p.started_at, p.completed_at,
               previous_module.id AS previous_module_id, previous.status AS previous_status,
               override.id AS override_id, override.reason AS override_reason,
@@ -1400,7 +1425,7 @@ export class PostgresRepository {
       return {
         courseCode,
         moduleId: row.id,
-        moduleNumber: row.module_number,
+        moduleNumber: classroomModuleNumber(row),
         ...(row.integrity_locked ? { integrityRequired: true } : {}),
         status,
         startedAt: row.started_at,
@@ -1732,7 +1757,7 @@ export class PostgresRepository {
           : "locked");
       student.modules.push({
         moduleId: row.module_id,
-        moduleNumber: row.module_number,
+        moduleNumber: classroomModuleNumber(row),
         status,
         startedAt: row.started_at,
         completedAt: row.completed_at,
