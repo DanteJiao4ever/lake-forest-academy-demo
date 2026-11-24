@@ -166,7 +166,8 @@ const submissionSelect = `
          u.last_name AS student_last_name,
          COALESCE(files.items, '[]'::json) AS files,
          COALESCE(messages.items, '[]'::json) AS messages,
-         grade.item AS grade
+         grade.item AS grade,
+         history.items AS history_records
     FROM student_submissions s
     JOIN app_users u ON u.id = s.student_user_id
     LEFT JOIN assignments a ON a.id = s.assignment_id
@@ -1134,6 +1135,15 @@ export class PostgresRepository {
            FROM course_modules
           WHERE course_code = ANY($1::text[])
           GROUP BY course_code
+       ), published_weights AS (
+         SELECT course_code, jsonb_object_agg(category, total) AS weights
+         FROM (
+           SELECT course_code, category, sum(weight_percent) AS total
+           FROM gradebook_items
+           WHERE course_code = ANY($1::text[]) AND status = 'published'
+           GROUP BY course_code, category
+         ) totals
+         GROUP BY course_code
        ), material_stats AS (
          SELECT m.course_code, count(*)::int AS material_count,
                 max(source.last_successful_sync_at) AS materials_last_synced_at
@@ -1159,9 +1169,10 @@ export class PostgresRepository {
               COALESCE(module_stats.module_count, 0)::int AS module_count,
               COALESCE(module_stats.planned_hours, 0)::numeric AS planned_hours,
               COALESCE(material_stats.material_count, 0)::int AS material_count,
-              material_stats.materials_last_synced_at
+              published_weights.weights, material_stats.materials_last_synced_at
          FROM courses c
          LEFT JOIN module_stats ON module_stats.course_code = c.code
+         LEFT JOIN published_weights ON published_weights.course_code = c.code
          LEFT JOIN material_stats ON material_stats.course_code = c.code
         WHERE c.code = ANY($1::text[])
           AND (c.status = 'active' OR (NOT $2::boolean AND c.code = 'MDM4U'
@@ -1174,6 +1185,7 @@ export class PostgresRepository {
       title: row.title,
       status: row.status,
       classroomEnabled: row.classroom_enabled,
+      assessmentWeights: row.weights ?? {},
       moduleCount: Number(row.module_count),
       plannedHours: Number(row.planned_hours),
       materials: {
@@ -1802,7 +1814,7 @@ export class PostgresRepository {
   }
 
   async listCourseGradebook(courseCode, viewerId) {
-    const [itemsResult, roster] = await Promise.all([
+    const [itemsResult, roster, publishedAssignments] = await Promise.all([
       this.pool.query(
         `SELECT id, category, component_key, title, weight_percent, max_score,
                 submission_mode, assignment_id, position
@@ -1812,6 +1824,29 @@ export class PostgresRepository {
         [courseCode],
       ),
       this.listCourseRoster(courseCode, viewerId),
+      this.pool.query(
+        `WITH latest AS (
+           SELECT DISTINCT ON (s.student_user_id, s.assignment_id)
+                  u.public_id AS student_id, s.assignment_id, s.assignment_title,
+                  s.id AS submission_id, s.attempt_number
+             FROM student_submissions s
+             JOIN app_users u ON u.id=s.student_user_id AND u.status='active'
+             JOIN course_enrollments e ON e.student_user_id=u.id
+               AND e.course_code=s.course_code AND e.status='active'
+            WHERE s.course_code=$1 AND s.status='submitted'
+              AND in_course_test_section($1,u.id)=in_course_test_section($1,$2)
+            ORDER BY s.student_user_id, s.assignment_id, s.attempt_number DESC, s.submitted_at DESC
+         )
+         SELECT latest.*, grade.score, grade.feedback, grade.version, grade.published_at
+           FROM latest
+           JOIN LATERAL (
+             SELECT score, feedback, version, published_at FROM submission_grades
+              WHERE submission_id=latest.submission_id AND published_at IS NOT NULL
+              ORDER BY version DESC LIMIT 1
+           ) grade ON true
+          ORDER BY latest.student_id, grade.published_at DESC, latest.assignment_id`,
+        [courseCode, viewerId],
+      ),
     ]);
     const scoresResult = await this.pool.query(
       `WITH latest AS (
@@ -1907,6 +1942,20 @@ export class PostgresRepository {
           : null,
       });
     }
+    const assignmentResults = new Map();
+    for (const row of publishedAssignments.rows) {
+      if (!assignmentResults.has(row.student_id)) assignmentResults.set(row.student_id, []);
+      assignmentResults.get(row.student_id).push({
+        assignmentId: row.assignment_id,
+        assignmentTitle: row.assignment_title,
+        submissionId: row.submission_id,
+        attemptNumber: row.attempt_number,
+        score: Number(row.score),
+        feedback: row.feedback,
+        version: row.version,
+        publishedAt: row.published_at,
+      });
+    }
     return {
       courseCode,
       items: itemsResult.rows.map((row) => ({
@@ -1920,7 +1969,11 @@ export class PostgresRepository {
         assignmentId: row.assignment_id,
         position: row.position,
       })),
-      students: roster.map((student) => ({ ...student, scores: scores.get(student.studentId) || [] })),
+      students: roster.map((student) => ({
+        ...student,
+        scores: scores.get(student.studentId) || [],
+        assignmentResults: assignmentResults.get(student.studentId) || [],
+      })),
     };
   }
 
