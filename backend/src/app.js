@@ -1,4 +1,5 @@
 import path from "node:path";
+import { launchCourseCodes, schoolCourseCodes } from "./lib/enrollment-catalog.js";
 import { createHash, randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -27,7 +28,7 @@ import { UnavailableGoogleWorkspaceOidc } from "./auth/google-workspace-oidc.js"
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const categories = ["Lessons", "Resources", "Assignments", "Assessments"];
-const launchCourseCodes = ["SCH4U", "ICS4U", "SPH4U", "MHF4U", "MCV4U", "BBB4M"];
+
 const materialFilterSchema = z.object({
   courseCode: courseCodeSchema.optional(),
   moduleId: assignmentIdSchema.optional(),
@@ -1511,7 +1512,13 @@ export async function createApp({
   app.get(
     "/v1/me/enrollments",
     { preHandler: [requireRoles("student")] },
-    async (request) => ({ data: await repository.listEnrollments(request.auth.user.id) }),
+    async (request) => {
+      const studentId = request.auth.user.id;
+      const [data, selectableCourseCodes] = await Promise.all([
+        repository.listEnrollments(studentId), repository.selectableCourses(studentId),
+      ]);
+      return { data, selectableCourseCodes };
+    },
   );
 
   app.put(
@@ -1521,16 +1528,21 @@ export async function createApp({
       const input = parse(
         z.object({
           courseCodes: z
-            .array(z.enum(launchCourseCodes))
-            .max(launchCourseCodes.length)
+            .array(z.enum(schoolCourseCodes))
+            .max(schoolCourseCodes.length)
             .default([]),
+          catalogVersion: z.literal(2).optional(),
         }),
         request.body,
         "INVALID_ENROLLMENTS",
       );
       const unique = [...new Set(input.courseCodes)];
-      const saved = await repository.replaceEnrollments(request.auth.user.id, unique, launchCourseCodes);
-      return { data: saved };
+      if (!input.catalogVersion && unique.some(code => !launchCourseCodes.includes(code))) {
+        throw new ApiError(422, "INVALID_ENROLLMENTS", "Choose courses from the current selection form.");
+      }
+      const id = request.auth.user.id;
+      const selectableCourseCodes = await repository.saveCourseSelection(id, unique, input.catalogVersion);
+      return { data: await repository.listEnrollments(id), selectableCourseCodes };
     },
   );
 
@@ -1566,7 +1578,7 @@ export async function createApp({
     async (request, reply) => {
       const input = parse(z.object({
         publicationId: uuidSchema,
-        courseCodes: z.array(courseCodeSchema).min(1).max(32),
+        courseCodes: z.array(courseCodeSchema).min(1).max(schoolCourseCodes.length),
         title: z.string().trim().min(1).max(160),
         body: z.string().trim().min(1).max(3000),
       }).strict(), request.body, "INVALID_ANNOUNCEMENT");

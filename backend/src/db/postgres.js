@@ -1,4 +1,5 @@
 import pg from "pg";
+import { launchCourseCodes as PLATFORM_COURSE_CODES, schoolCourseCodes } from "../lib/enrollment-catalog.js";
 import { ApiError } from "../lib/errors.js";
 import { evaluateUnlockPolicy } from "../lib/unlock-policy.js";
 
@@ -9,15 +10,6 @@ const notificationVisibleInSection = `NOT EXISTS (
      AND in_course_test_section(subject.course_code, subject.student_user_id)
          <> in_course_test_section(subject.course_code, user_notifications.recipient_user_id)
 )`;
-
-const PLATFORM_COURSE_CODES = Object.freeze([
-  "SCH4U",
-  "ICS4U",
-  "SPH4U",
-  "MHF4U",
-  "MCV4U",
-  "BBB4M",
-]);
 
 export function createPool(config) {
   // node-postgres reparses connectionString when it creates each client, so a
@@ -304,12 +296,11 @@ const historyLateral = `
 `;
 
 // The launch courses start with orientation 0. Unit-based published courses can start at 1.
-// Archived courses never enter ordinary enrolment. This one class is visible
-// to its individually assigned students only while its test rollout is enabled.
+// The assigned pilot remains accessible across publication of the ordinary class.
 const assignedMdmStudent = `SELECT c.code FROM courses c
   JOIN course_test_members tm ON tm.course_code = c.code
   JOIN app_users u ON u.id = tm.user_id
-  WHERE c.code = 'MDM4U' AND c.status = 'archived' AND u.id = $1
+  WHERE c.code = 'MDM4U' AND u.id = $1
     AND u.role = 'student' AND u.status = 'active'
     AND classroom_rollout_enabled(c.code, u.id)`;
 
@@ -837,33 +828,62 @@ export class PostgresRepository {
     }
   }
 
-  async replaceEnrollments(studentUserId, courseCodes, editableCodes = null) {
+  async selectableCourses(studentId, client = this.pool) {
+    const result = await client.query(
+      `SELECT code FROM courses WHERE status = 'active' AND code = ANY($2::text[])
+        AND (code = ANY($3::text[]) OR EXISTS (
+          SELECT 1 FROM formal_student_roster WHERE student_user_id = $1))
+       ORDER BY code`,
+      [studentId, schoolCourseCodes, PLATFORM_COURSE_CODES],
+    );
+    return result.rows.map(row => row.code);
+  }
+
+  async saveCourseSelection(studentId, courseCodes, catalogVersion) {
+    return this.writeEnrollments(studentId, courseCodes, { catalogVersion });
+  }
+
+  async replaceEnrollments(studentId, courseCodes, editableCodes = null) {
+    await this.writeEnrollments(studentId, courseCodes, { editableCodes });
+    return courseCodes;
+  }
+
+  async writeEnrollments(studentId, courseCodes, options) {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const valid = await client.query(
-        "SELECT code FROM courses WHERE code = ANY($1::text[]) AND status = 'active'",
-        [courseCodes],
-      );
-      if (valid.rowCount !== courseCodes.length) {
-        throw new ApiError(422, "UNKNOWN_COURSE", "One or more selected courses are unavailable.");
+      // Serialize student saves and the registrar's eligibility changes.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('enrollment:' || $1::text, 0))", [studentId]);
+      const selfService = Object.hasOwn(options, "catalogVersion");
+      const selectable = selfService ? await this.selectableCourses(studentId, client) :
+        (await client.query("SELECT code FROM courses WHERE status = 'active'")).rows.map(row => row.code);
+      // An older browser only knows about six choices. Its form must never drop
+      // an enrollment added through the full catalog or assigned by the school.
+      const versioned = options.catalogVersion === 2;
+      const editable = versioned ? selectable : PLATFORM_COURSE_CODES;
+      if (courseCodes.some(code => !selectable.includes(code) || (selfService && !editable.includes(code)))) {
+        throw new ApiError(403, "ENROLLMENT_NOT_AVAILABLE", "These courses are unavailable for self-enrollment on this account.");
       }
+      const completed = await client.query(
+        "SELECT 1 FROM course_enrollments WHERE student_user_id = $1 AND course_code = ANY($2::text[]) AND status = 'completed'",
+        [studentId, courseCodes],
+      );
+      if (completed.rowCount) throw new ApiError(409, "COURSE_COMPLETED", "Contact the registrar to repeat a completed course.");
       await client.query(
         `UPDATE course_enrollments SET status = 'dropped', updated_at = now()
-          WHERE student_user_id = $1 AND ($2::text[] IS NULL OR course_code = ANY($2))`,
-        [studentUserId, editableCodes],
+          WHERE student_user_id = $1 AND ($2::text[] IS NULL OR course_code = ANY($2)) AND status = 'active'
+            AND NOT (course_code = ANY($3::text[]))`,
+        [studentId, selfService ? editable : options.editableCodes, courseCodes],
       );
-      for (const code of courseCodes) {
-        await client.query(
-          `INSERT INTO course_enrollments (student_user_id, course_code, status)
-           VALUES ($1, $2, 'active')
-           ON CONFLICT (student_user_id, course_code) DO UPDATE
-             SET status = 'active', updated_at = now()`,
-          [studentUserId, code],
-        );
-      }
+      await client.query(
+        `INSERT INTO course_enrollments (student_user_id, course_code, status)
+         SELECT $1, code, 'active' FROM unnest($2::text[]) AS selected(code)
+         ON CONFLICT (student_user_id, course_code) DO UPDATE SET status = 'active', updated_at = now()
+         WHERE course_enrollments.status = 'dropped'`,
+        [studentId, courseCodes],
+      );
       await client.query("COMMIT");
-      return courseCodes;
+      return selectable;
     } catch (error) {
       await client.query("ROLLBACK");
       throw databaseError(error);
@@ -1136,7 +1156,7 @@ export class PostgresRepository {
          LEFT JOIN module_stats ON module_stats.course_code = c.code
          LEFT JOIN material_stats ON material_stats.course_code = c.code
         WHERE c.code = ANY($1::text[])
-          AND (c.status = 'active' OR (NOT $2::boolean AND c.code = 'MDM4U' AND c.status = 'archived'
+          AND (c.status = 'active' OR (NOT $2::boolean AND c.code = 'MDM4U'
                AND in_course_test_section(c.code,$3) AND classroom_rollout_enabled(c.code,$3)))
         ORDER BY c.code`,
       [allowed, user.role !== "student", user.id],

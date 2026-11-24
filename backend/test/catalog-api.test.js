@@ -190,6 +190,23 @@ describe("database-driven course catalog API", () => {
     }
   });
 
+  test("verified students self-select the active catalog while older clients retain wider enrollments", async () => {
+    const { schoolCourseCodes } = await import("../src/lib/enrollment-catalog.js");
+    for (const code of schoolCourseCodes) repository.courseCatalog.set(code, { code, title: code, status: "active" });
+    const student = await registerStudent();
+    const headers = { cookie: student.cookie, origin, "x-csrf-token": student.csrf };
+    const select = payload => app.inject({ method: "PUT", url: "/v1/me/enrollments", headers, payload });
+    const choices = () => app.inject({ method: "GET", url: "/v1/me/enrollments", headers });
+    assert.equal((await choices()).json().selectableCourseCodes.length, 6);
+    assert.equal((await select({ courseCodes: ["ENG4U"], catalogVersion: 2 })).statusCode, 403);
+    repository.verifiedStudents.add(student.user.id);
+    assert.equal((await choices()).json().selectableCourseCodes.length, 42);
+    assert.equal((await select({ courseCodes: schoolCourseCodes, catalogVersion: 2 })).json().data.length, 42);
+    assert.equal((await select({ courseCodes: [] })).json().data.length, 36);
+    assert.deepEqual((await select({ courseCodes: ["MDM4U"], catalogVersion: 2 })).json().data, ["MDM4U"]);
+    assert.equal((await select({ courseCodes: ["MDM4U"] })).statusCode, 422);
+  });
+
   test("reports the exact catalog acceptance counts", async () => {
     const response = await app.inject({ method: "GET", url: "/health/catalog-ready" });
     assert.equal(response.statusCode, 200);

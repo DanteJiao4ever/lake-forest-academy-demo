@@ -47,7 +47,7 @@ test("only the assigned learner sees the archived class while its test rollout i
         VALUES ($1,$2,$3,'fixture','QA','Learner','QA Learner')`, [id, id, id+"@example.invalid"]);
     }
     await db.query(`INSERT INTO courses(code,title,status) VALUES ('MDM4U','QA course','archived')
-      ON CONFLICT (code) DO NOTHING`);
+      ON CONFLICT (code) DO UPDATE SET status='archived'`);
     await db.query("INSERT INTO course_test_members(course_code,user_id) VALUES ('MDM4U',$1)", [student.id]);
     await db.query(`INSERT INTO classroom_section_rollouts(course_code,test_section,enabled)
       VALUES ('MDM4U',true,true) ON CONFLICT(course_code,test_section) DO UPDATE SET enabled=true`);
@@ -60,6 +60,14 @@ test("only the assigned learner sees the archived class while its test rollout i
     await db.query("UPDATE classroom_section_rollouts SET enabled=false WHERE course_code='MDM4U' AND test_section");
     assert.equal(await repo.canAccessCourse(student, "MDM4U"), false);
     assert.deepEqual(await repo.listCoursesForUser(student), []);
+    await db.query("UPDATE courses SET status='active' WHERE code='MDM4U'");
+    await db.query("UPDATE classroom_section_rollouts SET enabled=true WHERE course_code='MDM4U' AND test_section");
+    assert.equal(await repo.canAccessCourse(student, "MDM4U"), true);
+    assert.equal(await repo.canAccessCourse(control, "MDM4U"), false);
+    await db.query("INSERT INTO course_enrollments(student_user_id,course_code) VALUES($1,'MDM4U')", [control.id]);
+    assert.deepEqual(await repo.listEnrollments(control.id), ["MDM4U"]);
+    assert.equal(await repo.canAccessCourse(control, "MDM4U"), true);
+    assert.deepEqual(await repo.listEnrollments(student.id), ["MDM4U"]);
   } finally {
     await db.query("ROLLBACK");
     await db.end();
