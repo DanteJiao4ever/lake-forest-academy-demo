@@ -2035,6 +2035,19 @@ test("revision requests outrank module work and are the only ordinary submission
   );
   assert.match(replacementForm, /required for this assignment/);
 
+  const textOptions = optionsFor("revision_requested");
+  const writtenForm = await renderPortal("#/assignment/sch4u-m02-assignment", session, {
+    ...textOptions,
+    fetch: (request, init) => new URL(String(request)).pathname === "/v1/courses/SCH4U/assignments"
+      ? jsonResponse({data: [{id: "sch4u-m02-assignment", moduleId: "sch4u-m02", unitNumber: 1, status: "active", submissionMode: "text"}]})
+      : textOptions.fetch(request, init),
+    interact: async ({ listeners }) => {
+      await listeners.get("click")[0]({target: actionTarget("replace-submission", {id: "sch4u-m02-assignment"})});
+    },
+  });
+  assert.match(writtenForm, /id="submission-note"[^>]*required/);
+  assert.doesNotMatch(writtenForm, /id="submission-file"/);
+
   for (const workflowStatus of ["submitted", "under_review", "graded"]) {
     const html = await renderPortal(
       "#/assignment/sch4u-m02-assignment",
@@ -3389,7 +3402,7 @@ test("project submissions require a new file and final-evaluation uploads omit e
   assert.match(project, /required for this assignment/);
   assert.match(
     app,
-    /\(remoteExisting \|\|[\s\S]{0,120}\["file", "project"\]\.includes\(assignment\?\.submissionMode\)\)[\s\S]{0,100}!newFileName/,
+    /\(remoteExisting && assignment\?\.submissionMode !== "text"\) \|\|[\s\S]{0,120}\["file", "project"\]\.includes\(assignment\?\.submissionMode\)\)[\s\S]{0,100}!newFileName/,
   );
   assert.match(
     app,
@@ -4062,6 +4075,7 @@ test("course lists disclose private Drive materials through course-scoped API li
         data: [
           {
             code: "SCH4U",
+            assessmentWeights: { coursework: 60, final_evaluation: 30, participation: 10 },
             materials: {
               count: 2,
               lastSyncedAt: "2026-08-03T08:30:00.000Z",
@@ -4173,7 +4187,7 @@ test("course lists disclose private Drive materials through course-scoped API li
     },
   );
   assert.match(assessmentHub, /Assessment Centre/);
-  assert.match(assessmentHub, /65%[\s\S]*25%[\s\S]*10%/);
+  assert.match(assessmentHub, /Coursework 60% · Final evaluation 30% · Participation 10%/);
   assert.match(assessmentHub, /SCH4U Assessment Guide\.pdf/);
   assert.match(
     assessmentHub,
@@ -4619,7 +4633,7 @@ test("an institutionally assigned course uses published native modules, lessons,
   const assignmentId = moduleId + "-assignment";
   const student = { email: "assigned@example.test", role: "student" };
   const teacher = { email: "assigned.teacher@example.test", role: "teacher" };
-  const course = { code, title: "Technology & design", status: "active", moduleCount: 1, plannedHours: 18 };
+  const course = { code, title: "Technology & design", status: "active", moduleCount: 1, plannedHours: 18, assessmentWeights: {} };
   const module = {
     id: moduleId, courseCode: code, moduleNumber: 1, unitNumber: 1,
     title: "Prototype and measure", estimatedCreditHours: 18, learningFocus: ["Measure a prototype", "Compare two models"],
@@ -4663,13 +4677,20 @@ test("an institutionally assigned course uses published native modules, lessons,
     assert.ok(html.includes(expected), route + " did not render " + expected);
     assert.doesNotMatch(html, /Hidden archive|Only draft modules|Hidden task|undefined/);
     if (route === "lesson/ENG4U-U1-L1") assert.doesNotMatch(html, /Unit two individual reading/);
-    if (route.startsWith("assignment/")) assert.match(html, /Weight pending/);
+    if (route === "assessments") assert.match(html, /Course weights are awaiting school confirmation/);
+    if (route.startsWith("assignment/") || route.includes("/module/")) {
+      assert.match(html, /Weight pending/);
+      assert.doesNotMatch(html, /0% of course grade/);
+    }
   }
   const selector = await renderPortal("#/course-selection", student, memberOptions);
   assert.doesNotMatch(selector, /Technology &amp; design|data-course="eng4u"/);
   assert.match(selector, /0 of 6 selected/);
   const faculty = await renderPortal("#/teacher/course/eng4u", teacher, memberOptions);
   assert.match(faculty, /Authorized Learner/);
+  assert.match(faculty, /Course weights are awaiting school confirmation/);
+  assert.match(faculty, /Weight pending/);
+  assert.doesNotMatch(faculty, /65%|25% of course grade|0% of course grade/);
   assert.match(faculty, /#\/teacher\/course\/eng4u\/module\/eng4u-cb01/);
   assert.doesNotMatch(faculty, /Hidden task|Hidden archive/);
   const marking = await renderPortal("#/teacher/submission/assigned%40example.test/" + assignmentId, teacher, {
@@ -4838,7 +4859,11 @@ test("faculty workbench requests only assigned class records and excludes draft 
       if (path.endsWith("/progress")) return jsonResponse({ data: { courseCode: "SCH4U", students: [{ modules: [{ status: "completed" }, { status: "in_progress" }] }] } });
       if (path.endsWith("/gradebook")) return jsonResponse({ data: {
         items: [{ id: "activity", title: "Course project", weightPercent: 20, maxScore: 100 }],
-        students: [{ displayName: "Class learner", scores: [{ itemId: "activity", feedback: "Teacher-only draft",
+        students: [{ displayName: "Class learner", email: "learner@example.test", assignmentResults: [
+          {assignmentId:"sch4u-unit-case", assignmentTitle:"Case analysis", attemptNumber:2, score:86,
+           feedback:"Explain the measurement uncertainty.", publishedAt:time},
+          {assignmentId:"hidden", feedback:"Unreleased assignment result", publishedAt:null},
+        ], scores: [{ itemId: "activity", feedback: "Teacher-only draft",
           score: 95, latestPublished: { score: 80, publishedAt: time, feedback: "Published learner feedback" } }] }],
       } });
       return jsonResponse({ data: [] });
@@ -4854,7 +4879,9 @@ test("faculty workbench requests only assigned class records and excludes draft 
   assert.ok(paths.every((path) => path === "/v1/courses" || path === "/v1/insights/alerts" || path.includes("/SCH4U/")));
   const grades = await renderPortal("#/teacher/grades", user, options);
   assert.match(grades, /Class learner[\s\S]*80%/);
-  assert.doesNotMatch(grades, /Teacher-only draft/);
+  assert.match(grades, /#\/teacher\/submission\/learner%40example.test\/sch4u-unit-case/);
+  assert.match(grades, /Case analysis[\s\S]*86%[\s\S]*Explain the measurement uncertainty/);
+  assert.doesNotMatch(grades, /Teacher-only draft|Unreleased assignment result/);
 });
 
 test("a live session expiry returns to the correct sign-in and preserves the calendar destination", async () => {

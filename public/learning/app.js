@@ -662,12 +662,8 @@
           "",
       ),
       title: String(assessment?.title || ""),
-      weightPercent: Number(
-        assessment?.weightPercent ??
-          assessment?.courseGradeWeightPercent ??
-          assessment?.course_grade_weight_percent ??
-          0,
-      ),
+      weightPercent: assessment?.weightPercent ?? assessment?.courseGradeWeightPercent ??
+        assessment?.course_grade_weight_percent ?? null,
       evidenceFile:
         assessment?.evidenceFile ?? assessment?.evidence_file ?? null,
       sequence,
@@ -692,9 +688,7 @@
         key: String(component?.key || component?.id || `component-${index + 1}`),
         title: String(component?.title || `Part ${index + 1}`),
         type: String(component?.type || component?.componentType || ""),
-        weightPercent: Number(
-          component?.weightPercent ?? component?.weight_percent ?? 0,
-        ),
+        weightPercent: component?.weightPercent ?? component?.weight_percent ?? null,
         timeMinutes:
           component?.timeMinutes ?? component?.time_minutes ?? null,
         processCheckpoints:
@@ -1467,6 +1461,7 @@
   let courseCatalogChecked = false;
   let accessibleCourseCodes = null;
   let classroomCourseCodes = new Set();
+  let publishedWeightPlans = new Map();
   let driveSessionGeneration = 0;
   let platformSessionGeneration = 0;
   const expandedCourseMaterials = new Set();
@@ -2697,6 +2692,7 @@
       "";
     return {
       attemptNumber,
+      note: typeof version.note === "string" ? version.note : "",
       fileName:
         scalarLabel(version.fileName || version.name) ||
         fallback.fileName ||
@@ -4390,6 +4386,7 @@
     courseCatalogChecked = false;
     accessibleCourseCodes = null;
     classroomCourseCodes = new Set();
+    publishedWeightPlans = new Map();
     driveRequestInFlight = false;
     driveEndpointChecked = false;
     driveMaterialsState = loadDriveMaterialsCache();
@@ -4556,6 +4553,7 @@
         if (!Array.isArray(catalogPayload?.data)) throw new Error("The course catalogue could not be read.");
         accessibleCourseCodes = new Set(catalogPayload.data.filter((row) => row?.code && (!row.status || row.status === "active")).map((row) => row.code));
         classroomCourseCodes = new Set(catalogPayload.data.filter(row => row.classroomEnabled === true && accessibleCourseCodes.has(row.code)).map(row => row.code));
+        publishedWeightPlans = new Map(catalogPayload.data.map(row => [row.code, row.assessmentWeights]));
         mergeAssignedCourses(catalogPayload.data);
         teachingPacksByCourse = teachingPackCatalog(catalogPayload);
         renderAfterBackgroundRefresh();
@@ -5103,8 +5101,8 @@
     return !module || moduleIsUnlocked(lesson.course, module);
   }
 
-  function assignmentWeightLabel(assignment) {
-    return assignment.weightPercent == null ? "Weight pending" : `${Number(assignment.weightPercent)}%`;
+  function assignmentWeightLabel(assignment, suffix = "") {
+    return assignment.weightPercent == null ? "Weight pending" : `${Number(assignment.weightPercent)}%${suffix}`;
   }
 
   function assignmentIsUnlocked(assignment) {
@@ -6775,6 +6773,15 @@
     if (!gradebook?.students?.length) {
       return `<div class="teacher-empty"><p>${configuredDriveUrl(PLATFORM_API_CONFIG.teacherCoursesEndpoint) ? "No published gradebook records are available yet." : "Connect the secure course service to view the official gradebook."}</p></div>`;
     }
+    const publishedAssignments = gradebook.students.flatMap((student) =>
+      (student.assignmentResults || []).filter((result) => result.publishedAt).map((result) => {
+        const href = teacherRecordLink({student, assignment: {id: result.assignmentId}});
+        return `<tr><td>${escapeHtml(student.displayName || student.email)}</td>
+          <td><a class="text-link" href="${escapeHtml(href)}">${escapeHtml(result.assignmentTitle)}</a></td>
+          <td>${escapeHtml(result.attemptNumber)}</td><td>${escapeHtml(result.score)}%</td>
+          <td>${escapeHtml(result.feedback || "—")}</td></tr>`;
+      }),
+    );
     return `
       <div class="teacher-gradebook-table" role="region" aria-label="${course.code} gradebook">
         <table>
@@ -6789,6 +6796,11 @@
           </tbody>
         </table>
       </div>
+      ${publishedAssignments.length ? `<div class="teacher-gradebook-table" role="region" aria-label="${escapeHtml(course.code)} published assignment results">
+        <h3>Published assignment results</h3>
+        <table><thead><tr><th>Student</th><th>Assignment</th><th>Attempt</th><th>Score</th><th>Feedback</th></tr></thead>
+          <tbody>${publishedAssignments.join("")}</tbody></table>
+      </div>` : ""}
     `;
   }
 
@@ -6989,7 +7001,7 @@
           </section>
           <section class="teacher-section">
             <div class="section-heading"><div><p class="eyebrow">Evaluation Plan</p><h2>Formal Assessments</h2></div><span class="badge">${assignments.length} tasks</span></div>
-            <p class="teacher-section-copy">Coursework contributes 65%, the final evaluation contributes 25%, and teacher-recorded participation contributes 10%. Open a task to review student submissions in the existing grading workflow.</p>
+            <p class="teacher-section-copy">${publishedAssessmentPlan(course)}</p>
             <div class="teacher-assignment-list">
               ${
                 assignments.length
@@ -6998,7 +7010,7 @@
                         (assignment) => `
                           <article>
                             <span class="course-chip">${escapeHtml(assignment.unit)}</span>
-                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${assignmentScheduleLabel(assignment)} · ${assignment.weightPercent || 0}% of course grade</p></div>
+                            <div><h3>${escapeHtml(assignment.title)}</h3><p>${assignmentScheduleLabel(assignment)} · ${assignmentWeightLabel(assignment)}</p></div>
                             <a class="button button-quiet" href="#/teacher/submissions/${course.id}/${assignment.id}">Submissions</a>
                           </article>
                         `,
@@ -7070,7 +7082,7 @@
         <div>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Instructional Plan</p><h2>Teacher Presence</h2></div><span class="badge">${module.estimatedCreditHours || 0} hours</span></div><p class="teacher-section-copy">${escapeHtml(module.teacherPresence)}</p><h3>Learning Focus</h3><ul class="objective-list">${module.learningFocus.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Sequence</p><h2>Reading, Practice & Check</h2></div></div><ol class="module-sequence-list">${module.readingSteps.map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol><div class="module-activity-grid"><article><h3>Guided Practice</h3><p>${escapeHtml(module.guidedPractice)}</p></article><article><h3>Low-Stakes Check</h3><p>${escapeHtml(module.lowStakesCheck)}</p></article></div></section>
-          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}%</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</div></section>
+          <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${assignmentWeightLabel(assessment)}</span></div><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<h3>Assessment Sequence</h3><ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assessment.processCheckpoints ? `<h3>Process Checkpoints</h3><p>${escapeHtml(Array.isArray(assessment.processCheckpoints) ? assessment.processCheckpoints.join(" · ") : assessment.processCheckpoints)}</p>` : ""}${assessment.authenticationEvidence ? `<h3>Authentication Evidence</h3><p>${escapeHtml(Array.isArray(assessment.authenticationEvidence) ? assessment.authenticationEvidence.join(" · ") : assessment.authenticationEvidence)}</p>` : ""}<div class="teacher-module-assignment-links">${assignments.map((assignment) => `<a class="button button-secondary" href="#/teacher/submissions/${course.id}/${assignment.id}">${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</div></section>
           <section class="teacher-section"><div class="section-heading"><div><p class="eyebrow">Evidence & Feedback</p><h2>Retain and Review</h2></div></div><h3>Evidence to Retain</h3><p>${escapeHtml(module.evidenceToRetain)}</p><h3>Feedback and Unlock Rule</h3><p>${escapeHtml(module.feedbackAndUnlock)}</p></section>
         </div>
         <aside>
@@ -7369,6 +7381,7 @@
                     <div>
                       <strong>${escapeHtml(fileName)}</strong>
                       <p>Version ${versionNumber} · ${formatDate(version.submittedAt, true)}</p>
+                      ${version.note ? `<details><summary>Written response</summary><p>${escapeHtml(version.note)}</p></details>` : ""}
                       <small>${escapeHtml(version.receiptId || "")}${version.fileSize ? ` · ${formatFileSize(version.fileSize)}` : ""}</small>
                     </div>
                     ${fileUrl
@@ -8600,7 +8613,7 @@
             <article class="panel module-content-section"><h2>Guided Practice</h2><p>${escapeHtml(module.guidedPractice)}</p></article>
             <article class="panel module-content-section"><h2>Low-Stakes Check</h2><p>${escapeHtml(module.lowStakesCheck)}</p></article>
           </section>
-          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${Number(assessment.weightPercent || 0)}% of course grade</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</section>
+          <section class="panel module-content-section assessment-sequence-card"><header class="panel-header"><div><p class="eyebrow">Assessment</p><h2>${escapeHtml(assessment.title || "Module Evidence")}</h2></div><span class="badge ${Number(assessment.weightPercent) > 0 ? "warning" : ""}">${assignmentWeightLabel(assessment, " of course grade")}</span></header><p>${escapeHtml(assessment.taskType || assessment.type || "Formative module check")}</p>${assessment.evidenceFile ? `<p><strong>Evidence file:</strong> ${escapeHtml(assessment.evidenceFile)}</p>` : ""}<ol class="module-sequence-list compact">${sequenceList(assessment.sequence).map((item) => `<li><span></span><p>${escapeHtml(item)}</p></li>`).join("")}</ol>${assignments.map((assignment) => `<a class="button button-primary" href="#/assignment/${assignment.id}">${assignment.teacherRecorded ? "View Gradebook Item" : "Open Assignment"}: ${escapeHtml(assignment.title)} (${assignmentWeightLabel(assignment)})</a>`).join("")}</section>
         </div>
         <aside>
           <section class="panel"><header class="panel-header"><h3>Feedback & Unlock</h3></header><div class="panel-content"><p>${escapeHtml(module.feedbackAndUnlock)}</p><div class="platform-connection-note ${officialProgressConnected(course) ? "is-connected" : ""}"><span>${officialProgressConnected(course) ? "Official record connected" : "Official progress unavailable"}</span></div>${officialProgressConnected(course) ? `<button class="button button-primary full-width" type="button" data-action="set-module-complete" data-course="${course.id}" data-module="${module.number}" data-module-id="${escapeHtml(remoteModule?.id || "")}" data-activity-id="${escapeHtml(remoteModule?.activity?.id || "")}" ${!remoteModule?.id || (status.key !== "completed" && !remoteModule?.activity?.id) ? "disabled" : ""}>${status.key === "completed" ? "Reopen Module" : `${icon("check", 16)} Mark Module Complete`}</button>` : '<p class="teacher-security-note"><strong>Preview only.</strong> Browser activity is not treated as the school’s official progress record.</p>'}</div></section>
@@ -9090,6 +9103,22 @@
       .join("")}</ul>`;
   }
 
+  function publishedAssessmentPlan(course) {
+    const weights = publishedWeightPlans.get(course.code);
+    if (!weights) return "Published course weights are unavailable.";
+    const categories = [
+      ["coursework", "Coursework"],
+      ["final_evaluation", "Final evaluation"],
+      ["participation", "Participation"],
+    ];
+    const items = categories.map(([key, label]) => ({ label, value: Number(weights?.[key] ?? 0) }));
+    const total = items.reduce((sum, item) => sum + item.value, 0);
+    if (Math.abs(total - 100) > 0.001 || items.some(item => !Number.isFinite(item.value) || item.value < 0)) {
+      return "Course weights are awaiting school confirmation.";
+    }
+    return items.filter(item => item.value > 0).map(item => item.label + " " + item.value + "%").join(" · ");
+  }
+
   function participationAssessmentMarkup(course) {
     const item = (course.gradebookItems || []).find((gradebookItem) =>
       /participation/i.test(
@@ -9109,7 +9138,7 @@
       <article class="assessment-participation-row">
         <span class="assessment-module-number">CW</span>
         <span><small>Coursewide · Teacher Recorded</small><strong>${escapeHtml(item.title || "Participation & Learning Process")}</strong><p>Required contact, checkpoints, conferences and documented use of feedback.</p></span>
-        <span><b>${Number(item.weightPercent || 10)}%</b><small>of course grade</small></span>
+        <span><b>${assignmentWeightLabel(item)}</b><small>of course grade</small></span>
         <span class="badge ${score == null ? "info" : "success"}">${score == null ? "Teacher Recorded" : `Published · ${score}%`}</span>
       </article>
     `;
@@ -9130,7 +9159,7 @@
           <strong>${escapeHtml(assignment.title)}</strong>
           <p>${assignmentScheduleLabel(assignment)}</p>
         </span>
-        <span><b>${assignmentWeightLabel(assignment)}</b><small>of course grade</small></span>
+        <span><b>${assignmentWeightLabel(assignment)}</b>${assignment.weightPercent != null ? "<small>of course grade</small>" : ""}</span>
         <span class="badge ${status.className}">${status.label}</span>
         ${icon(status.key === "locked" ? "lock" : "arrow", 18)}
       </${cardTag}>
@@ -9164,11 +9193,6 @@
         "Assessment Centre",
         "Review each course evaluation plan, open protected assessment packages, submit evidence and return to published feedback.",
       )}
-      <section class="assessment-plan-summary" aria-label="OSSD course evaluation plan">
-        <div><strong>65%</strong><span>Coursework</span><small>Five assessed modules</small></div>
-        <div><strong>25%</strong><span>Final Evaluation</span><small>Culminating task and/or examination</small></div>
-        <div><strong>10%</strong><span>Participation</span><small>Teacher-recorded learning process</small></div>
-      </section>
       <div class="assignment-filters" role="group" aria-label="Filter assignments">
         ${filters
           .map(
@@ -9196,6 +9220,7 @@
                         <div><p class="course-code">${course.code}</p><h2>${escapeHtml(course.title)}</h2></div>
                         <div><span class="badge">${plural(allAssignments.filter((assignment) => assignment.courseId === course.id).length, "formal task")}</span><a class="text-link" href="#/course/${course.id}">Open Course ${icon("arrow", 15)}</a></div>
                       </header>
+                      <p class="course-meta">${publishedAssessmentPlan(course)}</p>
                       <section class="assessment-package" aria-label="${course.code} assessment package">
                         <div><p class="eyebrow">Protected Course File</p><h3>Assessment Package</h3></div>
                         ${assessmentPackageMarkup(course)}
@@ -9334,8 +9359,9 @@
     const resumedDeviceDraft =
       resumingDeviceDraftId === assignment.id ? localDeviceDraft : null;
     const formSubmission = resumedDeviceDraft || submission;
+    const textOnly = assignment.submissionMode === "text";
     const requiresSubmissionFile =
-      canResubmit ||
+      (canResubmit && !textOnly) ||
       ["file", "project"].includes(assignment.submissionMode);
     const showSubmissionForm =
       !submissionManagedByTeacher &&
@@ -9533,6 +9559,7 @@
                             <div>
                               <span>${versionNumber}</span>
                               <p><strong>Version ${versionNumber}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
+                              ${record.note ? `<details><summary>Written response</summary><p>${escapeHtml(record.note)}</p></details>` : ""}
                             </div>
                           `;
                           },
@@ -9550,9 +9577,9 @@
                             ? '<p class="form-notice">Replacing this work creates a new version. Earlier versions remain in the submission history.</p>'
                           : ""
                       }
-                      <label for="submission-note">Submission Note</label>
-                      <textarea id="submission-note" name="note" placeholder="Add a short note for your instructor…">${escapeHtml(formSubmission?.text || "")}</textarea>
-                      <label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
+                      <label for="submission-note">${textOnly ? "Written response" : "Submission Note"}</label>
+                      <textarea id="submission-note" name="note" ${textOnly ? 'required placeholder="Write your response…"' : 'placeholder="Add a short note for your instructor…"'}>${escapeHtml(formSubmission?.text || "")}</textarea>
+                      ${textOnly ? "" : `<label for="submission-file">Attach a File${requiresSubmissionFile ? " (required)" : ""}</label>
                       <input id="submission-file" name="file" type="file" accept="${SUBMISSION_FILE_ACCEPT}" aria-describedby="submission-file-help" ${requiresSubmissionFile ? 'required aria-required="true"' : ""} />
                       <p class="field-help" id="submission-file-help">${SUBMISSION_FILE_TYPE_LABEL} · maximum 25 MB${requiresSubmissionFile ? " · required for this assignment" : ""}</p>
                       <div class="file-preview" id="submission-file-preview" hidden>
@@ -9560,7 +9587,7 @@
                         <span><strong data-file-name></strong><small data-file-meta></small></span>
                         <button type="button" data-action="clear-submission-file">Remove</button>
                       </div>
-                      ${formSubmission?.fileName ? `<p class="login-help">Saved file reference: ${escapeHtml(formSubmission.fileName)}. Browser security requires you to select it again before upload.</p>` : ""}
+                      ${formSubmission?.fileName ? `<p class="login-help">Saved file reference: ${escapeHtml(formSubmission.fileName)}. Browser security requires you to select it again before upload.</p>` : ""}`}
                       <label class="integrity-check" for="submission-integrity">
                         <input id="submission-integrity" name="integrity" type="checkbox" value="confirmed" />
                         <span>I confirm that this is my own work and that I have credited all sources.</span>
@@ -9664,7 +9691,7 @@
                   );
                   return `
                     <div class="grade-row direct-grade-row">
-                      <span><h3>${escapeHtml(grade.title || "Gradebook Result")}</h3><p>${course.code} · ${escapeHtml(grade.category || "Direct grade")} · ${Number(grade.weightPercent || 0)}% of course</p>${grade.feedback ? `<small>${escapeHtml(grade.feedback)}</small>` : ""}</span>
+                      <span><h3>${escapeHtml(grade.title || "Gradebook Result")}</h3><p>${course.code} · ${escapeHtml(grade.category || "Direct grade")} · ${assignmentWeightLabel(grade, " of course")}</p>${grade.feedback ? `<small>${escapeHtml(grade.feedback)}</small>` : ""}</span>
                       <strong class="grade-score">${score == null ? "—" : `${score}%`}</strong>
                       <span class="badge success">Published</span>
                     </div>
@@ -11246,7 +11273,7 @@
         return;
       }
       if (
-        (remoteExisting ||
+        ((remoteExisting && assignment?.submissionMode !== "text") ||
           ["file", "project"].includes(assignment?.submissionMode)) &&
         !newFileName
       ) {
@@ -11259,10 +11286,12 @@
         document.querySelector("#submission-file")?.focus();
         return;
       }
-      if (!text && !fileName) {
+      if (!text && (!fileName || assignment?.submissionMode === "text")) {
         setFormAlert(
           event.target,
-          "Add a submission note or choose a file before continuing.",
+          assignment?.submissionMode === "text"
+            ? "Enter your written response before continuing."
+            : "Add a submission note or choose a file before continuing.",
         );
         document.querySelector("#submission-note")?.focus();
         return;
