@@ -839,8 +839,8 @@ export class PostgresRepository {
     return result.rows.map(row => row.code);
   }
 
-  async saveCourseSelection(studentId, courseCodes, catalogVersion) {
-    return this.writeEnrollments(studentId, courseCodes, { catalogVersion });
+  async saveCourseSelection(studentId, courseCodes, catalogVersion, expectedCourseCodes) {
+    return this.writeEnrollments(studentId, courseCodes, { catalogVersion, expectedCourseCodes });
   }
 
   async replaceEnrollments(studentId, courseCodes, editableCodes = null) {
@@ -855,6 +855,13 @@ export class PostgresRepository {
       // Serialize student saves and the registrar's eligibility changes.
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('enrollment:' || $1::text, 0))", [studentId]);
       const selfService = Object.hasOwn(options, "catalogVersion");
+      if (options.expectedCourseCodes) {
+        const current = await this.listEnrollments(studentId, client);
+        const expected = new Set(options.expectedCourseCodes);
+        if (current.length !== expected.size || current.some(code => !expected.has(code))) {
+          throw new ApiError(409, "ENROLLMENTS_CHANGED", "Course selection changed. Refresh before saving.");
+        }
+      }
       const selectable = selfService ? await this.selectableCourses(studentId, client) :
         (await client.query("SELECT code FROM courses WHERE status = 'active'")).rows.map(row => row.code);
       // An older browser only knows about six choices. Its form must never drop
@@ -878,9 +885,10 @@ export class PostgresRepository {
       await client.query(
         `INSERT INTO course_enrollments (student_user_id, course_code, status)
          SELECT $1, code, 'active' FROM unnest($2::text[]) AS selected(code)
+         WHERE NOT $3::boolean OR code NOT IN (${assignedMdmStudent})
          ON CONFLICT (student_user_id, course_code) DO UPDATE SET status = 'active', updated_at = now()
          WHERE course_enrollments.status = 'dropped'`,
-        [studentId, courseCodes],
+        [studentId, courseCodes, selfService],
       );
       await client.query("COMMIT");
       return selectable;
@@ -892,8 +900,8 @@ export class PostgresRepository {
     }
   }
 
-  async listEnrollments(studentUserId) {
-    const result = await this.pool.query(
+  async listEnrollments(studentUserId, client = this.pool) {
+    const result = await client.query(
       `SELECT e.course_code FROM course_enrollments e JOIN courses c ON c.code = e.course_code
        WHERE e.student_user_id = $1 AND e.status = 'active' AND c.status = 'active'
        UNION ${assignedMdmStudent}

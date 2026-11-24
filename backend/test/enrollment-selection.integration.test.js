@@ -28,6 +28,7 @@ test("only school-verified students can elect newly published courses and old fo
     await owner.query("INSERT INTO formal_student_roster(student_user_id) VALUES ($1)", [student]);
     assert.ok((await repo.selectableCourses(student)).includes(code));
     await repo.saveCourseSelection(student, [code], 2);
+    await assert.rejects(repo.saveCourseSelection(student, [], 2, []), { code: "ENROLLMENTS_CHANGED" });
     const saved = await owner.query("SELECT * FROM course_enrollments WHERE student_user_id=$1", [student]);
     await repo.saveCourseSelection(student, [code], 2);
     await repo.saveCourseSelection(student, []);

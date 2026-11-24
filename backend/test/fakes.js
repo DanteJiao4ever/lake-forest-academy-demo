@@ -389,7 +389,14 @@ export class FakeRepository {
     return codes.filter(code => this.courseCatalog.get(code)?.status === "active");
   }
 
-  async saveCourseSelection(userId, codes, catalogVersion) {
+  async saveCourseSelection(userId, codes, catalogVersion, expectedCodes) {
+    if (expectedCodes) {
+      const current = await this.listEnrollments(userId);
+      const expected = new Set(expectedCodes);
+      if (current.length !== expected.size || current.some(code => !expected.has(code))) {
+        throw new ApiError(409, "ENROLLMENTS_CHANGED", "Course selection changed.");
+      }
+    }
     const selectable = await this.selectableCourses(userId);
     const editable = catalogVersion === 2 ? selectable : launchCourseCodes;
     if (codes.some(code => !selectable.includes(code) || !editable.includes(code))) {

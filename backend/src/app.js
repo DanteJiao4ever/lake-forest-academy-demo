@@ -1532,6 +1532,7 @@ export async function createApp({
             .max(schoolCourseCodes.length)
             .default([]),
           catalogVersion: z.literal(2).optional(),
+          expectedCourseCodes: z.array(z.enum(schoolCourseCodes)).max(schoolCourseCodes.length).optional(),
         }),
         request.body,
         "INVALID_ENROLLMENTS",
@@ -1541,7 +1542,7 @@ export async function createApp({
         throw new ApiError(422, "INVALID_ENROLLMENTS", "Choose courses from the current selection form.");
       }
       const id = request.auth.user.id;
-      const selectableCourseCodes = await repository.saveCourseSelection(id, unique, input.catalogVersion);
+      const selectableCourseCodes = await repository.saveCourseSelection(id, unique, input.catalogVersion, input.expectedCourseCodes);
       return { data: await repository.listEnrollments(id), selectableCourseCodes };
     },
   );
