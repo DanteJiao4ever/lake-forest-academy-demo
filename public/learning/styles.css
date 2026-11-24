@@ -2984,6 +2984,13 @@ textarea:focus-visible {
   font-size: 0.7rem;
 }
 
+.submission-history .text-link {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 0;
+  overflow-wrap: anywhere;
+}
+
 .submission-history small {
   overflow-wrap: anywhere;
 }

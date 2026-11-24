@@ -3695,6 +3695,42 @@ test("an upload dependency outage preserves submission records but uses device d
   assert.doesNotMatch(remoteFileBacked, /Submitted to School Record/);
 });
 
+test("students open each attempt's protected attachment on the school API and retain written-only history", async () => {
+  const email = "version-files@example.test";
+  const endpoint = "https://api.example.test/v1/submissions";
+  const versions = [
+    { submissionId: "draft", fileReceiptId: "f1", fileName: "Draft & data.pdf", fileUrl: "/v1/submissions/draft/files/f1/open" },
+    { submissionId: "text", note: "Written clarification, no file." },
+    { submissionId: "legacy", fileName: "Archived work.pdf" },
+    { submissionId: "external", fileUrl: "https://other.example/v1/submissions/external/files/f4/open" },
+    { submissionId: "mismatch", fileUrl: "/v1/submissions/revision/files/f6/open" },
+    { submissionId: "revision", fileReceiptId: "f6", fileName: "Revision.pdf", openUrl: "/v1/submissions/revision/files/f6/open" },
+  ].map((version, index) => ({ ...version, attemptNumber: index + 1,
+    submittedAt: `2026-08-0${index + 1}T11:00:00Z`, receiptId: version.submissionId }));
+  const html = await renderPortal("#/assignment/sch4u-m02-assignment", { email, role: "student" }, {
+    submissionConfig: { submissionsEndpoint: endpoint, uploadReady: true },
+    localStorageSeed: studentStateStorage(email),
+    async fetch(url) {
+      if (new URL(String(url)).pathname !== "/v1/submissions") return jsonResponse({ data: [] });
+      return jsonResponse({ data: [{
+        id: "revision", assignmentId: "sch4u-m02-assignment", courseCode: "SCH4U", student: { email },
+        attemptNumber: 6, submittedAt: versions.at(-1).submittedAt, status: "submitted",
+        files: [{ id: "f6", name: "Revision.pdf", openUrl: versions.at(-1).openUrl }], history: versions,
+      }], page: { nextCursor: null } });
+    },
+    settleTurns: 14,
+  });
+  const history = html.split('<div class="submission-history">')[1];
+  assert.ok(history);
+  const links = [...history.matchAll(/<a class="text-link" href="([^"]+)"[^>]*>(Open [^<]+)<\/a>/g)]
+    .map(([, href, label]) => [href, label]);
+  assert.deepEqual(links, [
+    [endpoint + "/revision/files/f6/open", "Open Revision.pdf (version 6)"],
+    [endpoint + "/draft/files/f1/open", "Open Draft &amp; data.pdf (version 1)"],
+  ]);
+  assert.match(history, /<details><summary>Written response<\/summary><p>Written clarification, no file\./);
+});
+
 test("legacy submission histories receive stable chronological version numbers", async () => {
   const email = "legacy-history@example.test";
   const submissionsEndpoint = "https://api.example.test/v1/submissions";

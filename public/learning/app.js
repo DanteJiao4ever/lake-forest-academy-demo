@@ -2524,11 +2524,9 @@
     }
   }
 
-  function safeProtectedResourceUrl(value) {
+  function safeProtectedResourceUrl(value, endpoint = PLATFORM_API_CONFIG.coursesEndpoint) {
     if (!value) return "";
-    const configuredBase = configuredDriveUrl(
-      PLATFORM_API_CONFIG.coursesEndpoint,
-    );
+    const configuredBase = configuredDriveUrl(endpoint);
     if (!configuredBase) return "";
     try {
       const base = new URL(configuredBase);
@@ -2548,6 +2546,15 @@
     } catch {
       return "";
     }
+  }
+
+  function submissionAttachmentUrl(value, submissionId, fileId) {
+    const href = safeProtectedResourceUrl(value, SUBMISSION_CONFIG.submissionsEndpoint);
+    if (!href) return "";
+    const path = new URL(href).pathname;
+    const match = /^\/v1\/submissions\/([a-zA-Z0-9_-]+)\/files\/([a-zA-Z0-9_-]+)\/open$/.exec(path);
+    if (!match || (submissionId && match[1] !== submissionId) || (fileId && match[2] !== fileId)) return "";
+    return href;
   }
 
   function submissionsEndpointUrl(scope = "") {
@@ -2710,15 +2717,10 @@
         scalarLabel(version.fileType || version.mimeType) ||
         fallback.fileType ||
         "",
-      fileUrl: configuredDriveUrl(
-        version.fileUrl ||
-          version.downloadUrl ||
-          version.webViewLink ||
-          version.openUrl ||
-          fallback.fileUrl ||
-          "",
-        configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
-          window.location.href,
+      fileUrl: submissionAttachmentUrl(
+        version.fileUrl || version.openUrl || version.downloadUrl || fallback.fileUrl,
+        version.submissionId,
+        version.fileReceiptId,
       ),
       messages: normalizeSubmissionMessages(
         version.messages || version.interactionMessages || version.thread,
@@ -2907,16 +2909,10 @@
           ? source.files[0]
           : {};
     const fileName = scalarLabel(source.fileName || primaryFile.name);
-    const fileUrl = configuredDriveUrl(
-      source.fileUrl ||
-        source.downloadUrl ||
-        source.webViewLink ||
-        source.openUrl ||
-        primaryFile.openUrl ||
-        primaryFile.url ||
-        "",
-      configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
-        window.location.href,
+    const fileUrl = submissionAttachmentUrl(
+      source.fileUrl || source.openUrl || primaryFile.openUrl || source.downloadUrl || primaryFile.url,
+      source.submissionId || source.id,
+      primaryFile.id,
     );
     const historySource = Array.isArray(source.history)
       ? source.history
@@ -2979,6 +2975,7 @@
       workflowStatus === "revision_requested";
     const fallbackVersion = {
       attemptNumber,
+      note: source.note,
       fileName,
       submittedAt,
       receiptId,
@@ -2995,10 +2992,11 @@
     };
     const history = (historySource.length ? historySource : [fallbackVersion])
       .map((version) =>
-        normalizeSubmissionVersion(version, {
-          ...fallbackVersion,
-          attemptNumber: null,
-        }),
+        normalizeSubmissionVersion(version,
+          version?.receiptId === receiptId || (source.id && version?.submissionId === source.id)
+            ? { ...fallbackVersion, attemptNumber: null }
+            : {},
+        ),
       )
       .sort((left, right) => {
         const leftTime = Date.parse(left.submittedAt || "");
@@ -7332,6 +7330,7 @@
             fileReceiptId: record.submission.fileReceiptId,
             fileSize: record.submission.fileSize,
             fileType: record.submission.fileType,
+            fileUrl: record.submission.fileUrl,
           },
         ];
     return `
@@ -7368,19 +7367,9 @@
                 )
                   ? Number(version.attemptNumber)
                   : history.length - index;
-                const fileReceiptId =
-                  version.fileReceiptId ||
-                  (index === 0 ? record.submission.fileReceiptId : "");
-                const fileUrl = configuredDriveUrl(
-                  version.fileUrl ||
-                    (index === 0 ? record.submission.fileUrl : ""),
-                  configuredDriveUrl(SUBMISSION_CONFIG.submissionsEndpoint) ||
-                    window.location.href,
-                );
-                const fileName =
-                  version.fileName ||
-                  (index === 0 ? record.submission.fileName : "") ||
-                  "Submission note only";
+                const fileReceiptId = version.fileReceiptId;
+                const fileUrl = submissionAttachmentUrl(version.fileUrl);
+                const fileName = version.fileName || "Submission note only";
                 return `
                   <article class="submission-file-card">
                     <span>${icon("file", 22)}</span>
@@ -9561,11 +9550,15 @@
                             )
                               ? Number(record.attemptNumber)
                               : submission.history.length - index;
+                            const attachment = submissionAttachmentUrl(record.fileUrl);
                             return `
                             <div>
                               <span>${versionNumber}</span>
-                              <p><strong>Version ${versionNumber}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
-                              ${record.note ? `<details><summary>Written response</summary><p>${escapeHtml(record.note)}</p></details>` : ""}
+                              <div>
+                                <p><strong>Version ${versionNumber}</strong><br />${formatDate(record.submittedAt, true)}<br /><small>${escapeHtml(record.receiptId)}</small></p>
+                                ${attachment ? `<a class="text-link" href="${escapeHtml(attachment)}" target="_blank" rel="noopener">Open ${escapeHtml(record.fileName || "attachment")} (version ${versionNumber})</a>` : ""}
+                                ${record.note ? `<details><summary>Written response</summary><p>${escapeHtml(record.note)}</p></details>` : ""}
+                              </div>
                             </div>
                           `;
                           },
