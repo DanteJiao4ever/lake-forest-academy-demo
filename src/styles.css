@@ -899,6 +899,7 @@ h3, .menu-group h3, .menu-actions button, .search-results strong,
 .course-identity a:hover { text-decoration: underline; }
 #english-support .course-description > p:not(.course-meta),
 #humanities .course-description > p:not(.course-meta) { font: 400 1.0625rem/1.72 var(--lfa-humanities); }
+.course-prerequisite .course-entry { display: flex; width: fit-content; min-height: 44px; margin: .8rem 0 .4rem; }
 .course-prerequisite .text-link { font-size: .875rem; }
 .course-policy { margin-top: .8rem; }
 .course-policy summary {

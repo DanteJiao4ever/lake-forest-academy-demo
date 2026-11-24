@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { assessmentForCourse, courseGroups, filterCourses, policyYear } from "../src/data/course-guide.ts";
 
+import { studentListingsScript } from "./generate-student-course-listings.mjs";
+
+test("the student selector uses the same public course metadata as the 42 website cards", async () => {
+  const file = new URL("../public/learning/course-listings.js", import.meta.url);
+  assert.equal(await readFile(file, "utf8"), studentListingsScript());
+});
+
 const catalog = JSON.parse(await readFile(new URL("../backend/catalog/lfa-course-catalog.json", import.meta.url), "utf8"));
 const courses = (filters = {}) => filterCourses({
   query: "", subject: "", grade: "", courseType: "", ...filters,

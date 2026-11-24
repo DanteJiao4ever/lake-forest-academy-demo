@@ -14,7 +14,7 @@
     driveSyncPath: "",
   });
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  const SCRIPT_VERSION = "portal-workbench-v1";
+  const SCRIPT_VERSION = "school-catalogue-v2";
   let pendingServiceCheck = null;
   let lastFileConfig = {};
 
@@ -400,6 +400,7 @@
     window.LFA_RECHECK_SERVICES = recheckServices;
     await recheckServices();
     await loadScript("course-catalog.js");
+    await loadScript("course-listings.js");
     await loadScript("platform-sequences.js");
     await loadScript("app.js");
   }

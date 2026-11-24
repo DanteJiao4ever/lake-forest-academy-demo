@@ -224,7 +224,7 @@ test("persistent failure stops after two probes and manual retries are single-fl
   await first;
   assert.equal(harness.window.LFA_API_STATUS.state, "ready");
   assert.notEqual(harness.window.LFA_AUTH_CONFIG.loginEndpoint, "");
-  assert.equal(harness.loadedScripts.length, 3);
+  assert.equal(harness.loadedScripts.length, 4);
   assert.equal(harness.requestedUrls.filter((url) => url.endsWith("/health/ready")).length, 3);
 });
 
@@ -488,9 +488,10 @@ test("core readiness opens sign-in while a failed upload check stays isolated", 
     ),
   );
   assert.deepEqual(loadedScripts, [
-    "./course-catalog.js?v=portal-workbench-v1",
-    "./platform-sequences.js?v=portal-workbench-v1",
-    "./app.js?v=portal-workbench-v1",
+    "./course-catalog.js?v=school-catalogue-v2",
+    "./course-listings.js?v=school-catalogue-v2",
+    "./platform-sequences.js?v=school-catalogue-v2",
+    "./app.js?v=school-catalogue-v2",
   ]);
 });
 
@@ -727,6 +728,7 @@ async function renderPortal(hash, session, options = {}) {
       }),
   });
   vm.runInContext(await source("public/learning/course-catalog.js"), context);
+  vm.runInContext(await source("public/learning/course-listings.js"), context);
   vm.runInContext(
     await source("public/learning/platform-sequences.js"),
     context,
@@ -1459,7 +1461,7 @@ test("bootstrap loads the permanent course metadata and platform sequence before
   assert.ok(catalog >= 0 && sequence > catalog && app > sequence);
   assert.match(
     bootstrap,
-    /const SCRIPT_VERSION = "portal-workbench-v1";/,
+    /const SCRIPT_VERSION = "school-catalogue-v2";/,
   );
 });
 
@@ -4582,6 +4584,7 @@ test("course workspaces and lesson screens open the authorized packs independent
         return jsonResponse({ data: [{ code: "SCH4U", materials: { count: 0, teachingPacks: [
           { kind: "reader", title: "Online course reader", openUrl: prefix + "/teaching-reader" },
           { kind: "student", title: "Student coursebook (PDF)", openUrl: prefix + "/teaching-packs/student" },
+          { kind: "study", title: "Guided study and practice", openUrl: prefix + "/teaching-packs/study" },
           { kind: "faculty", title: "Faculty teaching and marking guide (PDF)", openUrl: prefix + "/teaching-packs/faculty" },
         ] } }] });
       }
@@ -4595,6 +4598,7 @@ test("course workspaces and lesson screens open the authorized packs independent
   const studentCourse = await renderPortal("#/course/sch4u", student, options);
   assert.match(studentCourse, /https:\/\/api\.example\.test\/v1\/courses\/SCH4U\/teaching-packs\/student/);
   assert.match(studentCourse, /Online course reader/);
+  assert.match(studentCourse, /teaching-packs\/study/);
   assert.doesNotMatch(studentCourse, /teaching-packs\/faculty|Faculty teaching and marking guide/);
   const lesson = await renderPortal("#/lesson/SCH4U-U1-L2", student, options);
   assert.match(lesson, /https:\/\/api\.example\.test\/v1\/courses\/SCH4U\/teaching-reader#u1-l2/);
@@ -4730,6 +4734,7 @@ test("the public portal sample mounts without contacting authentication or healt
 test("password sign-in resumes an internal route for the authenticated role", async () => {
   for (const [portal, route, destination] of [
     ["student", "#/calendar", "#/calendar"],
+    ["student", "#/course/chv2o", "#/course/chv2o"],
     ["observer", "#/signin/observer?returnTo=teacher%2Fgrades", "#/observer"],
     ["faculty", "#/teacher/grades", "#/teacher/grades"],
     ["student", "#/signin/student?returnTo=progress", "#/progress"],
@@ -5064,4 +5069,64 @@ test("faculty menus, risk requests and direct classroom links use the authentica
       }
     }
   }
+});
+
+
+test("formal students select a guide course from its own link and receive the assigned modules", async () => {
+  const student = { role: "student", email: "formal@example.test" };
+  const origin = "https://api.example.test";
+  const { courseGroups } = await import("../src/data/course-guide.ts");
+  const choices = courseGroups.flatMap(group => group.courses.map(course => course.code));
+  let enrollments = ["MHF4U"];
+  const writes = [];
+  const options = {
+    beforeApp(window) {
+      window.LFA_AUTH_CONFIG = {
+        workspaceSessionEndpoint: origin + "/v1/auth/session",
+        enrollmentsEndpoint: origin + "/v1/me/enrollments",
+      };
+    },
+    platformApiConfig: studentPlatformApiConfig,
+    async fetch(request, init = {}) {
+      const { pathname } = new URL(String(request));
+      if (pathname === "/v1/auth/session") return jsonResponse({ authenticated: true, user: student, csrfToken: "fixture" });
+      if (pathname === "/v1/me/enrollments") {
+        if (init.method === "PUT") {
+          const body = JSON.parse(init.body);
+          writes.push(body);
+          enrollments = body.courseCodes;
+        }
+        return jsonResponse({ data: enrollments, selectableCourseCodes: choices });
+      }
+      if (pathname === "/v1/courses") return jsonResponse({ data: enrollments.map(code => ({
+        code, title: code === "CHV2O" ? "Civics and Citizenship" : code, status: "active", moduleCount: 1,
+      })) });
+      if (pathname === "/v1/me/progress") return jsonResponse({ data: [{ moduleId: "chv2o-cb01", moduleNumber: 1, status: "available" }] });
+      if (pathname === "/v1/courses/CHV2O/modules") return jsonResponse({ data: [{
+        id: "chv2o-cb01", courseCode: "CHV2O", moduleNumber: 1, title: "Civic participation",
+        coreReadingOrder: ["Read and compare a petition and a council memorandum."],
+        lessons: [{ id: "CHV2O-U1-L1", title: "Public participation", position: 1 }],
+      }] });
+      return jsonResponse({ data: [] });
+    },
+    settleTurns: 16,
+  };
+  const selector = await renderPortal("#/course-selection", student, options);
+  assert.match(selector, /1 of 42 selected/);
+  assert.match(selector, /55 hours · 0.5 Credit/);
+  assert.match(selector, /data-course="chv2o"/);
+  const result = await renderPortal("#/course/chv2o", student, { ...options, interact: async ({ appRoot, listeners }) => {
+    assert.match(appRoot.innerHTML, /Select CHV2O/);
+    await listeners.get("click")[0]({ target: actionTarget("toggle-enrollment", { course: "chv2o" }) });
+  } });
+  assert.deepEqual(writes, [{ courseCodes: ["MHF4U", "CHV2O"], catalogVersion: 2, expectedCourseCodes: ["MHF4U"] }]);
+  assert.match(result, /Civic participation/);
+  assert.match(await renderPortal("#/lesson/CHV2O-U1-L1", student, options), /Read and compare a petition/);
+  const ordinary = await renderPortal("#/course/chv2o", student, { ...options,
+    fetch: async (request, init) => new URL(String(request)).pathname === "/v1/me/enrollments"
+      ? jsonResponse({ data: [], selectableCourseCodes: ["MHF4U"] })
+      : new URL(String(request)).pathname === "/v1/courses" ? jsonResponse({ data: [] }) : options.fetch(request, init),
+  });
+  assert.match(ordinary, /Contact Guidance to check your eligibility/);
+  assert.doesNotMatch(ordinary, /data-course="chv2o"|Civic participation/);
 });

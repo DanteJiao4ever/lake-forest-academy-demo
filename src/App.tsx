@@ -264,7 +264,7 @@ function AcademicsPage({ assetUrl, routeHref, homeHref, openAction }: PageViewPr
   );
 }
 
-function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps) {
+function CourseCataloguePage({ assetUrl, routeHref, homeHref, openAction }: PageViewProps) {
   const [query, setQuery] = useState("");
   const [grade, setGrade] = useState("");
   const [subject, setSubject] = useState("");
@@ -393,6 +393,7 @@ function CourseCataloguePage({ assetUrl, routeHref, openAction }: PageViewProps)
                     </div>
                     <div className="course-prerequisite">
                       <span>Prerequisite</span><p>{course.prerequisite}</p>
+                      <a className="button primary course-entry" href={`${homeHref()}learning/#/course/${course.code.toLowerCase()}`}>Student login · Enter {course.code}</a>
                       <a className="text-link" href={emailHref(`Course outline request: ${course.code} — ${course.title} (${policyYear})`)}>Request {course.code} outline</a>
                     </div>
                   </article>
