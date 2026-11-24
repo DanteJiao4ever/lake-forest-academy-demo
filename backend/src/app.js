@@ -158,6 +158,7 @@ function submissionHistory(records) {
     .map((record) => ({
       submissionId: record.id,
       attemptNumber: record.attemptNumber,
+      note: record.note || "",
       fileName: record.files[0]?.name || "",
       fileReceiptId: record.files[0]?.id || "",
       fileSize: Number(record.files[0]?.sizeBytes || 0),
@@ -2122,19 +2123,19 @@ export async function createApp({
         fields,
         "INVALID_SUBMISSION",
       );
-      if (metadata.replacesSubmissionId && !uploaded.length) {
-        throw new ApiError(
-          422,
-          "REPLACEMENT_FILE_REQUIRED",
-          "Choose a new file when submitting a replacement attempt.",
-        );
-      }
       const assignment = await repository.getAssignment(metadata.assignmentId);
       if (!assignment || assignment.courseCode !== metadata.courseCode) {
         throw new ApiError(
           422,
           "ASSIGNMENT_MISMATCH",
           "The assignment does not belong to the selected course.",
+        );
+      }
+      if (metadata.replacesSubmissionId && assignment.submissionMode !== "text" && !uploaded.length) {
+        throw new ApiError(
+          422,
+          "REPLACEMENT_FILE_REQUIRED",
+          "Choose a new file when submitting a replacement attempt.",
         );
       }
       if (!["text", "file", "text_or_file", "project"].includes(assignment.submissionMode)) {

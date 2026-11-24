@@ -28,6 +28,16 @@ test("only school-verified students can elect newly published courses and old fo
     await owner.query("INSERT INTO formal_student_roster(student_user_id) VALUES ($1)", [student]);
     assert.ok((await repo.selectableCourses(student)).includes(code));
     await repo.saveCourseSelection(student, [code], 2);
+    const catalog = await repo.listCoursesForUser({ id: student, role: "student" });
+    assert.deepEqual(catalog.map((course) => course.code), [code]);
+    const published = await owner.query(
+      "SELECT category, weight_percent FROM gradebook_items WHERE course_code=$1 AND status='published'", [code],
+    );
+    const expectedWeights = {};
+    for (const item of published.rows) {
+      expectedWeights[item.category] = (expectedWeights[item.category] || 0) + Number(item.weight_percent);
+    }
+    assert.deepEqual(catalog[0].assessmentWeights, expectedWeights);
     await assert.rejects(repo.saveCourseSelection(student, [], 2, []), { code: "ENROLLMENTS_CHANGED" });
     const saved = await owner.query("SELECT * FROM course_enrollments WHERE student_user_id=$1", [student]);
     await repo.saveCourseSelection(student, [code], 2);

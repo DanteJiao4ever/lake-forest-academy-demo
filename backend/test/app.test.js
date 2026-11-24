@@ -1336,6 +1336,34 @@ describe("Lake Forest Learning API", () => {
     assert.match(allowed.headers["content-disposition"], /^attachment;/);
   });
 
+  test("a returned text-only assignment accepts a new written response and rejects attachments", async () => {
+    const student = await registerEnrolledStudent("written@example.invalid");
+    const faculty = await addFaculty();
+    const assignment = repository.assignments.get("a1");
+    assignment.submissionMode = "text";
+    const base = { courseCode: assignment.courseCode, assignmentId: assignment.id, assignmentTitle: assignment.title, integrityConfirmed: "true" };
+    const submit = (fields, file) => {
+      const form = multipartPayload({ ...base, ...fields }, file);
+      return app.inject({ method: "POST", url: "/v1/submissions",
+        headers: { origin, cookie: student.cookie, "x-csrf-token": student.csrf, "idempotency-key": randomUUID(), ...form.headers }, payload: form.payload });
+    };
+    const first = await submit({ attemptNumber: 1, note: "First reasoning." });
+    assert.equal(first.statusCode, 201, first.body);
+    const prior = first.json().data.id;
+    const returned = await app.inject({ method: "POST", url: `/v1/submissions/${prior}/return`,
+      headers: { origin, cookie: faculty.cookie, "x-csrf-token": faculty.body.csrfToken, "idempotency-key": randomUUID() },
+      payload: { body: "Please explain the denominator." } });
+    assert.equal(returned.statusCode, 201, returned.body);
+    const revision = { attemptNumber: 2, replacesSubmissionId: prior, note: "My revised reasoning." };
+    assert.equal((await submit({ ...revision, note: "" })).json().error.code, "SUBMISSION_NOTE_REQUIRED");
+    assert.equal((await submit(revision, { name: "note.txt", type: "text/plain", buffer: Buffer.from("note") })).json().error.code, "SUBMISSION_FILE_NOT_ALLOWED");
+    const second = await submit(revision);
+    assert.equal(second.statusCode, 201, second.body);
+    assert.equal(second.json().data.replacesSubmissionId, prior);
+    assert.equal(second.json().data.note, revision.note);
+    assert.equal(second.json().data.history.length, 2);
+  });
+
   test("supports the return, resubmit, grade, and notification workflow without exposing drafts", async () => {
     const student = await registerEnrolledStudent("interaction-student@example.invalid");
     const faculty = await addFaculty();
