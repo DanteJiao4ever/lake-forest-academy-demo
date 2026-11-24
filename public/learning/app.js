@@ -8399,12 +8399,14 @@
           </div>
           <div class="course-hero-actions">
             ${primaryAction}
+            ${course.institutional && course.code === "MDM4U" ? `<a class="button button-on-dark" href="#/course/${course.id}/module/${nextModule.number}/resources">Self-Study Resources</a>` : ""}
             ${course.institutional ? "" : `<a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>`}
             <a class="button button-on-dark" href="#/assessments">${icon("clipboard", 17)} Open Assessments (${ASSIGNMENTS.filter((assignment) => assignment.courseId === course.id).length})</a>
           </div>
         </div>
         <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
       </section>
+      ${course.institutional && course.code === "MDM4U" ? '<lfa-paced-student id="paced-student" course="MDM4U"></lfa-paced-student>' : ""}
       ${courseWorkspaceLinks(course, false)}
       <section class="course-detail-grid">
         <div class="panel">
@@ -8502,6 +8504,27 @@
       : `<article class="module-resource-card" aria-disabled="true">${content}</article>`;
   }
 
+  // Keep an unfinished answer when the portal refreshes the same student's navigation.
+  let lastPacingScope = "";
+  function updateStudentShell(markup) {
+    const scope = JSON.stringify([platformSessionGeneration, currentUser()?.id, window.location.hash]);
+    const mounted = scope === lastPacingScope && APP_ROOT.querySelector?.("lfa-paced-student");
+    lastPacingScope = scope;
+    if (!mounted) {
+      APP_ROOT.innerHTML = markup;
+      return;
+    }
+    const next = document.createElement("template");
+    next.innerHTML = markup;
+    const target = next.content.querySelector("lfa-paced-student");
+    const active = document.activeElement;
+    const keep = target && ["course", "module"].every(key => target.getAttribute(key) === mounted.getAttribute(key));
+    const restoreFocus = keep && mounted.contains(active);
+    if (keep) target.replaceWith(mounted);
+    APP_ROOT.replaceChildren(next.content);
+    if (restoreFocus && active instanceof HTMLElement) active.focus({preventScroll:true});
+  }
+
   function studentModuleView(course, module) {
     const status = moduleStatus(course, module);
     const remoteModule = remotePlatformModule(course, module);
@@ -8515,6 +8538,11 @@
           <p>${escapeHtml(module.unlockRule.ruleText || module.feedbackAndUnlock)}</p>
           <a class="button button-secondary" href="#/course/${course.id}">Return to Course Path</a>
         </section>`;
+    }
+    if (course.institutional && course.code === "MDM4U") {
+      return `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="#/courses">My Courses</a><span>/</span><a href="#/course/${course.id}">${course.code}</a><span>/</span><span>Module ${module.number}</span></nav>
+        <header class="module-detail-hero"><div><p class="eyebrow light">${course.code} · Self-Study Resources</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle)}</p></div></header>
+        <lfa-paced-student id="paced-student" course="MDM4U" module="${module.number}"></lfa-paced-student>`;
     }
     return `
       <nav class="breadcrumb" aria-label="Breadcrumb"><button type="button" data-route="courses">My Courses</button><span>/</span><button type="button" data-route="course/${course.id}">${course.code}</button><span>/</span><span>Module ${module.number}</span></nav>
@@ -10142,7 +10170,7 @@
     else if (route[0] === "support") view = supportView();
     else if (route[0] === "security") view = securityView();
     else view = notFoundView();
-    APP_ROOT.innerHTML = shell(view);
+    updateStudentShell(shell(view));
     if (["course", "syllabus", "guide"].includes(route[0])) {
       ensureStudentPlatformData(findCourse(route[1]));
     } else if (route[0] === "lesson") {

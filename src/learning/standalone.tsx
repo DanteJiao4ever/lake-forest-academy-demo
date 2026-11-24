@@ -46,3 +46,27 @@ class AcademicWorkspaceElement extends HTMLElement {
   disconnectedCallback(){this.root?.unmount();this.root=undefined;}
 }
 if (!customElements.get("lfa-academic-workspace")) customElements.define("lfa-academic-workspace",AcademicWorkspaceElement);
+
+class PacedStudentWorkspace extends HTMLElement {
+  private root?: Root;
+  connectedCallback() {
+    const course = this.getAttribute("course");
+    const module = this.getAttribute("module");
+    if (!course) return;
+    void import("./pacing/PacingWorkspace").then(({PacingWorkspace}) => {
+      if (!this.isConnected || this.root) return;
+      this.root = createRoot(this);
+      this.root.render(<PacingWorkspace course={course} moduleNumber={module === null ? null : Number(module)}/>);
+    }).catch(() => {
+      if (this.isConnected) this.textContent = "Course materials could not load. Refresh to retry.";
+    });
+  }
+  disconnectedCallback() {
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      this.root?.unmount();
+      this.root = undefined;
+    });
+  }
+}
+if (!customElements.get("lfa-paced-student")) customElements.define("lfa-paced-student", PacedStudentWorkspace);
