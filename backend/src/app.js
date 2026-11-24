@@ -647,7 +647,7 @@ export async function createApp({
     const file = await openTeachingPack(config.teachingPacksRoot, courseCode, kind);
     if (!file) throw new ApiError(404, "MATERIAL_NOT_FOUND", "The material was not found.");
     reply.header("Cache-Control", "private, no-store");
-    if (kind === "reader") {
+    if (kind === "reader" || kind === "study") {
       reply.type("text/html; charset=utf-8");
       reply.header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     } else {
@@ -1611,6 +1611,7 @@ export async function createApp({
 
   for (const [suffix, kind, roles] of [
     ["teaching-reader", "reader", ["student"]],
+    ["teaching-packs/study", "study", ["student", "teacher", "teacher_admin"]],
     ["teaching-packs/student", "student", ["student", "teacher", "teacher_admin"]],
     ["teaching-packs/faculty", "faculty", ["teacher", "teacher_admin"]],
   ]) {

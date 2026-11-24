@@ -150,6 +150,14 @@ describe("database-driven course catalog API", () => {
     assert.match(read.headers["content-type"], /^text\/html; charset=utf-8$/);
     assert.equal(read.headers["cache-control"], "private, no-store");
     assert.equal(read.headers["content-security-policy"], "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    await mkdir(path.join(packRoot, "PrivateWeb/Study"), { recursive: true });
+    await writeFile(path.join(packRoot, "PrivateWeb/Study/MHF4U.html"), reader);
+    const workbook = await get(base + "/teaching-packs/study", student);
+    assert.equal(workbook.body, reader);
+    assert.match(workbook.headers["content-security-policy"], /sandbox/);
+    assert.match(workbook.headers["content-type"], /text\/html/);
+    assert.equal((await get("/v1/courses/TAS1O/teaching-packs/study", student)).statusCode, 403);
+    assert.equal((await get(base + "/teaching-packs/study")).statusCode, 401);
     assert.equal((await get(base + "/teaching-packs/faculty", student)).statusCode, 403);
     assert.deepEqual((await get(base + "/teaching-packs/faculty", teacher)).rawPayload, facultyPdf);
     assert.deepEqual((await get(base + "/teaching-packs/faculty", admin)).rawPayload, facultyPdf);
@@ -164,7 +172,7 @@ describe("database-driven course catalog API", () => {
     assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
     await symlink(path.join(packRoot, "Faculty/PDF/MHF4U.pdf"), path.join(packRoot, "Student/PDF/MHF4U.pdf"));
     assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
-    assert.deepEqual((await get("/v1/courses", student)).json().data[0].materials.teachingPacks.map((p) => p.kind), ["reader"]);
+    assert.deepEqual((await get("/v1/courses", student)).json().data[0].materials.teachingPacks.map((p) => p.kind), ["reader", "study"]);
     await repository.replaceEnrollments(student.user.id, []);
     assert.equal((await get(base + "/teaching-reader", student)).statusCode, 403);
   });
