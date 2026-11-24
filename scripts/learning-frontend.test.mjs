@@ -4693,6 +4693,21 @@ test("an institutionally assigned course uses published native modules, lessons,
   assert.doesNotMatch(faculty, /65%|25% of course grade|0% of course grade/);
   assert.match(faculty, /#\/teacher\/course\/eng4u\/module\/eng4u-cb01/);
   assert.doesNotMatch(faculty, /Hidden task|Hidden archive/);
+  const progress = await renderPortal("#/progress", student, {
+    ...memberOptions,
+    submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions" },
+    async fetch(url) {
+      if (new URL(String(url)).pathname !== "/v1/submissions") return memberOptions.fetch(url);
+      return jsonResponse({ data: [{
+        id: "11111111-1111-4111-8111-111111111111", student, courseCode: code, assignmentId,
+        assignmentTitle: assignment.title, status: "graded", submittedAt: "2026-10-01T12:00:00Z",
+        grade: { score: 84, feedback: "Compare the second measurement.", publishedAt: "2026-10-02T12:00:00Z" },
+      }], page: { nextCursor: null } });
+    },
+  });
+  assert.match(progress, /grade-score">84%/);
+  assert.match(progress, /Awaiting assessment weights/);
+  assert.doesNotMatch(progress, /Not Yet Graded|No published grades yet/);
   const marking = await renderPortal("#/teacher/submission/assigned%40example.test/" + assignmentId, teacher, {
     ...memberOptions,
     submissionConfig: { submissionsEndpoint: "https://api.example.test/v1/submissions", gradingEndpoint: "https://api.example.test/v1/grades" },
@@ -4864,14 +4879,20 @@ test("faculty workbench requests only assigned class records and excludes draft 
            feedback:"Explain the measurement uncertainty.", publishedAt:time},
           {assignmentId:"hidden", feedback:"Unreleased assignment result", publishedAt:null},
         ], scores: [{ itemId: "activity", feedback: "Teacher-only draft",
-          score: 95, latestPublished: { score: 80, publishedAt: time, feedback: "Published learner feedback" } }] }],
+          score: 95, latestPublished: { score: 80, publishedAt: time, feedback: "Published learner feedback" } }] },
+          { displayName: "Workshop learner", scores: [], assignmentResults: [
+            { assignmentId: "workshop", assignmentTitle: "Workshop", attemptNumber: 1, score: 71, publishedAt: time },
+          ] },
+          { displayName: "Draft learner", scores: [], assignmentResults: [
+            { assignmentId: "draft", score: 66, publishedAt: null },
+          ] }],
       } });
       return jsonResponse({ data: [] });
     },
   };
   const html = await renderPortal("#/teacher/dashboard", user, options);
   assert.match(html, /1 of 2 learner modules complete/);
-  assert.match(html, /1 learner with published grades/);
+  assert.match(html, /2 learners with published grades/);
   assert.match(html, /Published learner feedback/);
   assert.doesNotMatch(html, /Teacher-only draft|#\/teacher\/course\/mcv4u/);
   assert.match(html,/At-risk learners[\s\S]*Casey[\s\S]*Over 5 days without course activity/);

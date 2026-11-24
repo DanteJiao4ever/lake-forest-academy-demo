@@ -5329,7 +5329,8 @@
     const course = findCourse(courseId);
     const assignments = ASSIGNMENTS.filter(
       (assignment) =>
-        assignment.courseId === courseId && Number(assignment.weightPercent) > 0,
+        assignment.courseId === courseId &&
+        (Number(assignment.weightPercent) > 0 || (course?.institutional && assignment.weightPercent == null)),
     );
     const scored = assignments
       .map((assignment) => ({
@@ -5347,6 +5348,8 @@
         const official = platformRuntime.assignments.ICS4U?.find((item) => item.id === assignment.id);
         if (!(Number(official?.weightPercent) > 0)) return { current: null, weightsPending: true };
         record.weightPercent = Number(official.weightPercent);
+      } else if (assignment.weightPercent == null) {
+        return { current: null, weightsPending: true };
       } else {
         record.weightPercent = Number(assignment.weightPercent);
       }
@@ -6581,7 +6584,10 @@
 
   function facultyCourseCard(course, records) {
     const book = platformRuntime.teacherGradebooks[course.code];
-    const graded = book?.students?.filter((student) => teacherPublishedStanding(book, student).count > 0).length;
+    const graded = book?.students?.filter((student) =>
+      teacherPublishedStanding(book, student).count > 0 ||
+      student.assignmentResults?.some((result) => result.publishedAt),
+    ).length;
     const modules = platformRuntime.teacherProgress[course.code]?.students.flatMap((student) => student.modules);
     const completed = modules?.filter((module) => module.status === "completed").length;
     const percent = modules?.length ? Math.round(100 * completed / modules.length) : null;
