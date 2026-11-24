@@ -1136,6 +1136,18 @@
   // public selector's course and assessment records as the browser's baseline.
   COURSES.splice(0, COURSES.length, ...COURSES.filter((course) => SELECTABLE_COURSE_IDS.includes(course.id)));
   ASSIGNMENTS.splice(0, ASSIGNMENTS.length, ...ASSIGNMENTS.filter((task) => SELECTABLE_COURSE_IDS.includes(task.courseId)));
+  const courseListings = new Map((window.LFA_COURSE_LISTINGS || []).map(row => {
+    const id = row.code.toLowerCase();
+    return [id, {
+      id, code: row.code, title: row.title, description: row.summary, overview: row.summary,
+      credit: row.credit, plannedHours: 110 * Number.parseFloat(row.credit),
+      gradeType: row.grade + " · " + row.pathway, prerequisite: row.prerequisite, subject: row.subject,
+      mode: "Online", image: "../images/library-study.jpg", lessons: [], platformModules: [], evaluation: [],
+      listingOnly: true,
+    }];
+  }));
+  let selectableCourseIds = new Set(SELECTABLE_COURSE_IDS);
+  let confirmedEnrollmentCodes;
   const publicCourseCount = COURSES.length;
   const publicAssignmentCount = ASSIGNMENTS.length;
 
@@ -1148,11 +1160,12 @@
       if (!/^[A-Z0-9][A-Z0-9_-]{1,23}$/.test(code) || row.status !== "active" ||
           !(Number(row.moduleCount) > 0) || !row.title || COURSES.some((course) => course.code === code)) continue;
       const course = previous.get(code) || {
-        id: code.toLowerCase(), code, institutional: true, lessons: [], platformModules: [], evaluation: [],
         subject: "OSSD", gradeType: "OSSD", image: "../images/library-study.jpg", mode: "Online",
+        ...courseListings.get(code.toLowerCase()), id: code.toLowerCase(), code, institutional: true,
+        listingOnly: false, lessons: [], platformModules: [], evaluation: [],
       };
       course.title = String(row.title);
-      course.plannedHours = Number(row.plannedHours) || 0;
+      course.plannedHours = Number(row.plannedHours) || course.plannedHours || 0;
       course.moduleCount = Number(row.moduleCount);
       COURSES.push(course);
       assigned.add(course.id);
@@ -1492,6 +1505,8 @@
 
   function resetPlatformRuntime() {
     platformSessionGeneration += 1;
+    selectableCourseIds = new Set(SELECTABLE_COURSE_IDS);
+    confirmedEnrollmentCodes = undefined;
     mergeAssignedCourses([]);
     announcementBoard = null;
     riskBoard = null;
@@ -3785,7 +3800,7 @@
   }
 
   function ensureStudentPlatformData(course) {
-    if (!course || (!course.institutional && !course.platformModules?.length)) return;
+    if (!course || course.listingOnly || (!course.institutional && !course.platformModules?.length)) return;
     const endpoint = studentProgressEndpoint(course);
     const modulesEndpoint = courseModulesEndpoint(course);
     if (!endpoint || !modulesEndpoint) return;
@@ -4066,7 +4081,7 @@
   function courseIdsFromCodes(courseCodes) {
     return [...new Set(courseCodes)]
       .map((code) => findCourse(String(code || "").toLowerCase())?.id)
-      .filter((id) => id && SELECTABLE_COURSE_IDS.includes(id));
+      .filter(Boolean);
   }
 
   function courseCodesFromIds(courseIds) {
@@ -4078,7 +4093,9 @@
   async function refreshRemoteEnrollments() {
     const endpoint = configuredAuthUrl(AUTH_CONFIG.enrollmentsEndpoint);
     if (!endpoint || !currentUser() || isTeacher()) return false;
+    const generation = platformSessionGeneration;
     const payload = await requestAuthEndpoint(endpoint.toString());
+    if (generation !== platformSessionGeneration) return false;
     const courseCodes = Array.isArray(payload?.data)
       ? payload.data
       : Array.isArray(payload?.courseCodes)
@@ -4087,6 +4104,11 @@
     if (!courseCodes) {
       throw new Error("The enrollment service returned an invalid course list.");
     }
+    const choices = Array.isArray(payload.selectableCourseCodes)
+      ? courseIdsFromCodes(payload.selectableCourseCodes)
+      : SELECTABLE_COURSE_IDS;
+    selectableCourseIds = new Set(choices);
+    confirmedEnrollmentCodes = [...courseCodes];
     state.enrolledCourseIds = courseIdsFromCodes(courseCodes);
     saveState();
     return true;
@@ -4098,15 +4120,29 @@
     if (enrollmentSaveInFlight) {
       throw new Error("Your previous course change is still being saved.");
     }
-    const body = JSON.stringify({ courseCodes: courseCodesFromIds(courseIds) });
+    const generation = platformSessionGeneration;
+    const body = JSON.stringify({
+      courseCodes: courseCodesFromIds(courseIds), catalogVersion: 2, expectedCourseCodes: confirmedEnrollmentCodes,
+    });
     enrollmentSaveInFlight = true;
     try {
-      await requestAuthEndpoint(endpoint.toString(), {
-        method: "PUT",
-        body,
-      });
+      const saved = await requestAuthEndpoint(endpoint.toString(), { method: "PUT", body });
+      if (generation !== platformSessionGeneration) return false;
+      if (Array.isArray(saved.data)) {
+        confirmedEnrollmentCodes = [...saved.data];
+        state.enrolledCourseIds = courseIdsFromCodes(saved.data);
+      }
       resetDriveMaterialsForSession();
+      await refreshDriveMaterials({ silent: true, catalogOnly: true });
       return true;
+    } catch (error) {
+      if (error.code === "ENROLLMENTS_CHANGED" && generation === platformSessionGeneration) {
+        error.planRefreshed = await refreshRemoteEnrollments();
+        resetDriveMaterialsForSession();
+        await refreshDriveMaterials({ silent: true, catalogOnly: true });
+        render(false, true);
+      }
+      throw error;
     } finally {
       enrollmentSaveInFlight = false;
     }
@@ -4432,7 +4468,7 @@
       if (!Array.isArray(course?.materials?.teachingPacks)) continue;
       const packs = course.materials.teachingPacks
         .filter((pack) => pack && (
-          pack.kind === "student" || pack.kind === (isTeacher() ? "faculty" : "reader")
+          pack.kind === "student" || pack.kind === "study" || pack.kind === (isTeacher() ? "faculty" : "reader")
         ))
         .map((pack) => ({ kind: pack.kind, name: scalarLabel(pack.title), url: safeProtectedResourceUrl(pack.openUrl) }))
         .filter((pack) => pack.name && pack.url);
@@ -4444,7 +4480,7 @@
   function teachingPackList(packs) {
     return packs?.length
       ? `<ul class="drive-material-list">${packs.map((pack) => driveMaterialItem({
-          ...pack, mimeType: pack.kind === "reader" ? "text/html" : "application/pdf",
+          ...pack, mimeType: ["reader", "study"].includes(pack.kind) ? "text/html" : "application/pdf",
         })).join("")}</ul>`
       : "";
   }
@@ -4905,7 +4941,7 @@
   }
 
   function findCourse(id) {
-    return COURSES.find((course) => course.id === id);
+    return COURSES.find((course) => course.id === id) || courseListings.get(id);
   }
 
   function institutionalCourseForItem(id) {
@@ -5115,17 +5151,17 @@
   }
 
   function catalogCourses() {
-    return SELECTABLE_COURSE_IDS.map(findCourse).filter(Boolean);
+    return [...selectableCourseIds].map(findCourse).filter(Boolean);
   }
 
   function facultyCourses() {
-    return [...catalogCourses(), ...COURSES.slice(publicCourseCount)].filter((course) => accessibleCourseCodes?.has(course.code));
+    return COURSES.filter((course) => accessibleCourseCodes?.has(course.code));
   }
 
   function enrolledCourseIdsFor(userState = state) {
     return Array.isArray(userState?.enrolledCourseIds)
       ? userState.enrolledCourseIds.filter((id) =>
-          SELECTABLE_COURSE_IDS.includes(id),
+          Boolean(findCourse(id)),
         )
       : [];
   }
@@ -5137,7 +5173,7 @@
 
   function studentCourses() {
     const enrolledIds = new Set(enrolledCourseIdsFor());
-    return [...catalogCourses().filter((course) => enrolledIds.has(course.id)), ...COURSES.slice(publicCourseCount)];
+    return COURSES.filter(course => enrolledIds.has(course.id) || course.institutional);
   }
 
   function studentAssignments() {
@@ -8169,16 +8205,16 @@
     );
     return `
       ${pageHeading(
-        "Grade 12 Course Planning",
+        "Student Course Planning",
         "Course Selection",
-        "Choose from the six courses in the Lotus OSSD course library. Five are university-preparation courses; BBB4M is university/college preparation.",
+        "Review the prerequisites and select courses available to your account.",
         `<span class="selection-count">${enrolled.length} of ${catalogCourses().length} selected</span>`,
       )}
       <section class="selection-intro">
         <div>
           <p class="eyebrow light">Your Learning Plan</p>
           <h2>Select a course to add its lessons, assignments and deadlines.</h2>
-          <p>MCV4U requires MHF4U before or at the same time. Other Grade 11 prerequisites are reviewed by Guidance during enrolment.</p>
+          <p>MCV4U requires MHF4U before or at the same time. Guidance can help confirm prior credits and placement.</p>
         </div>
         <a class="button button-gold" href="#/courses">Open My Courses ${icon("arrow", 17)}</a>
       </section>
@@ -8258,7 +8294,7 @@
                           >Remove</button>
                         `
                         : `
-                          <a class="button button-quiet" href="#/syllabus/${course.id}">View Syllabus</a>
+                          <a class="button button-quiet" href="${course.listingOnly ? "../courses/#" + course.code : "#/syllabus/" + course.id}">Course outline</a>
                           ${
                             !requirement.met && requirement.missing.includes("mhf4u")
                               ? `<button class="button button-primary" type="button" data-action="add-course-pair" data-course="${course.id}">Add MHF4U + ${course.code}</button>`
@@ -8278,19 +8314,24 @@
   }
 
   function courseAccessView(course) {
+    const selectable = selectableCourseIds.has(course.id);
+    const requirement = enrollmentRequirement(course);
     return `
       ${pageHeading(
         course.code,
-        "Select This Course First",
+        selectable ? "Select This Course First" : "Course Enrolment",
         `${escapeHtml(course.title)} is not currently part of your learning plan.`,
       )}
       <section class="course-access-card">
         <span class="course-chip">${course.code}</span>
         <h2>${escapeHtml(course.title)}</h2>
-        <p>Review the syllabus, prerequisite and evaluation plan before adding this course.</p>
+        <p>${escapeHtml(course.description || "")}</p>
+        <p>Prerequisite · ${escapeHtml(course.prerequisite || "See the course outline.")}</p>
+        ${!selectable ? "<p>Contact Guidance to check your eligibility for this course.</p>" : ""}
         <div>
-          <a class="button button-primary" href="#/course-selection">Open Course Selection</a>
-          <a class="button button-secondary" href="#/syllabus/${course.id}">View Syllabus</a>
+          ${selectable && requirement.met ? `<button class="button button-primary" type="button" data-action="toggle-enrollment" data-course="${course.id}">Select ${course.code}</button>` : ""}
+          <a class="button button-secondary" href="#/course-selection">Open Course Selection</a>
+          <a class="text-link" href="../courses/#${course.code}">View course outline</a>
         </div>
       </section>
     `;
@@ -8341,7 +8382,7 @@
             </article>
           `;
               }).join("")
-            : '<div class="course-empty-selection"><span class="course-chip">6 Courses Available</span><h2>Build Your Course Plan</h2><p>Select the courses you want to study. Your dashboard, assignments, calendar and grades will follow that plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
+            : '<div class="course-empty-selection"><h2>Build Your Course Plan</h2><p>Select the courses you want to study. Your dashboard, assignments, calendar and grades will follow that plan.</p><a class="button button-primary" href="#/course-selection">Choose Courses</a></div>'
         }
       </section>
     `;
@@ -8399,14 +8440,14 @@
           </div>
           <div class="course-hero-actions">
             ${primaryAction}
-            ${course.institutional && course.code === "MDM4U" ? `<a class="button button-on-dark" href="#/course/${course.id}/module/${nextModule.number}/resources">Self-Study Resources</a>` : ""}
+            ${course.code === "MDM4U" && classroomCourseCodes.has(course.code) ? `<a class="button button-on-dark" href="#/course/${course.id}/module/${nextModule.number}/resources">Self-Study Resources</a>` : ""}
             ${course.institutional ? "" : `<a class="button button-on-dark" href="#/syllabus/${course.id}">${icon("book", 17)} View Syllabus</a>`}
             <a class="button button-on-dark" href="#/assessments">${icon("clipboard", 17)} Open Assessments (${ASSIGNMENTS.filter((assignment) => assignment.courseId === course.id).length})</a>
           </div>
         </div>
         <div class="course-hero-image"><img src="${course.image}" alt="" /></div>
       </section>
-      ${course.institutional && course.code === "MDM4U" ? '<lfa-paced-student id="paced-student" course="MDM4U"></lfa-paced-student>' : ""}
+      ${course.code === "MDM4U" && classroomCourseCodes.has(course.code) ? '<lfa-paced-student id="paced-student" course="MDM4U"></lfa-paced-student>' : ""}
       ${courseWorkspaceLinks(course, false)}
       <section class="course-detail-grid">
         <div class="panel">
@@ -8539,7 +8580,7 @@
           <a class="button button-secondary" href="#/course/${course.id}">Return to Course Path</a>
         </section>`;
     }
-    if (course.institutional && course.code === "MDM4U") {
+    if (course.code === "MDM4U" && classroomCourseCodes.has(course.code)) {
       return `<nav class="breadcrumb" aria-label="Breadcrumb"><a href="#/courses">My Courses</a><span>/</span><a href="#/course/${course.id}">${course.code}</a><span>/</span><span>Module ${module.number}</span></nav>
         <header class="module-detail-hero"><div><p class="eyebrow light">${course.code} · Self-Study Resources</p><h1>${escapeHtml(module.title)}</h1><p>${escapeHtml(module.unitTitle)}</p></div></header>
         <lfa-paced-student id="paced-student" course="MDM4U" module="${module.number}"></lfa-paced-student>`;
@@ -10119,9 +10160,9 @@
       if (!course) {
         view = notFoundView();
       } else if (!isCourseEnrolled(course.id)) {
-        view = SELECTABLE_COURSE_IDS.includes(course.id)
-          ? courseAccessView(course)
-          : notFoundView();
+        view = courseAccessView(course);
+      } else if (course.listingOnly) {
+        view = pageHeading(course.code, escapeHtml(course.title), "Loading your course materials…");
       } else if (route[2] === "module") {
         const module = findPlatformModule(course, route[3]);
         view = module ? studentModuleView(course, module) : notFoundView();
@@ -11700,7 +11741,7 @@
         try {
           await persistRemoteEnrollments(state.enrolledCourseIds);
         } catch (error) {
-          state.enrolledCourseIds = currentCourseIds;
+          if (!error.planRefreshed) state.enrolledCourseIds = currentCourseIds;
           showToast(error?.message || "The course plan could not be restored.", {
             tone: "error",
           });
@@ -12075,7 +12116,7 @@
       loginView({ portal: sessionPortal });
     } else if (action === "add-course-pair") {
       const course = findCourse(target.dataset.course);
-      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      if (!course || !selectableCourseIds.has(course.id)) return;
       const prerequisiteIds = (course.prerequisiteCourseIds || []).filter((id) =>
         SELECTABLE_COURSE_IDS.includes(id),
       );
@@ -12093,7 +12134,7 @@
       try {
         await persistRemoteEnrollments(state.enrolledCourseIds);
       } catch (error) {
-        state.enrolledCourseIds = previousCourseIds;
+        if (!error.planRefreshed) state.enrolledCourseIds = previousCourseIds;
         showToast(error?.message || "These courses could not be added.", {
           tone: "error",
         });
@@ -12120,7 +12161,7 @@
       );
     } else if (action === "toggle-enrollment") {
       const course = findCourse(target.dataset.course);
-      if (!course || !SELECTABLE_COURSE_IDS.includes(course.id)) return;
+      if (!course || !selectableCourseIds.has(course.id)) return;
       const selected = isCourseEnrolled(course.id);
       const previousCourseIds = [...enrolledCourseIdsFor()];
       if (selected) {
@@ -12162,7 +12203,7 @@
       try {
         await persistRemoteEnrollments(state.enrolledCourseIds);
       } catch (error) {
-        state.enrolledCourseIds = previousCourseIds;
+        if (!error.planRefreshed) state.enrolledCourseIds = previousCourseIds;
         showToast(error?.message || "Your course selection could not be saved.", {
           tone: "error",
         });
