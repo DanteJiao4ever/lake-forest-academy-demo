@@ -1,0 +1,21 @@
+.lfa-pace {max-width:68rem; margin-block:1.5rem; padding:clamp(1rem,3vw,2rem); border:1px solid #cad9d1; border-radius:.85rem; background:#fff; color:#1c362c; overflow-wrap:anywhere}
+.lfa-pace h2,.lfa-pace h3,.lfa-pace h4 {margin:.25em 0 .55em}
+.lfa-pace section,.lfa-pace form {margin-block:1rem}
+.lfa-pace p,.lfa-pace blockquote {white-space:pre-line; line-height:1.55}
+.lfa-pace details {border-top:1px solid #dbe5df; margin-block:.5rem; padding-block:.3rem}
+.lfa-pace summary {cursor:pointer; min-height:44px; padding:.65rem .15rem; font-weight:650}
+.lfa-pace label {display:grid; gap:.35rem; margin:.7rem 0; font-weight:600}
+.lfa-pace :is(input,select,textarea) {width:100%; min-width:0; max-width:36rem; box-sizing:border-box; min-height:44px; padding:.55rem; border-radius:.35rem; border:1px solid #80968c; background:#fff; color:inherit; font:inherit}
+.lfa-pace .pace-check {display:flex; align-items:center}.lfa-pace .pace-check input {width:1.2rem}
+.lfa-pace button {min-height:44px; margin:.25rem .5rem .25rem 0; border:1px solid #245b48; border-radius:.4rem; padding:.5rem .85rem; background:#225640; color:white; font:inherit; cursor:pointer}
+.lfa-pace button:disabled {opacity:.65; cursor:default}
+.lfa-pace a {display:inline-block; padding:.65rem .25rem; color:#19513d; text-decoration:underline}
+.lfa-pace progress {height:.75rem; width:100%; accent-color:#2f6c52}
+.pace-modules {padding-inline-start:1.4rem}.pace-modules li {margin:.25rem 0}.pace-modules small {display:block}
+.pace-edition {margin-block:1rem}.pace-edition select {min-height:44px;max-width:100%;margin-left:.4rem}
+.lfa-pace .katex-display {max-width:100%;overflow-x:auto}
+@media (max-width: 560px) {
+  .study-step .lfa-pace {border:0;border-top:1px solid #cad9d1;border-radius:0;padding:1rem 0;margin:1rem 0}
+  .study-step .panel-content {padding-inline:1rem}
+  .lfa-pace :is(summary,h3,h4,details) {scroll-margin-top:7rem}
+}
