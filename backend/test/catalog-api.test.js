@@ -150,6 +150,14 @@ describe("database-driven course catalog API", () => {
     assert.match(read.headers["content-type"], /^text\/html; charset=utf-8$/);
     assert.equal(read.headers["cache-control"], "private, no-store");
     assert.equal(read.headers["content-security-policy"], "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    await mkdir(path.join(packRoot, "PrivateWeb/Study"), { recursive: true });
+    await writeFile(path.join(packRoot, "PrivateWeb/Study/MHF4U.html"), reader);
+    const workbook = await get(base + "/teaching-packs/study", student);
+    assert.equal(workbook.body, reader);
+    assert.match(workbook.headers["content-security-policy"], /sandbox/);
+    assert.match(workbook.headers["content-type"], /text\/html/);
+    assert.equal((await get("/v1/courses/TAS1O/teaching-packs/study", student)).statusCode, 403);
+    assert.equal((await get(base + "/teaching-packs/study")).statusCode, 401);
     assert.equal((await get(base + "/teaching-packs/faculty", student)).statusCode, 403);
     assert.deepEqual((await get(base + "/teaching-packs/faculty", teacher)).rawPayload, facultyPdf);
     assert.deepEqual((await get(base + "/teaching-packs/faculty", admin)).rawPayload, facultyPdf);
@@ -164,7 +172,7 @@ describe("database-driven course catalog API", () => {
     assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
     await symlink(path.join(packRoot, "Faculty/PDF/MHF4U.pdf"), path.join(packRoot, "Student/PDF/MHF4U.pdf"));
     assert.equal((await get(base + "/teaching-packs/student", student)).statusCode, 404);
-    assert.deepEqual((await get("/v1/courses", student)).json().data[0].materials.teachingPacks.map((p) => p.kind), ["reader"]);
+    assert.deepEqual((await get("/v1/courses", student)).json().data[0].materials.teachingPacks.map((p) => p.kind), ["reader", "study"]);
     await repository.replaceEnrollments(student.user.id, []);
     assert.equal((await get(base + "/teaching-reader", student)).statusCode, 403);
   });
@@ -188,6 +196,23 @@ describe("database-driven course catalog API", () => {
       assert.equal((await get("/v1/courses/TAS1O/modules")).statusCode, 200);
       assert.equal((await get("/v1/courses/TAS2O/modules")).statusCode, 403);
     }
+  });
+
+  test("verified students self-select the active catalog while older clients retain wider enrollments", async () => {
+    const { schoolCourseCodes } = await import("../src/lib/enrollment-catalog.js");
+    for (const code of schoolCourseCodes) repository.courseCatalog.set(code, { code, title: code, status: "active" });
+    const student = await registerStudent();
+    const headers = { cookie: student.cookie, origin, "x-csrf-token": student.csrf };
+    const select = payload => app.inject({ method: "PUT", url: "/v1/me/enrollments", headers, payload });
+    const choices = () => app.inject({ method: "GET", url: "/v1/me/enrollments", headers });
+    assert.equal((await choices()).json().selectableCourseCodes.length, 6);
+    assert.equal((await select({ courseCodes: ["ENG4U"], catalogVersion: 2 })).statusCode, 403);
+    repository.verifiedStudents.add(student.user.id);
+    assert.equal((await choices()).json().selectableCourseCodes.length, 42);
+    assert.equal((await select({ courseCodes: schoolCourseCodes, catalogVersion: 2 })).json().data.length, 42);
+    assert.equal((await select({ courseCodes: [] })).json().data.length, 36);
+    assert.deepEqual((await select({ courseCodes: ["MDM4U"], catalogVersion: 2 })).json().data, ["MDM4U"]);
+    assert.equal((await select({ courseCodes: ["MDM4U"] })).statusCode, 422);
   });
 
   test("reports the exact catalog acceptance counts", async () => {

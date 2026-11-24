@@ -1,3 +1,4 @@
+import { schoolCourseCodes, launchCourseCodes } from "../src/lib/enrollment-catalog.js";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
@@ -379,6 +380,30 @@ export class FakeRepository {
 
   async listEnrollments(userId) {
     return (this.enrollments.get(userId) || []).filter((code) => this.courseCatalog.get(code)?.status === "active");
+  }
+
+  verifiedStudents = new Set();
+
+  async selectableCourses(userId) {
+    const codes = this.verifiedStudents.has(userId) ? schoolCourseCodes : launchCourseCodes;
+    return codes.filter(code => this.courseCatalog.get(code)?.status === "active");
+  }
+
+  async saveCourseSelection(userId, codes, catalogVersion, expectedCodes) {
+    if (expectedCodes) {
+      const current = await this.listEnrollments(userId);
+      const expected = new Set(expectedCodes);
+      if (current.length !== expected.size || current.some(code => !expected.has(code))) {
+        throw new ApiError(409, "ENROLLMENTS_CHANGED", "Course selection changed.");
+      }
+    }
+    const selectable = await this.selectableCourses(userId);
+    const editable = catalogVersion === 2 ? selectable : launchCourseCodes;
+    if (codes.some(code => !selectable.includes(code) || !editable.includes(code))) {
+      throw new ApiError(403, "ENROLLMENT_NOT_AVAILABLE", "These courses are unavailable for this account.");
+    }
+    await this.replaceEnrollments(userId, codes, editable);
+    return selectable;
   }
 
   async replaceEnrollments(userId, codes, editableCodes = null) {

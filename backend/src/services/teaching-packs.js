@@ -5,6 +5,7 @@ import path from "node:path";
 const files = {
   student: { directory: "Student/PDF", extension: "pdf", title: "Student coursebook (PDF)" },
   faculty: { directory: "Faculty/PDF", extension: "pdf", title: "Faculty teaching and marking guide (PDF)" },
+  study: { directory: "PrivateWeb/Study", extension: "html", title: "Self-study workbook with examples and practice" },
   reader: { directory: "PrivateWeb/Student", extension: "html", title: "Online course reader" },
 };
 
@@ -30,7 +31,7 @@ export async function openTeachingPack(root, code, kind) {
 
 export async function listTeachingPacks(root, code, role) {
   if (!root) return [];
-  const kinds = role === "student" ? ["reader", "student"] : ["student", "faculty"];
+  const kinds = role === "student" ? ["reader", "student", "study"] : ["student", "faculty", "study"];
   const packs = await Promise.all(kinds.map(async (kind) => {
     const handle = await openTeachingPack(root, code, kind);
     if (!handle) return null;
@@ -43,7 +44,7 @@ export async function listTeachingPacks(root, code, role) {
 
 export async function teachingPacksReady(root, courseCodes) {
   for (const code of courseCodes) {
-    for (const kind of Object.keys(files)) {
+    for (const kind of ["reader", "student", "faculty"]) {
       const handle = await openTeachingPack(root, code, kind);
       if (!handle) return false;
       await handle.close();

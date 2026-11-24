@@ -17,7 +17,7 @@ const exerciseSchema = z.object({...evidenceFields,exerciseId:z.string().max(128
 const quizSchema = z.object({...evidenceFields,answers:z.record(z.string().max(128),answer)}).strict();
 const dateCols = 'start_date::text AS "startDate", end_date::text AS "endDate", weeks, mode, version';
 const classQuery='SELECT enabled,'+dateCols+' FROM pacing_section_configs WHERE course_code=$1 ORDER BY revision DESC LIMIT 1';
-const scopeSql="SELECT in_course_test_section($1,$2) AND classroom_rollout_enabled($1,$2) AS enabled";
+const scopeSql="SELECT classroom_rollout_enabled($1,$2) AS enabled";
 const milestones = [[0.5,"midterm","Midterm assessment"],[0.8,"booking","Final assessment booking"],[1,"completion","Course completion review"]];
 
 const sources = [
@@ -263,6 +263,19 @@ export function registerCoursePacing(app,{repository,requireRoles,requireCsrf,pa
     const result=score();
     await ctx.db.query(`INSERT INTO pacing_attempts(student_id,course_code,version,module_number,kind,item_id,attempt_number,request_id,payload,result)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[actor,ctx.code,body.version,moduleNumber,kind,itemId,last.count+1,body.requestId,payload,result]);
+    if (kind === "checkpoint" && result.passed) {
+      const module = c.pack.manifest.modules.find(item => item.number === moduleNumber);
+      // Native module navigation uses the predecessor's completed status. In the
+      // paced classroom its evidence is the server-marked checkpoint.
+      await ctx.db.query(
+        `INSERT INTO student_module_progress (student_user_id,module_id,status,started_at,completed_at)
+         VALUES ($1,$2,'completed',now(),now())
+         ON CONFLICT (student_user_id,module_id) DO UPDATE SET status='completed',
+           started_at=COALESCE(student_module_progress.started_at,now()),completed_at=now(),updated_at=now()
+         WHERE student_module_progress.status <> 'completed'`,
+        [actor, module.id],
+      );
+    }
   }
   for(const [suffix,kind] of [["attempts","exercise"],["checkpoint","checkpoint"]]) {
     route("POST","/modules/:number/"+suffix,async ctx=>{
